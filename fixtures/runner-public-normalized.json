@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "id": "mining",
+  "program": {"directory": "program", "entry": "main.lua"},
+  "world": {"blocks": [], "region": {"min": [-2, 64, -4], "max": [2, 68, 2]}},
+  "robot": {
+    "energy": 20000, "facing": "north", "hardware": "tier3", "inventory": [],
+    "position": [0, 65, 0],
+    "tool": {"item": "minecraft:diamond_pickaxe", "metadata": 0, "nbt": "{}"}
+  },
+  "execution": {"mode": "baseline", "maxTicks": 10000, "timeoutSeconds": 600, "executionDelayMillis": 12, "stallTicks": 0},
+  "observations": {"everyTicks": 20, "maxBytes": 33554432, "onFull": "stop"},
+  "expect": {"blocks": [], "inventory": []}
+}

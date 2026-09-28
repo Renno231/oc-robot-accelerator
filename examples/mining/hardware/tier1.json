@@ -1,0 +1,10 @@
+{
+  "tier": 1,
+  "cpu": "cpu1",
+  "memory": ["ram2"],
+  "cards": [],
+  "upgrades": ["inventoryupgrade"],
+  "containers": [],
+  "storage": ["hdd1"],
+  "bootDrive": 0
+}

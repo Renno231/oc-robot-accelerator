@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 3,
+  "id": "mining",
+  "program": {
+    "directory": "program",
+    "entry": "main.lua"
+  },
+  "world": {
+    "region": {
+      "min": [
+        -2,
+        64,
+        -4
+      ],
+      "max": [
+        2,
+        68,
+        2
+      ]
+    },
+    "blocks": []
+  },
+  "robot": {
+    "position": [
+      0,
+      65,
+      0
+    ],
+    "facing": "north",
+    "hardware": {
+      "tier": 2,
+      "cpu": "cpu2",
+      "memory": [
+        "ram3",
+        "ram4"
+      ],
+      "cards": [
+        "redstonecard1"
+      ],
+      "upgrades": [
+        "inventoryupgrade",
+        "craftingupgrade"
+      ],
+      "storage": [
+        "hdd2"
+      ],
+      "bootDrive": 0,
+      "containers": [
+        {
+          "item": "upgradecontainer1",
+          "component": "inventoryupgrade"
+        }
+      ]
+    },
+    "energy": 20000,
+    "tool": {
+      "item": "minecraft:diamond_pickaxe",
+      "metadata": 0,
+      "nbt": "{}"
+    },
+    "inventory": []
+  },
+  "execution": {
+    "mode": "baseline",
+    "executionDelayMillis": 12,
+    "maxTicks": 10000,
+    "timeoutSeconds": 600,
+    "stallTicks": 0
+  },
+  "observations": {
+    "everyTicks": 20,
+    "maxBytes": 33554432,
+    "onFull": "stop"
+  },
+  "expect": {
+    "blocks": [],
+    "inventory": []
+  }
+}

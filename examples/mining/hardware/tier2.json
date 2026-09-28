@@ -1,0 +1,10 @@
+{
+  "tier": 2,
+  "cpu": "cpu2",
+  "memory": ["ram4"],
+  "cards": ["redstonecard1"],
+  "upgrades": ["inventoryupgrade", "inventorycontrollerupgrade", "craftingupgrade"],
+  "containers": [],
+  "storage": ["hdd2"],
+  "bootDrive": 0
+}

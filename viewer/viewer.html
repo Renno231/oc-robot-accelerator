@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-__SCRIPT_HASH__'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Robot runner · recorded samples</title><style>__STYLE__</style></head>
+<body><header><p class="eyebrow">OCELOT HARNESS · ROBOT RUNNER</p><h1>Recorded samples</h1><p id="identity"></p></header>
+<main><section class="notice" aria-label="Recording coverage"><strong id="coverage"></strong><p id="limits"></p><p id="warning"></p></section>
+<section class="controls" aria-label="Playback controls"><button id="previous" aria-label="Previous sample">←</button><button id="play">Play</button><button id="next" aria-label="Next sample">→</button><label>Speed <select id="speed"><option value="1">1× simulated time</option><option value="10">10×</option><option value="100">100×</option></select></label><label>Height Y <select id="height"></select></label><span id="progress" role="status"></span>
+<label class="timeline">Sample <input id="timeline" type="range" min="0" value="0" step="1" aria-label="Recorded sample"><output id="tick"></output></label></section>
+<div class="workspace"><section class="map"><canvas id="map" width="960" height="600" tabindex="0" aria-label="Top-down sampled block map; east right, south down"></canvas><p>North ↑ · East → · outlined cells changed at this sample · dots are sampled robot positions, not its exact route.</p><p id="cell">Point at a cell for its recorded block state.</p></section>
+<aside><h2>Robot at selected sample</h2><dl><dt>Position</dt><dd id="position"></dd><dt>Facing</dt><dd id="facing"></dd><dt>Energy</dt><dd id="energy"></dd><dt>Machine state</dt><dd id="machine"></dd></dl><h3>Inventory / tool</h3><pre id="inventory"></pre><p id="outside"></p></aside></div>
+<section><h2>Captured console <small>not time-aligned</small></h2><p id="console-status"></p><pre id="console"></pre></section>
+<details><summary>Job outcome / final result (not the selected sample)</summary><pre id="result"></pre></details>
+<p class="footer">Offline file. No connection to the simulation; playback cannot change the job. Block colors are a schematic, not Minecraft textures. Entities and block-entity contents are not recorded.</p></main>
+<script id="recording" type="application/octet-stream">__PAYLOAD__</script><script>__SCRIPT__</script></body></html>

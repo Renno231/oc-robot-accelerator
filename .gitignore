@@ -1,0 +1,23 @@
+# Generated builds, acquired dependencies and runtime state
+.cache/
+.gradle/
+build/
+dist/
+runs/
+logs/
+__pycache__/
+*.pyc
+*.log
+.playwright-cli/
+.pi/
+
+# Private inputs and evidence: keep user programs/worlds outside the public source.
+.taskreports/
+evidence/
+robot-programs/
+private/
+worlds/
+
+.DS_Store
+Thumbs.db
+Desktop.ini

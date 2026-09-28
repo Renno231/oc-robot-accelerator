@@ -1,0 +1,10 @@
+{
+  "tier": "creative",
+  "cpu": "cpu3",
+  "memory": ["ram6"],
+  "cards": [],
+  "upgrades": ["inventoryupgrade"],
+  "containers": [],
+  "storage": ["hdd3"],
+  "bootDrive": 0
+}

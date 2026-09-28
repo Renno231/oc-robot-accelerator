@@ -1,0 +1,5 @@
+#!/bin/sh
+# Presentation only; Python owns command parsing, output and lifecycle.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "${ROBOT_RUNNER_PYTHON:-python3}" "$HERE/runner.py" "$@"

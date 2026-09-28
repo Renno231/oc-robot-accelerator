@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 3,
+  "id": "cross-chunk-mining",
+  "program": {"directory": "program", "entry": "main.lua"},
+  "world": {
+    "region": {"min": [-2, 64, -49], "max": [2, 68, 1]},
+    "blocks": [
+      {"min": [-2, 64, -49], "max": [2, 64, 1], "block": "minecraft:stone"},
+      {"min": [-2, 65, -49], "max": [2, 68, 1], "block": "minecraft:air"},
+      {"min": [0, 65, -48], "max": [0, 65, -1], "block": "minecraft:stone"},
+      {"min": [0, 65, -16], "max": [0, 65, -16], "block": "minecraft:coal_ore"},
+      {"min": [0, 65, -32], "max": [0, 65, -32], "block": "minecraft:iron_ore"}
+    ]
+  },
+  "robot": {"position": [0, 65, 0], "facing": "north", "energy": 20000,
+    "hardware": {
+      "tier": 3, "cpu": "cpu3", "memory": ["ram6"],
+      "cards": [], "upgrades": ["inventoryupgrade"], "containers": [],
+      "storage": ["hdd3"], "bootDrive": 0
+    }},
+  "execution": {"mode": "coordinated", "executionDelayMillis": 12, "maxTicks": 12000, "timeoutSeconds": 600},
+  "observations": {"everyTicks": 20, "maxBytes": 33554432, "onFull": "stop"},
+  "expect": {
+    "position": [0, 65, 0],
+    "blocks": [{"position": [0, 65, -48], "block": "minecraft:air"}, {"position": [0, 65, -16], "block": "minecraft:air"}, {"position": [0, 65, -32], "block": "minecraft:air"}],
+    "inventory": [{"item": "minecraft:cobblestone", "minCount": 46}, {"item": "minecraft:coal", "minCount": 1}, {"item": "minecraft:iron_ore", "minCount": 1}]
+  }
+}

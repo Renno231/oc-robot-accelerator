@@ -1,0 +1,39 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    configurations.classpath.resolutionStrategy.force 'net.minecraftforge:artifactural:1.0.13'
+    dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:3.0.197' }
+}
+apply plugin: 'net.minecraftforge.gradle'
+
+version = '0.1.0'
+group = 'ocelot.harness.experiment'
+archivesBaseName = 'robot-spike'
+sourceCompatibility = targetCompatibility = '1.8'
+
+minecraft { mappings channel: 'stable', version: '39-1.12' }
+repositories {
+    mavenCentral()
+    flatDir { dirs '.cache' }
+}
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.12.2-14.23.5.2860'
+    compile fg.deobf('local.oc:OpenComputers:1.8.9a')
+    compile 'org.ow2.asm:asm-debug-all:5.2'
+    compile 'com.google.code.gson:gson:2.8.0'
+    compile 'org.scala-lang:scala-library:2.11.1'
+    testImplementation 'junit:junit:4.13.2'
+}
+configurations.all { resolutionStrategy.force 'net.minecraftforge:legacydev:0.2.3.1' }
+tasks.withType(JavaCompile) { options.encoding = 'UTF-8' }
+jar {
+    archiveName = 'robot-spike.jar'
+    manifest.attributes(
+        'FMLCorePlugin': 'ocelot.spike.PacingPlugin',
+        'FMLCorePluginContainsFMLMod': 'true',
+        'ForceLoadAsMod': 'true'
+    )
+}
+jar.finalizedBy('reobfJar')

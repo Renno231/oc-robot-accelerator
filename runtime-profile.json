@@ -1,0 +1,261 @@
+{
+  "description": "Exact pristine Forge installer outputs before runtime-only logging overlay. Integrity inventory, not a completed advisory/license assessment.",
+  "profileId": "mc1.12.2-forge2860-oc1.8.9a-log4j2.25.5-v1",
+  "schemaVersion": 1,
+  "templateJars": {
+    "forge-1.12.2-14.23.5.2860.jar": {
+      "installer": {
+        "coordinate": "net.minecraftforge:forge:1.12.2-14.23.5.2860",
+        "sha1": null,
+        "size": 4466148,
+        "sourceNote": "installer profile leaves Forge artifact URL blank; bootstrap pins installer URL",
+        "url": "https://maven.minecraftforge.net/net/minecraftforge/forge/1.12.2-14.23.5.2860/forge-1.12.2-14.23.5.2860-installer.jar"
+      },
+      "sha256": "cd3fbf85d7ca744507fd6a37a41b90122d43e616a4f8962332b1b658655e8a64",
+      "size": 4466148
+    },
+    "libraries/com/typesafe/akka/akka-actor_2.11/2.3.3/akka-actor_2.11-2.3.3.jar": {
+      "installer": {
+        "coordinate": "com.typesafe.akka:akka-actor_2.11:2.3.3",
+        "sha1": "ed62e9fc709ca0f2ff1a3220daa8b70a2870078e",
+        "size": 2514991,
+        "url": "https://maven.minecraftforge.net/com/typesafe/akka/akka-actor_2.11/2.3.3/akka-actor_2.11-2.3.3.jar"
+      },
+      "sha256": "4ccbc821a417f0174c9734fc721f078177cacef94ded09c3775ebf40c6a7bdfd",
+      "size": 2514991
+    },
+    "libraries/com/typesafe/config/1.2.1/config-1.2.1.jar": {
+      "installer": {
+        "coordinate": "com.typesafe:config:1.2.1",
+        "sha1": "f771f71fdae3df231bcd54d5ca2d57f0bf93f467",
+        "size": 219554,
+        "url": "https://maven.minecraftforge.net/com/typesafe/config/1.2.1/config-1.2.1.jar"
+      },
+      "sha256": "c160fbd78f51a0c2375a794e435ce2112524a6871f64d0331895e9e26ee8b9ee",
+      "size": 219554
+    },
+    "libraries/java3d/vecmath/1.5.2/vecmath-1.5.2.jar": {
+      "installer": {
+        "coordinate": "java3d:vecmath:1.5.2",
+        "sha1": "79846ba34cbd89e2422d74d53752f993dcc2ccaf",
+        "size": 318956,
+        "url": "https://libraries.minecraft.net/java3d/vecmath/1.5.2/vecmath-1.5.2.jar"
+      },
+      "sha256": "09adf7955baa6bddf57a4bdbf9a91cf690261314969b59a18085ece1e05eccf9",
+      "size": 318956
+    },
+    "libraries/lzma/lzma/0.0.1/lzma-0.0.1.jar": {
+      "installer": {
+        "coordinate": "lzma:lzma:0.0.1",
+        "sha1": "521616dc7487b42bef0e803bd2fa3faf668101d7",
+        "size": 5762,
+        "url": "https://libraries.minecraft.net/lzma/lzma/0.0.1/lzma-0.0.1.jar"
+      },
+      "sha256": "0c3085cb93c3ef95d731c274b6f2dd195aa0405fe9328d69cab7f5e899d5e124",
+      "size": 5762
+    },
+    "libraries/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar": {
+      "installer": {
+        "coordinate": "net.minecraft:launchwrapper:1.12",
+        "sha1": "111e7bea9c968cdb3d06ef4632bf7ff0824d0f36",
+        "size": 32999,
+        "url": "https://libraries.minecraft.net/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar"
+      },
+      "sha256": "57f402b626d16cc2705bf2a37add7adbb074f0ca3b3102fa6e23aa303dae682f",
+      "size": 32999
+    },
+    "libraries/net/minecraftforge/forge/1.12.2-14.23.5.2860/forge-1.12.2-14.23.5.2860.jar": {
+      "installer": {
+        "coordinate": "net.minecraftforge:forge:1.12.2-14.23.5.2860",
+        "sha1": "029250575d3aa2cf80b56dffb66238a1eeaea2ac",
+        "size": 4466148,
+        "sourceNote": "Forge installer extracted duplicate from the Forge launch jar; same SHA-256, not a separate download",
+        "url": ""
+      },
+      "sha256": "cd3fbf85d7ca744507fd6a37a41b90122d43e616a4f8962332b1b658655e8a64",
+      "size": 4466148
+    },
+    "libraries/net/sf/jopt-simple/jopt-simple/5.0.3/jopt-simple-5.0.3.jar": {
+      "installer": {
+        "coordinate": "net.sf.jopt-simple:jopt-simple:5.0.3",
+        "sha1": "cdd846cfc4e0f7eefafc02c0f5dce32b9303aa2a",
+        "size": 78175,
+        "url": "https://libraries.minecraft.net/net/sf/jopt-simple/jopt-simple/5.0.3/jopt-simple-5.0.3.jar"
+      },
+      "sha256": "6f45c00908265947c39221035250024f2caec9a15c1c8cf553ebeecee289f342",
+      "size": 78175
+    },
+    "libraries/net/sf/trove4j/trove4j/3.0.3/trove4j-3.0.3.jar": {
+      "installer": {
+        "coordinate": "net.sf.trove4j:trove4j:3.0.3",
+        "sha1": "42ccaf4761f0dfdfa805c9e340d99a755907e2dd",
+        "size": 2523218,
+        "url": "https://libraries.minecraft.net/net/sf/trove4j/trove4j/3.0.3/trove4j-3.0.3.jar"
+      },
+      "sha256": "3c8616203d61a12a7e3487e8b34f3c198c2b5ba9e90da0c7ea32d99cd4958012",
+      "size": 2523218
+    },
+    "libraries/org/apache/logging/log4j/log4j-api/2.15.0/log4j-api-2.15.0.jar": {
+      "installer": {
+        "coordinate": "org.apache.logging.log4j:log4j-api:2.15.0",
+        "sha1": "4a5aa7e55a29391c6f66e0b259d5189aa11e45d0",
+        "size": 301804,
+        "url": "https://maven.minecraftforge.net/org/apache/logging/log4j/log4j-api/2.15.0/log4j-api-2.15.0.jar"
+      },
+      "sha256": "c8c33e7e8e05496dae69cf0caac8c3092cffd937a164526e92922d2d566d0a55",
+      "size": 301804
+    },
+    "libraries/org/apache/logging/log4j/log4j-core/2.15.0/log4j-core-2.15.0.jar": {
+      "installer": {
+        "coordinate": "org.apache.logging.log4j:log4j-core:2.15.0",
+        "sha1": "ba55c13d7ac2fd44df9cc8074455719a33f375b9",
+        "size": 1789769,
+        "url": "https://maven.minecraftforge.net/org/apache/logging/log4j/log4j-core/2.15.0/log4j-core-2.15.0.jar"
+      },
+      "sha256": "419a8512895971b7b4f4f33e620d361254e5c9552b904b0474b09ddd4a6a220b",
+      "size": 1789769
+    },
+    "libraries/org/apache/maven/maven-artifact/3.5.3/maven-artifact-3.5.3.jar": {
+      "installer": {
+        "coordinate": "org.apache.maven:maven-artifact:3.5.3",
+        "sha1": "7dc72b6d6d8a6dced3d294ed54c2cc3515ade9f4",
+        "size": 54961,
+        "url": "https://maven.minecraftforge.net/org/apache/maven/maven-artifact/3.5.3/maven-artifact-3.5.3.jar"
+      },
+      "sha256": "30d066e27379a51c8d9c67b1ab0b7e55d930c9721161b07ef1666ab9fc24c629",
+      "size": 54961
+    },
+    "libraries/org/jline/jline/3.5.1/jline-3.5.1.jar": {
+      "installer": {
+        "coordinate": "org.jline:jline:3.5.1",
+        "sha1": "51800e9d7a13608894a5a28eed0f5c7fa2f300fb",
+        "size": 614590,
+        "url": "https://maven.minecraftforge.net/org/jline/jline/3.5.1/jline-3.5.1.jar"
+      },
+      "sha256": "7285f4a93d4205674e328a3e28e4d7cec10429f3ab5a0d7024b85746e958aeda",
+      "size": 614590
+    },
+    "libraries/org/ow2/asm/asm-debug-all/5.2/asm-debug-all-5.2.jar": {
+      "installer": {
+        "coordinate": "org.ow2.asm:asm-debug-all:5.2",
+        "sha1": "3354e11e2b34215f06dab629ab88e06aca477c19",
+        "size": 387903,
+        "url": "https://maven.minecraftforge.net/org/ow2/asm/asm-debug-all/5.2/asm-debug-all-5.2.jar"
+      },
+      "sha256": "254b82bec9da4f8efbc8b1f93ab2b87f7465227a82b36cf3d05d9e77a0e8dd2e",
+      "size": 387903
+    },
+    "libraries/org/scala-lang/plugins/scala-continuations-library_2.11/1.0.2_mc/scala-continuations-library_2.11-1.0.2_mc.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang.plugins:scala-continuations-library_2.11:1.0.2_mc",
+        "sha1": "0e517c53a7e9acd6b1668c5a35eccbaa3bab9aac",
+        "size": 25365,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/plugins/scala-continuations-library_2.11/1.0.2_mc/scala-continuations-library_2.11-1.0.2_mc.jar"
+      },
+      "sha256": "8dd0a4941f4564117cc991734ca36aa53dff6bb0be329f39eab46d8819f60d1a",
+      "size": 25365
+    },
+    "libraries/org/scala-lang/plugins/scala-continuations-plugin_2.11.1/1.0.2_mc/scala-continuations-plugin_2.11.1-1.0.2_mc.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang.plugins:scala-continuations-plugin_2.11.1:1.0.2_mc",
+        "sha1": "f361a3283452c57fa30c1ee69448995de23c60f7",
+        "size": 206575,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/plugins/scala-continuations-plugin_2.11.1/1.0.2_mc/scala-continuations-plugin_2.11.1-1.0.2_mc.jar"
+      },
+      "sha256": "79329971a31ede7b6823f21a6ab765506b4093d9276debdc9dbe17b996884f2b",
+      "size": 206575
+    },
+    "libraries/org/scala-lang/scala-actors-migration_2.11/1.1.0/scala-actors-migration_2.11-1.1.0.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-actors-migration_2.11:1.1.0",
+        "sha1": "dfa8bc42b181d5b9f1a5dd147f8ae308b893eb6f",
+        "size": 58018,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-actors-migration_2.11/1.1.0/scala-actors-migration_2.11-1.1.0.jar"
+      },
+      "sha256": "b89d0beb76df20c7b2c2bee59ba53b802cc48566bc3e89ac96ce6361c5c2ee38",
+      "size": 58018
+    },
+    "libraries/org/scala-lang/scala-compiler/2.11.1/scala-compiler-2.11.1.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-compiler:2.11.1",
+        "sha1": "56ea2e6c025e0821f28d73ca271218b8dd04926a",
+        "size": 13449765,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-compiler/2.11.1/scala-compiler-2.11.1.jar"
+      },
+      "sha256": "3aa616f5c56d2052fc5e3231f3e8cf1736f876caff0142a66096fc5b4dc87ae5",
+      "size": 13449765
+    },
+    "libraries/org/scala-lang/scala-library/2.11.1/scala-library-2.11.1.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-library:2.11.1",
+        "sha1": "0e11da23da3eabab9f4777b9220e60d44c1aab6a",
+        "size": 5538130,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-library/2.11.1/scala-library-2.11.1.jar"
+      },
+      "sha256": "088bcb80f71b6e6a2a31d2fe7288c1fd64f19663ce281b924cdfab3fb105f4f3",
+      "size": 5538130
+    },
+    "libraries/org/scala-lang/scala-parser-combinators_2.11/1.0.1/scala-parser-combinators_2.11-1.0.1.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-parser-combinators_2.11:1.0.1",
+        "sha1": "f05d7345bf5a58924f2837c6c1f4d73a938e1ff0",
+        "size": 419701,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-parser-combinators_2.11/1.0.1/scala-parser-combinators_2.11-1.0.1.jar"
+      },
+      "sha256": "19495ce701fd9ba3c499c137e3ad5364acee8f87a01ef99e912f995a23fd4cb1",
+      "size": 419701
+    },
+    "libraries/org/scala-lang/scala-reflect/2.11.1/scala-reflect-2.11.1.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-reflect:2.11.1",
+        "sha1": "6580347e61cc7f8e802941e7fde40fa83b8badeb",
+        "size": 4372892,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-reflect/2.11.1/scala-reflect-2.11.1.jar"
+      },
+      "sha256": "41938d1e89670979dd783102777a8b879999f4fb00a5b811b51c105b02a9d4f8",
+      "size": 4372892
+    },
+    "libraries/org/scala-lang/scala-swing_2.11/1.0.1/scala-swing_2.11-1.0.1.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-swing_2.11:1.0.1",
+        "sha1": "b1cdd92bd47b1e1837139c1c53020e86bb9112ae",
+        "size": 726500,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-swing_2.11/1.0.1/scala-swing_2.11-1.0.1.jar"
+      },
+      "sha256": "4a7c757d4d87dd37382bd777ad611b5875748aef148277cf25bb39eebb496d07",
+      "size": 726500
+    },
+    "libraries/org/scala-lang/scala-xml_2.11/1.0.2/scala-xml_2.11-1.0.2.jar": {
+      "installer": {
+        "coordinate": "org.scala-lang:scala-xml_2.11:1.0.2",
+        "sha1": "7a80ec00aec122fba7cd4e0d4cdd87ff7e4cb6d0",
+        "size": 648679,
+        "url": "https://maven.minecraftforge.net/org/scala-lang/scala-xml_2.11/1.0.2/scala-xml_2.11-1.0.2.jar"
+      },
+      "sha256": "6c3338a4062c13dc2ce61630d9854d361a81656a4050e5080302f500dd4a8832",
+      "size": 648679
+    },
+    "minecraft_server.1.12.2.jar": {
+      "installer": {
+        "coordinate": "com.mojang:minecraft-server:1.12.2",
+        "sha1": "886945bfb2b978778c3a0288fd7fab09d315b25f",
+        "size": 30222121,
+        "sourceNote": "URL/SHA-1 from retained installer log",
+        "url": "https://piston-data.mojang.com/v1/objects/886945bfb2b978778c3a0288fd7fab09d315b25f/server.jar"
+      },
+      "sha256": "fe1f9274e6dad9191bf6e6e8e36ee6ebc737f373603df0946aafcded0d53167e",
+      "size": 30222121
+    },
+    "mods/OpenComputers.jar": {
+      "installer": {
+        "coordinate": "li.cil.oc:OpenComputers:1.8.9a+8ca336f",
+        "sha1": null,
+        "size": 16630725,
+        "sourceNote": "bootstrap direct artifact URL; bootstrap SHA-256 authoritative",
+        "url": "https://github.com/MightyPirates/OpenComputers/releases/download/1.12.2-forge/1.8.9a/OpenComputers-MC1.12.2-1.8.9a%2B8ca336f.jar"
+      },
+      "sha256": "82723dd69fea7496e7dc448aa97f48295efb642547d3e66de45263e9b9063d72",
+      "size": 16630725
+    }
+  }
+}

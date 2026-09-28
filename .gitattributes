@@ -1,0 +1,5 @@
+# Preserve tested source/package bytes across Windows and POSIX checkouts.
+* -text whitespace=cr-at-eol
+*.jar binary
+*.png binary
+*.zip binary

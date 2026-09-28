@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 3,
+  "id": "mining-example",
+  "program": {"directory": "program", "entry": "main.lua"},
+  "world": {
+    "region": {"min": [-2, 64, -5], "max": [2, 67, 1]},
+    "blocks": [
+      {"min": [-2, 64, -5], "max": [2, 64, 1], "block": "minecraft:stone"},
+      {"min": [-2, 65, -5], "max": [2, 67, 1], "block": "minecraft:air"},
+      {"min": [0, 65, -4], "max": [0, 65, -1], "block": "minecraft:stone"}
+    ]
+  },
+  "robot": {"position": [0, 65, 0], "facing": "north", "energy": 20000,
+    "hardware": {"preset": "hardware/tier3.json"}},
+  "execution": {"mode": "coordinated", "executionDelayMillis": 12, "maxTicks": 10000, "timeoutSeconds": 600},
+  "observations": {"everyTicks": 10},
+  "expect": {
+    "position": [0, 65, 0],
+    "blocks": [{"position": [0, 65, -4], "block": "minecraft:air"}],
+    "inventory": [{"item": "minecraft:cobblestone", "minCount": 4}]
+  }
+}
