@@ -10,6 +10,7 @@ __pycache__/
 *.log
 .playwright-cli/
 .pi/
+.worktrees/
 
 # Private inputs and evidence: keep user programs/worlds outside the public source.
 .taskreports/
