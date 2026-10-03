@@ -157,7 +157,7 @@ Wall budget starts before input preparation. Tick budget includes engine setup/b
 
 `stallTicks` counts absence of changes in sampled region/robot position, facing, energy or inventory. It is opt-in and continues observing even if recording stops. Energy changes may prevent it from firing while Lua does no useful work; sleeping is not inherently stuck. Use final assertions and program-aware checks for stronger requirements.
 
-`executionDelayMillis:0` explicitly changes OC worker scheduling configuration; it is not required for acceleration. Comparisons should match that setting and hardware, and account for random state and native cross-run scheduling variation. Native callbacks and world simulation execute unchanged; exact replay of arbitrary programs, CPU timings or stochastic worlds is not promised. See [README](README.md#fidelity-and-performance) for measured results and boundaries.
+`executionDelayMillis:0` explicitly changes OC worker scheduling configuration; it is not required for acceleration. Comparisons should match that setting and hardware, and account for random state and native cross-run scheduling variation. Native callbacks and world simulation execute unchanged; exact replay of arbitrary programs, CPU timings or stochastic worlds is not promised. See [README](README.md#how-accurate-is-it) for measured results and boundaries.
 
 ## Recording and playback
 
