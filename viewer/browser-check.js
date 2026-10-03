@@ -8,7 +8,7 @@ async page => {
   const seek=async n=>{await page.locator('#timeline').evaluate((el,value)=>{el.value=String(value);el.dispatchEvent(new Event('input',{bubbles:true}));},n);await ready(n);};
   const checks=[];
   await page.goto(base+'/synthetic.html');await ready(0);
-  assert(await page.locator('#coverage').innerText()==='Final sample recorded.','complete coverage');
+  assert(await page.locator('#coverage').innerText()==='Recording complete.','complete coverage');
   assert(await page.locator('#energy').innerText()==='100','initial energy');
   assert((await page.locator('#console').innerText()).includes('</script>'),'console text retained');
   assert(await page.evaluate(()=>typeof globalThis.INJECTED)==='undefined','script injection');
@@ -31,8 +31,8 @@ async page => {
   assert(await page.locator('#energy').innerText()==='80','playback final');
   checks.push('scrub/step/height/energy/inventory/play/end/inert text');
   await page.goto(base+'/partial.html');await ready(0);
-  assert((await page.locator('#coverage').innerText()).includes('No final sample'),'missing final');
-  assert((await page.locator('#limits').innerText()).includes('Incomplete last line'),'partial line');
+  assert((await page.locator('#coverage').innerText()).includes('ended early'),'missing final');
+  assert((await page.locator('#limits').innerText()).includes('last line'),'partial line');
   assert(await page.locator('#timeline').getAttribute('max')==='0','cannot project missing interval');
   checks.push('partial/missing-final coverage');
   await page.goto(base+'/stress.html');await ready(0);
@@ -63,8 +63,8 @@ async page => {
   assert(await page.locator('#inventory').innerText()===JSON.stringify({inventory:evidence.last.robot.inventory,tool:evidence.last.robot.tool},null,2),'actual inventory and tool');
   assert(Number(await page.locator('#map').getAttribute('data-tick'))===evidence.summary.lastTick,'actual retained end');
   if(evidence.summary.observationCoverage?.recordingStopped) {
-    assert((await page.locator('#coverage').innerText()).includes('Capture stopped'),'actual retention warning');
-    assert((await page.locator('#coverage').innerText()).includes('No final sample'),'actual retained missing final');
+    assert((await page.locator('#coverage').innerText()).includes('size limit'),'actual retention warning');
+    assert((await page.locator('#coverage').innerText()).includes('ended early'),'actual retained missing final');
     assert(evidence.summary.lastTick<evidence.summary.observationCoverage.lastObservedTick,'later observed state not projected');
   }
   await page.screenshot({path:__SCREENSHOT__,fullPage:true});

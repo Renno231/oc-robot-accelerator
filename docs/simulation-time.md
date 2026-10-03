@@ -1,60 +1,63 @@
-# Simulation time and acceleration
+# How acceleration works
 
-OC Robot Accelerator executes the pinned Minecraft 1.12.2 / Forge 14.23.5.2860 / OpenComputers 1.8.9a runtime. It compresses idle host waiting while retaining native simulated work. Arbitrary-workload equivalence and deterministic whole-world replay are not established.
+A normal Minecraft server spends most of its time sleeping: it runs a tick, then waits until 50 ms have passed before running the next one. OpenComputers adds its own waits on top of that, resuming each Lua coroutine no sooner than 12 ms after it yields. For a robot program, most real time goes to those waits, not to actual work.
 
-## Three clock responsibilities
+The accelerator removes the waiting and keeps the work. Every world tick still runs, in order. Action delays, power use, charging, tool wear, and autosaves all happen exactly as natively. The difference is that when nothing is ready to run, the clock jumps ahead to the next thing that is, instead of sleeping until then.
 
-1. **Simulation/environment time:** world tick deadlines, native worker-delay deadlines and selected guest-visible elapsed-time/metadata inputs.
-2. **Active execution time:** time actually consumed by native Lua/native computation. Long worker passes remain asynchronous so native world ticks can occur during computation. CPU tiers do not define an invented Lua instructions-per-second rate.
-3. **Host supervision time:** cancellation, wall budgets, CPU/I/O watchdogs, termination and cleanup use real host deadlines. They never jump with simulation time.
+## Three clocks
 
-Schema 3 selects idle-compressed execution by default with the native 12 ms worker-delay setting. `baseline` is the native-speed reference; `paced` uses the coordinator without idle jumps. Selecting a zero worker delay changes the scheduling profile and is not required for acceleration.
+The runner keeps three kinds of time separate:
 
-## Ownership
+1. **Simulation time**: world ticks, OC's worker-delay deadlines, and the clocks Lua can see (`computer.uptime()`, `os.time()`, file timestamps). This is the clock that jumps.
+2. **CPU time**: how long Lua and native code actually take to run. This never jumps. Long Lua work stays asynchronous, so world ticks keep happening during it, just like in the real game.
+3. **Host time**: real wall-clock time, used for cancellation, timeouts, watchdogs, and cleanup. This never jumps either.
 
-- `src/main/java/ocelot/spike/RunnerScheduler.java` owns temporal accounting, native worker tickets, eligibility, reservations and idle-jump decisions.
-- `RunnerAsyncWork.java` tracks native background work through admission/completion. Outstanding native file writes conservatively prevent jumps.
-- `Pacing.java` and `PacingTransformer.java` connect that ownership to pinned engine clock/dispatch sites. Exact transformer hook counts are tested against the acquired binary classes.
-- `RunnerRuntime.java` owns the concrete world/robot lifecycle. `RunnerHardware.java` uses native assembler validation.
-- `RunnerObservations.java` samples immutable observations; it does not own time.
-- Python scenario/jobs/supervisor modules own validated inputs, process admission, real-host limits and cleanup. Callers never coordinate individual worker passes.
+Mixing these up would break things. For example, a global fake clock would make OC's watchdog think code ran instantly.
 
-The Java namespace, control-mod identifiers and legacy disk names remain stable compatibility identifiers; they do not introduce a dependency on another repository.
+## When the clock is allowed to jump
 
-## Idle-jump rule
+Only when everything is idle: no Lua is running or due to run, no tracked background work (like a pending file write) is outstanding, and the next deadline is known. A task that's due but waiting for a worker thread counts as busy, not idle.
 
-A jump is permitted only when tracked behavior-affecting participants are quiescent, no event is runnable, and the next relevant deadline is known. Enqueue/reservation and jump decisions share one temporal owner. A due task waiting for a host worker is runnable, not idle.
+When it jumps, it skips to the earlier of the next worker deadline and the end of the server's sleep, and credits the skipped time exactly once. A Lua coroutine that yields with zero delay counts as runnable, so it can't be used to manufacture free time.
 
-At the native server sleep boundary, skip only to the earlier of the next eligible worker deadline and the end of the requested idle interval. Credit the server accumulator with the skipped duration exactly once. World ticks, action pauses, power debits, charger updates and saves still execute.
+## Modes
 
-Active Lua/native work or an unresolved asynchronous completion prevents an idle jump. Native world-tick opportunities remain available during a long worker pass. A zero-delay yield is runnable work; it cannot manufacture simulated time from an arbitrary resume quota.
+Schema-3 scenarios default to `coordinated` (accelerated), with OC's normal 12 ms worker delay. `baseline` runs at native speed for comparison. `paced` uses the accelerator's scheduling without the jumps, which is useful for debugging. Setting the worker delay to 0 is allowed but changes OC's behavior, and it isn't needed for acceleration.
 
-Selected environment clocks share skipped-time accounting. CPU-active accounting and supervision clocks remain native. Clock hooks are selective: globally replacing every host clock would mix diagnostics, persistence, watchdog and guest responsibilities.
+## Where the code lives
 
-## Native facts and limits
+All under `src/main/java/ocelot/spike/`:
 
-OpenComputers source pin: `8ca336fbeb92d2a29f86f9a658bb9d6bd6f07dbb` (`1.12.2-forge/1.8.9a`). Relevant upstream paths are relative to that source tree:
+- `RunnerScheduler.java`: owns the time accounting and decides when a jump is safe.
+- `RunnerAsyncWork.java`: tracks background work. Pending native file writes block jumps.
+- `Pacing.java` and `PacingTransformer.java`: hook the scheduler into the server's clock and OC's dispatch. Tests check the hook counts against the real downloaded classes.
+- `RunnerRuntime.java`: world and robot lifecycle. `RunnerHardware.java` builds robots through OC's native assembler.
+- `RunnerObservations.java`: samples state for the replay. It doesn't touch time.
 
-| Mechanism | Native source | Consequence |
+The Python side (scenario, jobs, supervisor) handles input validation, process ownership, real-time limits, and cleanup.
+
+The Java package is still named `ocelot.spike` for compatibility. It doesn't depend on any other repository.
+
+## The relevant OpenComputers code
+
+From OC source `8ca336fbeb92d2a29f86f9a658bb9d6bd6f07dbb` (`1.12.2-forge/1.8.9a`):
+
+| What | Where | Why it matters |
 |---|---|---|
-| Robot actions | `server/component/Robot.scala`, `Agent.scala` | Execute actual callbacks and resource effects. |
-| Machine ticks and dispatch | `server/machine/Machine.scala` | Preserve uptime, direct-call budget reset, power debit, sleep, synchronized calls and asynchronous worker ordering. |
-| CPU versus environment clocks | `server/machine/luac/OSAPI.scala`, `ComputerAPI.scala` | CPU time is host execution time; uptime/game date derive from ticks. |
-| Worker delay | `src/main/resources/application.conf` | The default delay is 12 ms; scheduling is a minimum, not an OS dispatch guarantee. |
-| Saves and file timestamps | `Machine.scala`, `server/fs/Buffered.scala`, `FileInputStreamFileSystem.scala` | Preserve native pause/locking and guest-visible environment timestamps. |
-| Background persistence | `common/SaveHandler.scala`, Forge `ChunkIOExecutor`, Minecraft `ThreadedFileIOBase` | An idle Lua machine alone is insufficient to justify a jump. |
-| Randomness | Native agent RNG and Lua/data-card facilities | A configured robot wear seed is not whole-world/Lua/random-state replay. |
+| Robot actions | `server/component/Robot.scala`, `Agent.scala` | Real callbacks with real costs |
+| Machine ticks | `server/machine/Machine.scala` | Uptime, call budgets, power use, sleep, and synchronized calls |
+| CPU vs. game clocks | `server/machine/luac/OSAPI.scala`, `ComputerAPI.scala` | CPU time is real time; uptime and game date come from ticks |
+| Worker delay | `src/main/resources/application.conf` | 12 ms by default, and only a minimum |
+| Saves and file timestamps | `Machine.scala`, `server/fs/Buffered.scala`, `FileInputStreamFileSystem.scala` | Save locking and timestamps Lua can see |
+| Background saving | `common/SaveHandler.scala`, Forge `ChunkIOExecutor`, Minecraft `ThreadedFileIOBase` | Why an idle Lua machine alone isn't enough to allow a jump |
+| Randomness | Robot RNG, Lua and data-card randomness | The robot seed only covers tool wear, not the whole world |
 
-The supported clock/async hooks and native restrictions define the demonstrated profile. Additional mods, unknown asynchronous participants and arbitrary copied-world behaviors do not inherit a universal fidelity claim.
+## How close is it to native?
 
-## Equivalence obligations
+If everything above holds, an accelerated run should produce the same action results, world state, energy, inventory, tool wear, and files as a native one, just faster.
 
-For equivalent initial native state and the same relevant environment inputs, execution durations, permitted scheduling and random-state treatment, acceleration should preserve guest-observable action results, world state, signals, timestamps, energy, inventory, wear and files while reducing host waiting.
+In the 48-block mining comparison, all 144 action results matched, along with tool wear, the final blocks, inventory, and robot position. Exact timing and energy differed slightly around an autosave, but two plain native runs also differ from each other there. Programs that depend on precise timing or randomness should still be checked against a `baseline` run.
 
-That argument requires complete work/deadline ownership, atomic quiescence decisions, relevant clock coverage, preserved native transition bodies/locks, and consistent event ordering. Matching example traces do not prove those premises for every workload. Cancellation or a resource-limit abort is an explicit supervisor outcome, never fabricated successful simulation.
+Tests cover the tricky cases: races between scheduling and jumping, long Lua work spanning world ticks, zero-delay yields, signals vs. sleep, autosave locking, guest clocks, background work, cancellation, and limits.
 
-## Verification boundaries
-
-Tests cover enqueue/jump races, long worker passes spanning world ticks, zero-delay yields, signals versus sleep, native worker delay, autosave locking, guest clocks, asynchronous completion, cancellation and CPU/tick limits. Use deterministic inputs for algorithm tests and keep native cross-process comparisons separate from coordinator consistency tests.
-
-The measured 48-block comparison matched all 144 action values, seeded wear, final observed blocks, inventory and pose while running faster. Exact timing and energy journals differed near autosave; the strict comparison failed. A native-only repeat also differed at that boundary. This does not explain every acceleration discrepancy or establish unrestricted equivalence. See `README.md` for measured behavior and limitations; detailed test evidence is retained locally.
+Other mods may add background work the scheduler doesn't know about, so this only covers the supported Minecraft/Forge/OC versions.

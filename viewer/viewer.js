@@ -14,12 +14,12 @@
   let index = -1, applied = -1, token = 0, playIntent = 0, busy = false, playing = false, clock = 0, playTick = 0;
   text('identity', 'Job '+data.jobId+' · '+rows.length+' samples · ticks '+rows[0].tick+'–'+rows[rows.length - 1].tick);
   const checkpoint = summary.observationCoverage;
-  const recordingStop = checkpoint?.recordingStopped ? ' Capture stopped at its byte limit; checkpoint observed through tick '+checkpoint.lastObservedTick+'.' : '';
-  text('coverage', (summary.finalRecorded ? 'Final sample recorded.' : 'No final sample recorded — later state is unknown.')+recordingStop);
-  text('limits', 'Region '+low.join(', ')+' → '+high.join(', ')+'. Sampling cadence '+summary.everyTicks+' ticks; transient changes can be missed. Coverage checkpoint: '+summary.coverageStatus+'.'+(summary.truncatedLastLine ? ' Incomplete last line excluded.' : '')+' Playback ends at the last retained sample, not the job end.');
+  const recordingStop = checkpoint?.recordingStopped ? ' Recording hit its size limit; the run continued to at least tick '+checkpoint.lastObservedTick+'.' : '';
+  text('coverage', (summary.finalRecorded ? 'Recording complete.' : 'Recording ended early, so the end of the run is not shown.')+recordingStop);
+  text('limits', 'Region '+low.join(', ')+' → '+high.join(', ')+', sampled every '+summary.everyTicks+' ticks, so very brief changes may not show.'+(summary.coverageStatus && summary.coverageStatus !== 'consistent' ? ' Progress file: '+summary.coverageStatus+'.' : '')+(summary.truncatedLastLine ? ' The last line of the recording was incomplete and was skipped.' : ''));
   text('warning', data.warning);
   text('console', data.console.text || '(no captured console text)');
-  text('console-status', data.console.status+(data.console.truncated ? ' · retained tail from byte '+data.console.offset+' of '+data.console.sourceSize : '')+'. Not indexed by sample tick.');
+  text('console-status', data.console.status+(data.console.truncated ? ' · showing the end, from byte '+data.console.offset+' of '+data.console.sourceSize : '')+'.');
   text('result', json({job: data.job, result: data.result}));
   $('timeline').max = String(rows.length - 1);
   for (let y = low[1]; y <= high[1]; y++) {

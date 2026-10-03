@@ -60,7 +60,7 @@ def export(root, jobid, output):
     payload={'schemaVersion':1,'jobId':jobid,'job':jobs.status(root,jobid),
              'summary':state['summary'],'records':records,'console':console,
              'result':_optional_json(job/'runtime/result.json',1024*1024),
-             'warning':'Offline sampled recording, not deterministic resimulation. No state is projected beyond recorded time. Console and final results are not time-aligned to samples. Export may contain sensitive output and paths; review before sharing.'}
+             'warning':'This replay shows recorded samples, not a re-run. It can include console output and file paths, so check it before sharing.'}
     # Base64 keeps every untrusted string out of HTML syntax and executable code.
     raw=json.dumps(payload,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode('utf-8')
     check()
