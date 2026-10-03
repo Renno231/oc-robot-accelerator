@@ -93,7 +93,7 @@ Action results, blocks, inventory, and position matched in testing. Exact action
 
 ## A note on safety
 
-Runs execute under your own user account with a real Minecraft server. Only run Lua programs and worlds you trust.
+Runs use a real Minecraft server running locally as a normal program on your PC, with the same access to your files that you have. Only run Lua programs and worlds you trust. (No Minecraft account or login is needed.)
 
 ## Development
 
