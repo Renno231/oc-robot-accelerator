@@ -42,7 +42,7 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(attack,data['records'][0]['blocks'][0]['block'])
         self.assertEqual(attack,data['console']['text']); self.assertNotIn(attack,html)
         self.assertIn("connect-src 'none'",html); self.assertIn("default-src 'none'",html)
-        self.assertNotIn('src="http',html); self.assertIn('Recorded samples',html)
+        self.assertNotIn('src="http',html); self.assertIn('Robot replay',html)
         self.assertTrue(data['summary']['finalRecorded']); self.assertEqual(before,self.path.read_bytes())
         self.assertEqual('unavailable',data['job']['state'])
 
