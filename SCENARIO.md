@@ -96,6 +96,157 @@ The creative case never runs out, but the charger behaves normally: it needs red
 
 An empty creative case is the one exception to the "no other computers" rule, and only in schema 3. The runner checks every tick that it stays empty and switched off; putting anything in it fails the job. Copied worlds may contain such cases too.
 
+## Drones and containers (schema 4)
+
+Schema 4 uses either `robot`, or `drones` with an optional `computer` (never a robot
+and computer together). A computer may have zero drones; without a computer,
+`drones` must contain 1–4 entries. Robot scenarios keep the schema-3
+hardware, program, defaults and execution semantics. Drone scenarios omit `program`:
+each drone boots its own EEPROM directly, without OpenOS or a disk.
+Drone/computer scenarios accept `baseline` (the default) and `coordinated`;
+`paced` is not accepted for these scenarios.
+
+`drones` contains 1–4 entries:
+
+```json
+"drones": [{
+  "position": [0,65,0], "eeprom": "eeprom.lua", "eepromData": "",
+  "energy": 4000,
+  "hardware": {"tier": 2, "cpu": "cpu1", "memory": ["ram2"],
+               "cards": [], "upgrades": ["inventoryupgrade", "inventorycontrollerupgrade"]},
+  "inventory": []
+}]
+```
+
+Hardware names are OC item names. Tier is 1, 2, or `"creative"`; CPU and nonempty
+memory are required. Memory is bounded to two modules, cards to three, upgrades to
+nine; OC's **native drone assembler** decides which components actually fit each
+tier and whether complexity is legal. No robot presets, storage or containers are
+accepted in drone hardware. One inventory upgrade provides four drone slots;
+two provide the native maximum of eight.
+
+EEPROM paths are scenario-local regular `.lua` files with the same path/link rules
+as other inputs, frozen with each job. Setup rejects code/data larger than OC's
+configured EEPROM limits (UTF-8 bytes). Optional energy must be finite, positive
+and no greater than the assembled native capacity; omission keeps OC's native
+assembly energy. Optional inventory uses the robot item shape, with slots 1–8;
+setup also checks the actual installed inventory capacity.
+
+Placement uses OC's native entity initialization and world spawning, at
+`[x+0.5,y,z+0.5]`. Native gravity and the native start target affect subsequent
+positions; there is no teleport or position correction. Results report declared,
+actual spawn, final exact and final block-containing positions. Drones finish when
+all native machines reach `Stopped`; clean `computer.shutdown()` is success, while
+any machine error or tick/time limit is failure.
+
+Both kinds of v4 scenarios can declare up to 64 block inventories:
+
+```json
+"containers": [{"position": [0,64,0], "block": "minecraft:chest",
+                "slots": [{"slot": 1, "item": "minecraft:iron_ingot", "count": 64}]}],
+"expect": {
+  "containers": [{"position": [0,64,0], "slots": [{"slot": 1, "count": 0}]}],
+  "drones": [{"index": 0, "blockPosition": [6,65,0],
+              "inventory": [{"slot": 1, "count": 0}]}]
+}
+```
+
+Container positions must be unique and inside the region. Setup places the block,
+clears its physical tile inventory and fills the listed slots (same metadata/NBT
+shape as robot inventory). Slots are one-based, bounded to 64, and checked against
+the native block inventory. Results include all declared containers' final contents.
+Container expectations must reference a declared container. Listed expected slots
+match item ID and count exactly; count 0 means empty, with or without an item ID.
+A positive count requires an item ID. Unlisted slots are unconstrained.
+
+Drone expectation indices are **zero-based**; inventory slots are **one-based**.
+`blockPosition` and `inventory` are optional checks. Drone scenarios may also use
+`expect.blocks`, but not robot-level `expect.position` or `expect.inventory`.
+Failures identify the container/drone and the failing slot or position.
+Periodic observations use the existing cadence and recording bounds, with drone
+positions, energy and container contents. `observations` summaries support these
+records; browser replay support for drones is not included.
+
+Native examples: `examples/drones/sides` proves absolute side numbering,
+`examples/drones/transfer` carries 64 iron ingots six blocks, and
+`examples/drones/error` intentionally fails with `boom`.
+
+### OpenOS controller, wireless and finite power
+
+A schema-4 `computer` has a position, a native case recipe and its own program tree:
+
+```json
+"computer": {
+  "position": [-3,65,2],
+  "hardware": {"tier": 3, "cpu": "cpu3", "memory": ["ram6"],
+               "cards": ["wlancard2"], "storage": ["hdd3"], "bootDrive": 0},
+  "program": {"directory": "program", "entry": "main.lua"}
+},
+"blocks": [{"position": [-4,65,2], "block": "opencomputers:capacitor", "energy": 1600}]
+```
+
+Case tier is 1–3 (finite power only), memory is 1–2 modules, cards up to three,
+storage is 1–2 HDDs, and `bootDrive` is a zero-based storage index. CPU, memory,
+storage and bootDrive are required. The case's own host-aware native slot validator
+checks component kinds/tiers; the real machine checks CPU, RAM and component limits.
+No upgrades, robot containers, presets or creative power case are added for computers.
+The pinned BIOS/OpenOS, frozen program paths and entry wrapper are exactly the robot
+program mechanism, including `require`, console capture, return/error status and
+shutdown. Program remains nested inside `computer`; there is no root-level `program`
+in a computer/drone scenario.
+
+In coordinated mode the scheduler owns every scenario drone and both computers;
+an unexpected OC machine fails the run rather than using an untracked scheduler.
+With a computer present, the run
+ends as soon as its entry returns successfully or reports an error; drones need not
+stop. Final assertions still apply, and any drone error observed during the run is
+latched even if a later native wake clears that machine's last error. Results contain
+`computer` position/state/error/network energy and program status, root `program`
+status as with robots, and `program.log`. Samples also include the computer's state.
+Without a computer, the existing all-drones-stopped completion rule is unchanged.
+
+An optional `secondComputer` uses the same recipe and native power/boot/observation
+checks as `computer`. It requires a primary computer and a different position.
+Give it a separate scenario-local program directory (for example `client`);
+the two program sources and any source world must not overlap. Each program tree
+has the usual 4 MiB/256-entry/1 MiB-per-file bounds and is frozen independently.
+The second source is normalized to `second-program`; on each independent native
+HDD its entry still runs from `/home/program`. With two computers, success waits
+for **both** entries to return; an error on either fails the run. Results and samples
+include `secondComputer`, including its program status; its host console and input
+manifest are `second-program.log` and `second-program-inputs.json`.
+`examples/mapping/service` and `examples/mapping/actions` exercise this layout.
+
+Top-level `blocks` is separate from `world.blocks` volumes: up to 128 single-block
+placements `{position,block,properties?,energy?}` inside the region, applied after
+world volumes and before containers/hosts. Duplicate positions within this list are
+rejected. Properties use the existing bounded block-state shape. This new placement
+field supports coordinated mode as well as baseline. Scenarios using this field
+default to `baseline`; an explicit `execution.mode` overrides that default.
+
+Optional `energy` is a finite number from 0 to 2,147,483,647, checked against the
+native **local connector capacity** after native network initialization. Only native
+non-machine OC connector blocks can receive it; a normal block or case cannot. The
+runner fills the connector once during setup through OC's own buffer API, never
+refills it, and never disables power costs. Capacitor capacity depends on native
+adjacency, so adding energy greater than its real capacity fails setup. A standalone
+capacitor's default capacity is 1600. Cases, chargers and cables connect and draw power
+through the real network; wireless traffic uses real OC cards and their power costs.
+
+Drone expectations additionally accept `minEnergy` (finite, nonnegative) and
+`running` (boolean, native `machine.isRunning()`, not a particular transient scheduler
+state). `lastError` and latched `observedError` are reported for each drone. Clean wake
+and shutdown remain native operations, without harness restarts or state persistence.
+
+Native examples: `link` pairs a wireless OpenOS controller and drone for a directed
+64-iron transfer and return; `wake` proves wrong-token rejection and native directed
+wake, recording whether the waking packet is visible after boot; `charge` fills one
+capacitor once and observes a real redstone-enabled charger raising drone energy from
+500 to at least 2000. All three use the standard tier-2 drone recipe with CPU1, RAM1,
+WLAN2, inventory controller and inventory upgrade. The wake example stores the
+controller address alongside its six-character token in native EEPROM data during
+the run, solely to direct the reboot's reply when the waking packet is not visible.
+
 ## A minimal scenario
 
 ```json
@@ -128,7 +279,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 
 | Field | Meaning |
 |---|---|
-| `schemaVersion` | 1, 2, or 3. Required. Use 3 for anything new. |
+| `schemaVersion` | 1–4. Required. Use 3 for robots or 4 for drones/declared containers. |
 | `id` | Scenario name matching `[a-z][a-z0-9-]{0,62}`. Required. Each job also gets its own generated ID. |
 | `program.directory` | Folder with your Lua program, inside the scenario folder. Required. |
 | `program.entry` | `.lua` file to run, relative to that folder. Default `main.lua`. |

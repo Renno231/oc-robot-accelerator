@@ -253,6 +253,8 @@ def _install(inputs, root, execution, check):
     check(); (root/'runner-scenario.json').write_bytes(data)
     hashes['runner/runner-scenario.json'] = supervisor._digest(root/'runner-scenario.json',float('inf'),check)
     for name, cap, entries in [('program',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
+                               ('second-program',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
+                               ('eeprom',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
                                ('world',scenario.WORLD_BYTES,scenario.WORLD_ENTRIES)]:
         source = inputs/name
         if source.exists():
@@ -301,7 +303,10 @@ def worker(root, jobid, token):
     try:
         outcome = supervisor.execute(args,root=job/'runtime',start=launch['start'],deadline=launch['deadline'],
                                      check=check,prepare=lambda runtime,hook:_install(job/'inputs',runtime,execution,hook),
-                                     scenario_id=launch['scenarioId'],on_launch=on_launch)
+                                     scenario_id=launch['scenarioId'],on_launch=on_launch,
+                                     drone_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('drones', [])),
+                                     computer_present='computer' in scenario.read_json(job/'inputs/runner-scenario.json'),
+                                     second_present='secondComputer' in scenario.read_json(job/'inputs/runner-scenario.json'))
         report = outcome['report']; cleanup_ok = report['cleanup_ok']
         state = 'cancelled' if report['cancelled'] else report['status']
         value.update(state=state,reason=report['reason'][:2048],runtime='runtime',

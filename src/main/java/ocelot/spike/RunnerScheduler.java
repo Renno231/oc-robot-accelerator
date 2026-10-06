@@ -4,7 +4,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
 
-/** One native machine's temporal owner. Only globally idle waiting may be skipped. */
+/** Scenario machines' temporal owner. Only globally idle waiting may be skipped. */
 public final class RunnerScheduler implements AutoCloseable {
     static final Object LOCK=new Object();
     private static volatile RunnerScheduler active;
@@ -13,7 +13,7 @@ public final class RunnerScheduler implements AutoCloseable {
     private final BooleanSupplier externalIdle;
     private final PriorityQueue<Ticket> pending=new PriorityQueue<>(Comparator.comparingLong(ticket->ticket.due));
     private final Set<Ticket> running=new HashSet<>();
-    private Runnable machine;
+    private final Set<Runnable> machines=Collections.newSetFromMap(new IdentityHashMap<>());
     private long skippedNanos,creditedMillis,workerPasses;
     private volatile boolean closed;
     private Throwable failure;
@@ -30,17 +30,23 @@ public final class RunnerScheduler implements AutoCloseable {
     }
     void attach(Runnable target) {
         synchronized(LOCK) {
-            if(machine!=null || target==null || closed) throw new IllegalStateException("scheduler_machine_ownership");
-            machine=target;
+            if(target==null || closed || !machines.add(target)) throw new IllegalStateException("scheduler_machine_ownership");
         }
     }
     private long now() {return System.nanoTime()+skippedNanos;}
 
-    /** Exact native Machine.switchTo hook. Legacy and unrelated machines pass through. */
+    /** Exact native Machine.switchTo hook. Non-machine executor work remains native. */
     public static ScheduledFuture<?> schedule(ScheduledExecutorService executor,Runnable task,long delay,TimeUnit unit) {
         synchronized(LOCK) {
             RunnerScheduler owner=active;
-            if(owner==null || task!=owner.machine) return executor.schedule(task,delay,unit);
+            if(owner==null) return executor.schedule(task,delay,unit);
+            if(!owner.machines.contains(task)) {
+                if(task instanceof li.cil.oc.server.machine.Machine) {
+                    IllegalStateException error=new IllegalStateException("scheduler_unowned_oc_machine");
+                    owner.failure=error;throw error;
+                }
+                return executor.schedule(task,delay,unit);
+            }
             long nanos=unit.toNanos(delay);
             if(nanos<0 || nanos>TimeUnit.MILLISECONDS.toNanos(12)) throw new IllegalStateException("scheduler_delay");
             Ticket ticket=owner.new Ticket(executor,task,owner.now()+nanos);
@@ -108,6 +114,9 @@ public final class RunnerScheduler implements AutoCloseable {
         }
     }
     static boolean ownsPacer() {return active!=null;}
+    static void attachMachine(Runnable machine) {
+        RunnerScheduler owner=active;if(owner!=null) owner.attach(machine);
+    }
     public static long environmentMillis() {
         synchronized(LOCK) {
             return System.currentTimeMillis()+(active==null?0:TimeUnit.NANOSECONDS.toMillis(active.skippedNanos));

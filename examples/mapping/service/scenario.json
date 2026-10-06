@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 4,
+  "id": "mapping-service",
+  "world": {
+    "region": {
+      "min": [
+        -5,
+        62,
+        -5
+      ],
+      "max": [
+        9,
+        68,
+        8
+      ]
+    },
+    "blocks": [
+      {
+        "min": [
+          -5,
+          62,
+          -5
+        ],
+        "max": [
+          9,
+          68,
+          8
+        ],
+        "block": "minecraft:air"
+      },
+      {
+        "min": [
+          -5,
+          62,
+          -5
+        ],
+        "max": [
+          9,
+          63,
+          8
+        ],
+        "block": "minecraft:stone"
+      }
+    ]
+  },
+  "computer": {
+    "position": [
+      -3,
+      65,
+      2
+    ],
+    "hardware": {
+      "tier": 3,
+      "cpu": "cpu3",
+      "memory": [
+        "ram6"
+      ],
+      "cards": [
+        "wlancard2"
+      ],
+      "storage": [
+        "hdd3"
+      ],
+      "bootDrive": 0
+    },
+    "program": {
+      "directory": "program",
+      "entry": "main.lua"
+    }
+  },
+  "drones": [],
+  "blocks": [
+    {
+      "position": [
+        -4,
+        65,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -4,
+        66,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -3,
+        66,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        66,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -4,
+        65,
+        6
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -4,
+        66,
+        6
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -3,
+        66,
+        6
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        66,
+        6
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    }
+  ],
+  "containers": [],
+  "execution": {
+    "mode": "baseline",
+    "maxTicks": 10000,
+    "timeoutSeconds": 600
+  },
+  "observations": {
+    "everyTicks": 10
+  },
+  "expect": {},
+  "secondComputer": {
+    "position": [
+      -3,
+      65,
+      6
+    ],
+    "hardware": {
+      "tier": 3,
+      "cpu": "cpu3",
+      "memory": [
+        "ram6"
+      ],
+      "cards": [
+        "wlancard2"
+      ],
+      "storage": [
+        "hdd3"
+      ],
+      "bootDrive": 0
+    },
+    "program": {
+      "directory": "client",
+      "entry": "main.lua"
+    }
+  }
+}

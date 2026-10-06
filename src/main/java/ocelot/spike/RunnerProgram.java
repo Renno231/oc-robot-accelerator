@@ -16,14 +16,16 @@ import net.minecraft.item.ItemStack;
 final class RunnerProgram implements AutoCloseable {
     private static final long CAPACITY=32L*1024*1024;
     private final Path root;
+    private final String programDirectory;
     private final Map<String,String> hashes=new TreeMap<>();
     private String diskRoot="robot-runner-disk";
     private FileSystem observer;
     private boolean borrowedObserver;
     private long capacity=CAPACITY;
-    RunnerProgram(Path root) {this.root=root;}
+    RunnerProgram(Path root) {this(root,"program");}
+    RunnerProgram(Path root,String directory) {this.root=root;this.programDirectory=directory;}
     // Test seam for the same live OC FileSystem API used by the runtime observer.
-    RunnerProgram(Path root,FileSystem observer) {this.root=root;this.observer=observer;}
+    RunnerProgram(Path root,FileSystem observer) {this(root);this.observer=observer;}
     ItemStack provision(String entry,byte[] bios) throws Exception {return provision(entry,bios,null);}
     ItemStack provision(String entry,byte[] bios,ItemStack drive) throws Exception {
         if(drive!=null) {
@@ -55,7 +57,7 @@ final class RunnerProgram implements AutoCloseable {
                 copyOS(robotRom,disk,"bin/",0);
                 if(robotRom.isDirectory("usr/man")) copyOS(robotRom,disk,"usr/man/",0);
             } finally {robotRom.close();}
-            Path program=root.resolve("program");
+            Path program=root.resolve(programDirectory);
             if(Files.isSymbolicLink(program) || !Files.isDirectory(program)) throw new IOException("Program directory absent/link");
             int[] entries={0}; long[] bytes={0};
             copyProgram(program,program,disk,entries,bytes);
@@ -82,7 +84,7 @@ final class RunnerProgram implements AutoCloseable {
             for(Map.Entry<String,String> e:hashes.entrySet()) manifest.addProperty(e.getKey(),e.getValue());
             byte[] json=manifest.toString().getBytes(StandardCharsets.UTF_8);
             if(json.length>1024*1024) throw new IOException("program-inputs manifest limit");
-            Files.write(root.resolve("program-inputs.json"),json,StandardOpenOption.CREATE_NEW);
+            Files.write(root.resolve(programDirectory+"-inputs.json"),json,StandardOpenOption.CREATE_NEW);
         } finally {disk.close();}
         if(drive!=null) return drive; // Native HDD driver retains its capacity, speed and buffering policy.
         ItemStack floppy=li.cil.oc.api.Items.registerFloppy("robot-runner-openos",EnumDyeColor.BLUE,
@@ -94,8 +96,11 @@ final class RunnerProgram implements AutoCloseable {
         return floppy;
     }
     void observeNativeDrive(li.cil.oc.api.internal.Robot robot) {
-        for(int slot=0;slot<robot.getSizeInventory();slot++) {
-            Object environment=robot.getComponentInSlot(slot);
+        observeNativeDrive(robot,robot::getComponentInSlot);
+    }
+    void observeNativeDrive(net.minecraft.inventory.IInventory inventory,java.util.function.IntFunction<Object> component) {
+        for(int slot=0;slot<inventory.getSizeInventory();slot++) {
+            Object environment=component.apply(slot);
             if(environment instanceof li.cil.oc.server.component.FileSystem) {
                 li.cil.oc.server.component.FileSystem fs=(li.cil.oc.server.component.FileSystem)environment;
                 if(diskRoot.equals(fs.node().address())) {
@@ -107,6 +112,8 @@ final class RunnerProgram implements AutoCloseable {
     }
     void borrow(FileSystem fileSystem) {observer=fileSystem;borrowedObserver=true;}
     boolean observing() {return observer!=null;}
+    String diskIdentity() {return diskRoot;}
+    void restoreDiskIdentity(String address) {diskRoot=UUID.fromString(address).toString();}
     static Path requireFreshDisk(Path saveRoot,String ocSavePath,String diskName) {
         Path disk=saveRoot.toAbsolutePath().normalize().resolve(ocSavePath+diskName).normalize();
         if(!disk.startsWith(saveRoot.toAbsolutePath().normalize())) throw new IllegalStateException("runner_disk_path_escape");
@@ -181,7 +188,7 @@ final class RunnerProgram implements AutoCloseable {
         if(!observer.exists("home/runner-console.log")) return;
         if(observer.size("home/runner-console.log")>1024*1024) throw new IOException("program_console_limit");
         int descriptor=observer.open("home/runner-console.log",Mode.Read);Handle handle=observer.getHandle(descriptor);
-            try(OutputStream out=Files.newOutputStream(root.resolve("program.log"),StandardOpenOption.CREATE_NEW)) {
+            try(OutputStream out=Files.newOutputStream(root.resolve(programDirectory+".log"),StandardOpenOption.CREATE_NEW)) {
                 byte[] buf=new byte[8192];int n;long bytes=0;
                 while((n=handle.read(buf))>0) {bytes+=n;if(bytes>1024*1024) throw new IOException("program_console_limit");out.write(buf,0,n);}
             } finally {handle.close();}

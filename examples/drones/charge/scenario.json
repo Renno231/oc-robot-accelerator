@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 4, "id": "drone-charge",
+  "world": {"region": {"min": [-2,62,-2], "max": [3,68,2]}, "blocks": [
+    {"min": [-2,62,-2], "max": [3,68,2], "block": "minecraft:air"},
+    {"min": [-2,62,-2], "max": [3,62,2], "block": "minecraft:stone"}
+  ]},
+  "drones": [{"position": [0,65,0], "energy": 500, "eeprom": "eeprom.lua",
+    "hardware": {"tier": 2, "cpu": "cpu1", "memory": ["ram1"], "cards": ["wlancard2"],
+      "upgrades": ["inventorycontrollerupgrade", "inventoryupgrade"]}}],
+  "blocks": [
+    {"position": [0,64,0], "block": "opencomputers:charger", "properties": {"facing": "north"}},
+    {"position": [1,64,0], "block": "opencomputers:capacitor", "energy": 1600},
+    {"position": [0,63,0], "block": "minecraft:redstone_block"}
+  ],
+  "execution": {"mode": "baseline", "maxTicks": 1000, "timeoutSeconds": 180},
+  "observations": {"everyTicks": 1},
+  "expect": {"drones": [{"index": 0, "minEnergy": 2000}]}
+}

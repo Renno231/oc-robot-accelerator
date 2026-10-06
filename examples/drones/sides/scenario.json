@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 4,
+  "id": "drone-sides",
+  "world": {
+    "region": {"min": [-2, 63, -2], "max": [2, 68, 2]},
+    "blocks": [{"min": [-2, 63, -2], "max": [2, 68, 2], "block": "minecraft:air"}]
+  },
+  "drones": [{
+    "position": [0, 65, 0], "eeprom": "eeprom.lua", "energy": 4000,
+    "hardware": {"tier": 2, "cpu": "cpu1", "memory": ["ram2"],
+      "upgrades": ["inventoryupgrade", "inventoryupgrade", "inventorycontrollerupgrade"]}
+  }],
+  "containers": [
+    {"position": [0, 64, 0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:iron_ingot", "count": 1}]},
+    {"position": [0, 66, 0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:gold_ingot", "count": 1}]},
+    {"position": [0, 65, -1], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:diamond", "count": 1}]},
+    {"position": [0, 65, 1], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:emerald", "count": 1}]},
+    {"position": [-1, 65, 0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:coal", "count": 1}]},
+    {"position": [1, 65, 0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:redstone", "count": 1}]}
+  ],
+  "execution": {"mode": "baseline", "maxTicks": 2000, "timeoutSeconds": 180},
+  "observations": {"everyTicks": 10},
+  "expect": {"drones": [{"index": 0, "inventory": [
+    {"slot": 1, "item": "minecraft:iron_ingot", "count": 1},
+    {"slot": 2, "item": "minecraft:gold_ingot", "count": 1},
+    {"slot": 3, "item": "minecraft:diamond", "count": 1},
+    {"slot": 4, "item": "minecraft:emerald", "count": 1},
+    {"slot": 5, "item": "minecraft:coal", "count": 1},
+    {"slot": 6, "item": "minecraft:redstone", "count": 1}
+  ]}]}
+}

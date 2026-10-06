@@ -35,6 +35,8 @@ final class RunnerRuntime {
     private RunnerObservations observations;
     private RunnerScheduler scheduler;
     private Robot robot;
+    private RunnerDrones drones;
+    private RunnerPower power;
     private Field stateField, completedWorkerField;
     private boolean booted;
     private boolean prebootObserved;
@@ -42,18 +44,33 @@ final class RunnerRuntime {
     private String status="not_returned",message="";
     RunnerRuntime(RunnerScenario spec,WorldServer world,Path root) {
         this.spec=spec;this.world=world;this.root=root;
-        if(spec.hardware!=null && !spec.mode.equals("baseline"))
+        if((spec.hardware!=null || spec.v4!=null) && !spec.mode.equals("baseline"))
             scheduler=RunnerScheduler.bind(spec.mode.equals("coordinated"),RunnerAsyncWork::nativeIdle);
     }
-    boolean ready() {return robot!=null;}
+    boolean ready() {return robot!=null || drones!=null;}
     private static BlockPos pos(int[] p) {return RunnerObservations.pos(p);}
     void setup() throws Exception {
+        if("resume".equals(System.getProperty("robotspike.reloadProbe"))) {
+            Path state=root.resolve("reload-state.json");
+            if(spec.v4==null || Files.isSymbolicLink(state) || Files.size(state)>65536) throw new IllegalStateException("reload_manifest_bound");
+            // Complete native chunk loading before resolving persisted entity UUIDs.
+            for(int x=Math.floorDiv(spec.min[0],16);x<=Math.floorDiv(spec.max[0],16);x++)
+                for(int z=Math.floorDiv(spec.min[2],16);z<=Math.floorDiv(spec.max[2],16);z++) world.getChunkProvider().provideChunk(x,z);
+            drones=new RunnerDrones(spec,world,root);
+            drones.restore(new JsonParser().parse(new String(Files.readAllBytes(state),StandardCharsets.UTF_8)).getAsJsonObject());
+            checkOtherMachines();return;
+        }
         checkOtherMachines();
         for(JsonElement entry:spec.blocks) {
             JsonObject volume=entry.getAsJsonObject(); int[] min=RunnerScenario.position(volume.get("min")),max=RunnerScenario.position(volume.get("max"));
             IBlockState state=blockState(volume);
             for(int x=min[0];x<=max[0];x++) for(int y=min[1];y<=max[1];y++) for(int z=min[2];z<=max[2];z++)
                 world.setBlockState(new BlockPos(x,y,z),state,3);
+        }
+        if(spec.v4!=null) {power=new RunnerPower(spec,world);power.setup();}
+        RunnerContainers.setup(spec,world);
+        if(spec.v4!=null && (spec.v4.drones.size()>0 || spec.v4.computer!=null)) {
+            drones=new RunnerDrones(spec,world,root);drones.setup();return;
         }
         BlockPos location=pos(spec.position);
         if(!world.isAirBlock(location)) throw new IllegalStateException("robot_cell_not_air");
@@ -118,7 +135,7 @@ final class RunnerRuntime {
         }
         throw new IllegalArgumentException("illegal block property: "+key+"="+value);
     }
-    private static IBlockState blockState(JsonObject input) {
+    static IBlockState blockState(JsonObject input) {
         String key=RunnerScenario.string(input.get("block"));ResourceLocation id=new ResourceLocation(key);
         if(!Block.REGISTRY.containsKey(id)) throw new IllegalArgumentException("unknown block: "+key);
         IBlockState state=Block.REGISTRY.getObject(id).getDefaultState();
@@ -132,6 +149,13 @@ final class RunnerRuntime {
     /** Returns terminal reason, or null if work continues. */
     String tick(long tick,String mode) throws Exception {
         checkOtherMachines();
+        if(power!=null && !power.initialize(tick)) return null;
+        if(drones!=null) {
+            if(scheduler!=null) scheduler.checkProgress();
+            String outcome=drones.tick(tick);
+            if(outcome==null && "capture".equals(System.getProperty("robotspike.reloadProbe")) && drones.captureReload()) return "reload_saved";
+            return outcome;
+        }
         if(!booted) {
             if(shouldPreparePreboot(tick,robot.node().network()!=null,prebootObserved)) {
                 Connector power=(Connector)robot.machine().node();
@@ -175,7 +199,10 @@ final class RunnerRuntime {
                 finally {workerWaitNanos+=System.nanoTime()-waitedAt;}
             }
             String state=machineState();
-            if(state.equals("Stopped")) return status.equals("returned") ? (assertions()?"passed":"assertion_failed") : "program_not_returned";
+            if(state.equals("Stopped")) {
+                String containerFailure=RunnerContainers.assertions(spec,world);
+                return status.equals("returned") ? (assertions()?(containerFailure==null?"passed":containerFailure):"assertion_failed") : "program_not_returned";
+            }
             // A worker can enter Stopping after OC's START machine.update but before its
             // tile update unregisters the robot (isRunning is already false). In that
             // ordering no native close was queued by Machine.stop(). Queue OC's own
@@ -200,10 +227,11 @@ final class RunnerRuntime {
         for(net.minecraft.world.WorldServer dimension:world.getMinecraftServer().worlds) {
             for(TileEntity tile:new ArrayList<>(dimension.loadedTileEntityList))
                 if(isMachineTile(tile.getClass()) && !isEmptyCreativePowerSource(tile) &&
+                    (drones==null || !drones.owns(tile)) &&
                     (robot==null || dimension!=world || !tile.getPos().equals(((TileEntity)robot).getPos())))
                     throw new IllegalStateException("additional_loaded_oc_machine:"+tile.getPos());
             for(net.minecraft.entity.Entity entity:new ArrayList<>(dimension.loadedEntityList))
-                if(isMachineEntity(entity.getClass()))
+                if(isMachineEntity(entity.getClass()) && (drones==null || !drones.owns(entity)))
                     throw new IllegalStateException("additional_loaded_oc_machine:drone:"+entity.getPosition());
         }
     }
@@ -319,7 +347,17 @@ final class RunnerRuntime {
     }
     JsonObject result(long tick) {
         if(scheduler!=null) scheduler.close();
+        if(drones!=null) {
+            JsonObject value=drones.result(tick);
+            if(scheduler!=null) {
+                JsonObject timing=new JsonObject();timing.addProperty("workerScheduling","idle-compression");
+                timing.addProperty("workerPasses",scheduler.workerPasses());timing.addProperty("skippedIdleNanos",scheduler.skippedNanos());
+                value.add("runnerTiming",timing);
+            }
+            return value;
+        }
         JsonObject value=new JsonObject();value.addProperty("runnerSchemaVersion",1);value.addProperty("scenarioId",spec.id);
+        if(spec.v4!=null) value.add("containers",RunnerContainers.result(spec,world));
         value.add("robot",JsonNull.INSTANCE); // setup failures may have no robot state to report.
         JsonObject timing=new JsonObject();timing.addProperty("diskReadNanos",diskReadNanos);
         timing.addProperty("workerWaitNanos",workerWaitNanos);

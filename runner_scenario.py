@@ -146,6 +146,9 @@ def _hardware(value):
 
 def normalize(value):
     """Pure shape/default owner. Input path existence is checked by load()."""
+    if isinstance(value, dict) and type(value.get('schemaVersion')) is int and value['schemaVersion'] == 4:
+        from runner_drones import normalize as normalize_v4
+        return normalize_v4(value)
     _object(value, ['schemaVersion', 'id', 'program', 'world', 'robot', 'execution', 'observations', 'expect'],
             ['schemaVersion', 'id', 'program', 'world', 'robot'])
     version = _integer(value['schemaVersion'], 1, 3)
@@ -279,16 +282,19 @@ class Scenario:
     manifest: Path
     original: bytes
     normalized: dict
-    program: Path
+    program: Path | None
     program_entries: tuple
     world: Path | None
     world_entries: tuple
     hardware_preset: bytes | None = None
+    eeprom_entries: tuple = ()
+    second_program: Path | None = None
+    second_entries: tuple = ()
 
 
 def _resolve_hardware(value, root):
     """One local editable preset, shallow overrides; engine inputs are always the full recipe."""
-    if not isinstance(value, dict) or value.get('schemaVersion') != 3: return value, None
+    if not isinstance(value, dict) or value.get('schemaVersion') not in (3, 4): return value, None
     robot = value.get('robot')
     hardware = robot.get('hardware') if isinstance(robot, dict) else None
     if not isinstance(hardware, dict) or 'preset' not in hardware: return value, None
@@ -347,20 +353,37 @@ def load(path, forbidden_roots=(), check=lambda: None, on_normalized=lambda valu
         root = manifest.parent
         for other in forbidden_roots:
             if overlap(root, other): raise ValueError('scenario and output/template roots overlap')
-        program = _source(root, value['program']['directory'])
-        program_entries = _scan(program, PROGRAM_BYTES, PROGRAM_ENTRIES, check)
+        drone_mode = 'drones' in normalized
+        program_spec = value.get('computer', {}).get('program') if 'computer' in normalized else value.get('program')
+        program = _source(root, program_spec['directory']) if program_spec is not None else None
+        program_entries = () if program is None else _scan(program, PROGRAM_BYTES, PROGRAM_ENTRIES, check)
         if any(size is not None and size > PROGRAM_FILE_BYTES for _, size in program_entries): raise ValueError('program file byte bound exceeded')
-        entry = program / normalized['program']['entry']
-        if not entry.is_file(): raise ValueError('entry Lua file missing')
-        _no_link(entry)
+        eeprom_entries = []
+        if drone_mode:
+            from runner_drones import eeprom_inputs
+            eeprom_entries = eeprom_inputs(root, value.get('drones', []), check)
+        if program is not None:
+            entry = program / (normalized['computer']['program'] if 'computer' in normalized else normalized['program'])['entry']
+            if not entry.is_file(): raise ValueError('entry Lua file missing')
+            _no_link(entry)
+        second_program=None;second_entries=()
+        if 'secondComputer' in normalized:
+            second_program=_source(root,value['secondComputer']['program']['directory'])
+            if program is not None and overlap(program,second_program): raise ValueError('computer program sources overlap')
+            second_entries=_scan(second_program,PROGRAM_BYTES,PROGRAM_ENTRIES,check)
+            if any(size is not None and size>PROGRAM_FILE_BYTES for _,size in second_entries): raise ValueError('second program file byte bound exceeded')
+            entry=second_program/normalized['secondComputer']['program']['entry']
+            if not entry.is_file(): raise ValueError('second entry Lua file missing')
+            _no_link(entry)
         world = _source(root, value['world']['source']) if 'source' in value['world'] else None
         world_entries = ()
         if world:
-            if overlap(program, world): raise ValueError('program and world sources overlap')
+            if program is not None and overlap(program, world): raise ValueError('program and world sources overlap')
+            if second_program is not None and overlap(second_program,world): raise ValueError('second program and world sources overlap')
             world_entries = _scan(world, WORLD_BYTES, WORLD_ENTRIES, check)
             if not (world / 'level.dat').is_file(): raise ValueError('source world must contain level.dat')
         check()
-        return Scenario(manifest, original, normalized, program, program_entries, world, world_entries, hardware_preset)
+        return Scenario(manifest, original, normalized, program, program_entries, world, world_entries, hardware_preset, tuple(eeprom_entries),second_program,second_entries)
     except TimeoutError:
         raise
     except (OSError, UnicodeError, RecursionError) as exc:
@@ -406,9 +429,11 @@ def freeze(spec, destination, check=lambda: None):
     if spec.hardware_preset is not None: manifests.append(('hardware-preset.json', spec.hardware_preset))
     for name, data in manifests:
         check(); (destination / name).write_bytes(data); hashes[name] = hashlib.sha256(data).hexdigest()
-    for prefix, source, entries in [('program', spec.program, spec.program_entries), ('world', spec.world, spec.world_entries)]:
+    for prefix, source, entries in [('program', spec.program, spec.program_entries), ('second-program',spec.second_program,spec.second_entries), ('world', spec.world, spec.world_entries)]:
         if source is not None:
             hashes.update({prefix + '/' + name: sha for name, sha in copy_tree(source, destination / prefix, entries, check).items()})
+    if spec.eeprom_entries:
+        hashes.update({'eeprom/' + name: sha for name, sha in copy_tree(spec.manifest.parent, destination / 'eeprom', spec.eeprom_entries, check).items()})
     check()
     (destination / 'sha256.json').write_text(json.dumps(hashes, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     return hashes

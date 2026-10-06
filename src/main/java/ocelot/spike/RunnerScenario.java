@@ -19,7 +19,10 @@ final class RunnerScenario {
     final Integer randomSeed;
     final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes;
     final boolean source;
+    final RunnerDroneScenario v4;
     private RunnerScenario(JsonObject root) {
+        v4=integer(root.get("schemaVersion"),1,4)==4?new RunnerDroneScenario(root):null;
+        if(v4!=null) root=v4.common();
         fields(root, "schemaVersion,id,program,world,robot,execution,observations,expect");
         int version=integer(root.get("schemaVersion"),1,3);
         id = text(root.get("id"), "[a-z][a-z0-9-]{0,62}", 63);
@@ -89,6 +92,7 @@ final class RunnerScenario {
         for (JsonElement element:expectedInventory) {
             JsonObject i=object(element,"item,minCount"); registry(i.get("item")); integer(i.get("minCount"),0,1024);
         }
+        if(v4!=null) v4.validate(this);
     }
     int regionCells() {
         long volume=1;
@@ -191,7 +195,7 @@ final class RunnerScenario {
     }
     static String componentName(JsonElement e) {return text(e,"[A-Za-z][A-Za-z0-9_]{0,63}",64);}
     static JsonObject item(JsonElement e,boolean inventory) {return item(e,inventory,16);}
-    private static JsonObject item(JsonElement e,boolean inventory,int slots) {
+    static JsonObject item(JsonElement e,boolean inventory,int slots) {
         JsonObject o=object(e,inventory?"slot,item,count,metadata,nbt":"item,metadata,nbt");
         registry(o.get("item")); integer(o.get("metadata"),0,32767);
         if(inventory) {integer(o.get("slot"),1,slots);integer(o.get("count"),1,64);}

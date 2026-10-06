@@ -120,12 +120,19 @@ def reconstruct(path, *, max_bytes=MAX_BYTES, max_line=MAX_LINE, on_record=None)
                 updates[position]=cell
             if sequence==0 and len(updates)!=volume: raise ValueError('initial record does not cover region')
             robot=record.get('robot')
-            if not isinstance(robot,dict): raise ValueError('robot observation missing')
-            _position(robot.get('position'))
+            if 'drones' in record:
+                from runner_drones import observation
+                observation(record)
+                info['lastDrones'] = record['drones']
+                info['coverage'] = 'sampled region blocks, declared drones and containers; excludes transient changes and other entities'
+            else:
+                if not isinstance(robot,dict): raise ValueError('robot observation missing')
+                _position(robot.get('position'))
             result['blocks'].update(updates); result['last']=record
             previous_tick=record['tick']
             info.update(available=True,records=sequence+1,lastTick=record['tick'],lastKind=record['kind'],
-                        finalRecorded=record['kind']=='final',lastRobot=robot,bytesRecorded=total)
+                        finalRecorded=record['kind']=='final',bytesRecorded=total)
+            if robot is not None: info['lastRobot']=robot
             if checkpoint is not None and _checkpoint_matches(checkpoint,info): prefix_matches=True
             if on_record is not None: on_record(record)
     info['bytesRead']=total

@@ -22,7 +22,25 @@ When it jumps, it skips to the earlier of the next worker deadline and the end o
 
 ## Modes
 
+For a drone/computer scenario, ownership includes every drone, the primary
+computer and the optional second computer. A jump requires **all** of their
+workers to be idle. An OC machine outside that ownership set fails the run;
+it cannot silently fall back to wall-clock dispatch. Empty, stopped schema-3
+creative power cases retain their existing non-running exception.
+
+Packets do not create a separate delivery clock: pinned OC
+`server/component/NetworkCard.scala` and `WirelessNetworkCard.scala` deliver
+synchronously to `Machine.signal`; the receiver consumes its queued signal
+through its native worker/world-tick state transitions. World ticks still run
+in order, and tracked chunk/file background work prevents a jump. See the
+source audit and native fleet comparisons in the T6 report for measurements.
+
 Schema-3 scenarios default to `coordinated` (accelerated), with OC's normal 12 ms worker delay. `baseline` runs at native speed for comparison. `paced` uses the accelerator's scheduling without the jumps, which is useful for debugging. Setting the worker delay to 0 is allowed but changes OC's behavior, and it isn't needed for acceleration.
+
+Drone/computer scenarios accept `baseline` and `coordinated`, defaulting to
+`baseline`. Scenarios using the schema-4 single-block `blocks` field also default
+to `baseline`, but accept an explicit coordinated mode. Plain robot defaults are
+unchanged.
 
 ## Where the code lives
 

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 4, "id": "drone-wake",
+  "world": {"region": {"min": [-5,63,-2], "max": [4,68,4]}, "blocks": [
+    {"min": [-5,63,-2], "max": [4,68,4], "block": "minecraft:air"},
+    {"min": [-5,64,-2], "max": [4,64,4], "block": "minecraft:stone"}
+  ]},
+  "computer": {"position": [-3,65,2],
+    "hardware": {"tier": 3, "cpu": "cpu3", "memory": ["ram6"], "cards": ["wlancard2"], "storage": ["hdd3"], "bootDrive": 0},
+    "program": {"directory": "program", "entry": "main.lua"}},
+  "drones": [{"position": [0,65,0], "energy": 4000, "eeprom": "eeprom.lua", "eepromData": "wakeup",
+    "hardware": {"tier": 2, "cpu": "cpu1", "memory": ["ram1"], "cards": ["wlancard2"],
+      "upgrades": ["inventorycontrollerupgrade", "inventoryupgrade"]}}],
+  "blocks": [
+    {"position": [-4,65,2], "block": "opencomputers:capacitor", "energy": 1600},
+    {"position": [-4,65,3], "block": "opencomputers:capacitor", "energy": 1600}
+  ],
+  "execution": {"mode": "baseline", "maxTicks": 2000, "timeoutSeconds": 180},
+  "observations": {"everyTicks": 10},
+  "expect": {"drones": [{"index": 0, "blockPosition": [0,65,0], "running": true}]}
+}

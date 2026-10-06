@@ -6,6 +6,42 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RunnerSchedulerTest {
+    @Test public void unregisteredNativeMachineFailsRatherThanUsingWallScheduler() throws Exception {
+        java.lang.reflect.Field field=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
+        sun.misc.Unsafe unsafe=(sun.misc.Unsafe)field.get(null);
+        Runnable foreign=(Runnable)unsafe.allocateInstance(li.cil.oc.server.machine.Machine.class);
+        ScheduledExecutorService pool=Executors.newSingleThreadScheduledExecutor();
+        try(RunnerScheduler owner=RunnerScheduler.bind(true,()->true)) {
+            try {RunnerScheduler.schedule(pool,foreign,12,TimeUnit.MILLISECONDS);fail();}
+            catch(IllegalStateException expected) {assertEquals("scheduler_unowned_oc_machine",expected.getMessage());}
+            try {owner.checkProgress();fail();}
+            catch(IllegalStateException expected) {assertEquals("worker_dispatch_failure",expected.getMessage());}
+        } finally {pool.shutdownNow();}
+    }
+    @Test public void allAttachedWorkersPreventJumpsWhileEitherIsRunning() throws Exception {
+        ScheduledExecutorService pool=Executors.newScheduledThreadPool(2);
+        CountDownLatch entered=new CountDownLatch(2),release=new CountDownLatch(1);
+        Runnable a=()->{entered.countDown();try {release.await();}catch(InterruptedException e) {Thread.currentThread().interrupt();}};
+        Runnable b=()->{entered.countDown();try {release.await();}catch(InterruptedException e) {Thread.currentThread().interrupt();}};
+        try(RunnerScheduler owner=RunnerScheduler.bind(true,()->true)) {
+            owner.attach(a);owner.attach(b);
+            ScheduledFuture<?> first=RunnerScheduler.schedule(pool,a,0,TimeUnit.MILLISECONDS),second=RunnerScheduler.schedule(pool,b,0,TimeUnit.MILLISECONDS);
+            assertTrue(entered.await(1,TimeUnit.SECONDS));RunnerScheduler.sleep(1);assertEquals(0,owner.skippedNanos());
+            release.countDown();first.get(1,TimeUnit.SECONDS);second.get(1,TimeUnit.SECONDS);
+            RunnerScheduler.sleep(10);assertTrue(owner.skippedNanos()>0);assertEquals(2,owner.workerPasses());
+        } finally {release.countDown();pool.shutdownNow();}
+    }
+    @Test public void multipleMachinesCanRequeueEachOtherAndAttachRejectsDuplicateIdentity() throws Exception {
+        ScheduledExecutorService pool=Executors.newSingleThreadScheduledExecutor();AtomicInteger calls=new AtomicInteger();CountDownLatch done=new CountDownLatch(1);
+        Runnable receiver=()->{calls.incrementAndGet();done.countDown();};
+        Runnable sender=()->{calls.incrementAndGet();RunnerScheduler.schedule(pool,receiver,12,TimeUnit.MILLISECONDS);};
+        try(RunnerScheduler owner=RunnerScheduler.bind(true,()->true)) {
+            owner.attach(sender);owner.attach(receiver);
+            try {owner.attach(receiver);fail();}catch(IllegalStateException expected) {assertEquals("scheduler_machine_ownership",expected.getMessage());}
+            RunnerScheduler.schedule(pool,sender,12,TimeUnit.MILLISECONDS);RunnerScheduler.sleep(50);
+            assertTrue(done.await(1,TimeUnit.SECONDS));assertEquals(2,calls.get());assertEquals(2,owner.workerPasses());
+        } finally {pool.shutdownNow();}
+    }
     @Test public void runningLuaDoesNotFreezeWorldTickOpportunitiesOrBecomeIdleTime() throws Exception {
         ScheduledExecutorService pool=Executors.newSingleThreadScheduledExecutor();
         CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);

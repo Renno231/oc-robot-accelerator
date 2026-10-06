@@ -120,6 +120,7 @@ def _prepare(template, jar, root, deadline, check=lambda: None, runner=False):
         raise ValueError('Windows Java 8 path limit: use a shorter output/jobs root')
     if runner:
         reserved = ('world', 'program', 'runner-scenario.json', 'observations.ndjson',
+                    'second-program', 'second-program-inputs.json', 'second-program.log',
                     'program-inputs.json', 'program.log', 'observations-status.json',
                     '.observations-status.json.tmp', 'runtime-logging.json')
         if any((template / name).exists() for name in reserved):
@@ -230,7 +231,7 @@ def _stop_tree(process):
         process.wait(timeout=3)
 
 
-def _result(root, mode, ticks, scenario_id=None):
+def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present=False, second_present=False):
     path = root / 'result.json'
     _no_link(path)
     if path.stat().st_size > RESULT_LIMIT:
@@ -248,6 +249,10 @@ def _result(root, mode, ticks, scenario_id=None):
     if type(value.get('elapsedNanos')) is not int or value['elapsedNanos'] < 0:
         raise ValueError('result elapsedNanos invalid')
     if scenario_id is not None:
+        if drone_count or computer_present:
+            from runner_drones import completed_result
+            completed_result(value, scenario_id, drone_count, computer_present,second_present)
+            return value
         if (value.get('runnerSchemaVersion') != 1 or value.get('scenarioId') != scenario_id or
                 not isinstance(value.get('program'), dict) or value['program'].get('status') != 'returned'):
             raise ValueError('runner result identity/program completion invalid')
@@ -255,7 +260,7 @@ def _result(root, mode, ticks, scenario_id=None):
 
 
 def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
-            prepare=None, scenario_id=None, on_launch=lambda pid: None):
+            prepare=None, scenario_id=None, on_launch=lambda pid: None, drone_count=0, computer_present=False,second_present=False):
     """Structured process owner. Caller preparation shares the same budget and cancellation.
 
     ``prepare`` only installs already-frozen scenario inputs; it does not own a process.
@@ -335,6 +340,7 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
             _inventory(root, RUNTIME_BYTES_LIMIT, RUNTIME_FILES_LIMIT, deadline, live=True, check=check)
             for name, cap in (('trace.ndjson', TRACE_LIMIT), ('observations.ndjson', 32 * 1024 * 1024),
                               ('program.log', RESULT_LIMIT), ('program-inputs.json', RESULT_LIMIT),
+                              ('second-program.log',RESULT_LIMIT), ('second-program-inputs.json',RESULT_LIMIT),
                               ('observations-status.json', 64 * 1024), ('.observations-status.json.tmp', 64 * 1024),
                               ('runtime-logging.json', 64 * 1024)):
                 artifact = root / name
@@ -356,7 +362,7 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
         report['return_code'] = process.returncode
         if process.returncode != 0:
             raise ValueError('server nonzero exit: ' + str(process.returncode))
-        _result(root, args.mode, args.ticks, scenario_id)
+        _result(root, args.mode, args.ticks, scenario_id, drone_count, computer_present,second_present)
         if scenario_id is not None:
             report['runtimeLogging'] = runtime_profile.verify_proof(root)
         check()

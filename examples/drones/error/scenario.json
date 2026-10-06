@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 4, "id": "drone-error",
+  "world": {
+    "region": {"min": [-2, 63, -2], "max": [2, 68, 2]},
+    "blocks": [
+      {"min": [-2, 63, -2], "max": [2, 68, 2], "block": "minecraft:air"},
+      {"min": [-2, 64, -2], "max": [2, 64, 2], "block": "minecraft:stone"}
+    ]
+  },
+  "drones": [{"position": [0, 65, 0], "eeprom": "eeprom.lua",
+    "hardware": {"tier": 1, "cpu": "cpu1", "memory": ["ram2"]}}],
+  "execution": {"mode": "baseline", "maxTicks": 1000, "timeoutSeconds": 180},
+  "observations": {"everyTicks": 10}
+}
