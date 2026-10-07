@@ -163,6 +163,14 @@ final class RunnerDrones {
             inventory.decrStackSize(0,24);inventory.markDirty();
             computer.warehouseItemsRemoved();warehouseItemsRemoved=true;
         }
+        if(!warehouseItemsRemoved && "warehouse-furnace-cycle".equals(spec.id) && computer!=null && computer.warehouseRemovalRequested()) {
+            net.minecraft.tileentity.TileEntity tile=world.getTileEntity(new net.minecraft.util.math.BlockPos(7,68,3));
+            if(!(tile instanceof net.minecraft.inventory.IInventory)) throw new IllegalStateException("furnace_cycle_source_absent");
+            net.minecraft.inventory.IInventory inventory=(net.minecraft.inventory.IInventory)tile;
+            if(inventory.getStackInSlot(0).getCount()!=50) throw new IllegalStateException("furnace_cycle_source_count");
+            inventory.decrStackSize(0,20);inventory.markDirty();
+            computer.warehouseItemsRemoved();warehouseItemsRemoved=true;
+        }
         if(!started) {
             if(tick<3) return null;
             if(computer!=null && !computer.prepare(tick)) return null;

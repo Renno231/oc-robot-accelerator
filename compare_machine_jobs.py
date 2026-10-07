@@ -119,6 +119,10 @@ def compare(root,a,b,reference_root=None):
             ('$.evidence.warehouse.catalogue.',ca.get('evidence',{}).get('warehouse',{}).get('catalogue',{}),cb.get('evidence',{}).get('warehouse',{}).get('catalogue',{}))):
         if isinstance(wa,dict) and isinstance(wb,dict) and wa.keys()==wb.keys():
             allowed.update(prefix+k+'.time' for k in wa)
+    # Furnace acceptance exports its controller uptime duration explicitly.
+    # Inventory totals, load outcomes, shortage and job counts stay strict.
+    if ra['scenarioId']=='warehouse-furnace-cycle':
+        allowed.add('$.evidence.warehouse.gameSeconds')
     measured['bootIntervals']={}
     for side in ('a','b'):
         previous={};intervals={}

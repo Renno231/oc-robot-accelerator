@@ -64,6 +64,11 @@ def build():
         shutil.copyfile(ROOT/'examples/warehouse'/name,program/name)
     build_slots()
     build_nbt()
+    # Keep the machine-cycle fixtures generated from this finite-power room.
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('build_furnace_cycle',ROOT/'examples/warehouse/build_furnace_cycle.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    module.build()
 
 
 def build_slots():
