@@ -139,7 +139,7 @@ actual spawn, final exact and final block-containing positions. Drones finish wh
 all native machines reach `Stopped`; clean `computer.shutdown()` is success, while
 any machine error or tick/time limit is failure.
 
-Both kinds of v4 scenarios can declare up to 64 block inventories:
+Both kinds of v4 scenarios can declare up to 128 block inventories:
 
 ```json
 "containers": [{"position": [0,64,0], "block": "minecraft:chest",
@@ -167,6 +167,62 @@ Failures identify the container/drone and the failing slot or position.
 Periodic observations use the existing cadence and recording bounds, with drone
 positions, energy and container contents. `observations` summaries support these
 records; browser replay support for drones is not included.
+
+### Multiple OpenOS robots (schema 4)
+
+Drone/computer scenarios may also declare `robots`, with **1–4** entries. Each
+requires `position`, a complete schema-3 `hardware` recipe, and `program` with a
+scenario-local `directory` and optional Lua `entry` (default `main.lua`). Optional
+`facing`, `inventory`, and `energy` follow schema-3 defaults and bounds. Hardware
+can include native `craftingupgrade`, `inventorycontrollerupgrade`,
+`inventoryupgrade`, and wireless cards. Native assembler rules still decide
+whether the recipe fits. Robot cells must be air and robot positions unique.
+An empty `drones: []` is allowed when robots are present, without a controller.
+
+Each robot has its own native HDD/OpenOS instance. Program source directories
+must not overlap other program or source-world directories; frozen/execution
+copies are named `robot-program-0` through `robot-program-3`. Corresponding logs
+are `robot-program-N.log`. Results and observations include indexed `robots`
+states. Without a controller, all robot programs must return and stop cleanly.
+With a controller, success waits for both declared controllers to return;
+healthy robot services may remain running, like drone agents. Native robot errors
+or program errors always fail, and robot inventory expectations still apply.
+`expect.robots: [{"index": 0, "inventory": [{"slot": 12,
+"count": 0}]}]` uses zero-based robot indices and the exact, one-based slot
+checks described above; `inventory` is optional. Schema 2/3 behavior is unchanged.
+See `examples/robots/crafting-smoke/` for two robots crafting tables from chests.
+
+### Explicit infinite energy and container removal (schema 4)
+
+`execution.infiniteEnergy` is an optional boolean, default **false**. When true,
+the runner enables OC's native global `ignorePower` setting for all declared
+hosts. Reported energy may be zero under this native setting; it is not a
+finite-energy measurement. Initial energy still obeys native capacity checks.
+This option is independent of whether robots are present; schema 2/3 reject it.
+Internet access remains disabled.
+
+`containerEdits` declares up to 64 one-shot native stack removals, independent of
+scenario ID. Targets must be declared containers. For example:
+
+```json
+"containerEdits": [
+  {"position": [0,64,0], "slot": 1, "count": 2, "atTick": 100},
+  {"position": [2,64,0], "slot": 1, "count": 20, "expectedCount": 50,
+   "request": {"computer": 0, "marker": "home/warehouse-remove-items",
+               "signal": "warehouse_items_removed"}}
+]
+```
+
+Exactly one trigger is required: `atTick` (0 through `execution.maxTicks`, from
+server startup), or `request`. Computer index 0 selects `computer`, 1 selects
+`secondComputer`; that controller must exist. It requests removal by creating
+the relative `marker` file on its OpenOS disk (the example is
+`/home/warehouse-remove-items`). The runner signals the named event after removal.
+`slot` is 1–64, `count` is 1–64, and optional `expectedCount` is `count`–64.
+Insufficient items, an expected-count mismatch, or exceeding native slot capacity
+fails the run. No stack is removed twice. Reload capture/resume explicitly rejects
+scenarios with robots or nonempty container edits; their reload state is not yet
+supported.
 
 Native examples: `examples/drones/sides` proves absolute side numbering,
 `examples/drones/transfer` carries 64 iron ingots six blocks, and
