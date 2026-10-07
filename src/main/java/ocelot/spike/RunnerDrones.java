@@ -27,8 +27,9 @@ final class RunnerDrones {
     private final List<Vec3d> spawned=new ArrayList<>();
     private final List<RunnerDroneErrors> errors=new ArrayList<>();
     private RunnerRecording recording;
+    private RunnerRouteMetrics routeMetrics;
     private long sequence;
-    private boolean started;
+    private boolean started,storageRoomChestPlaced;
     private RunnerComputer computer,secondComputer;
     private final Map<net.minecraft.util.math.BlockPos,net.minecraft.block.state.IBlockState> previous=new HashMap<>();
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
@@ -129,17 +130,29 @@ final class RunnerDrones {
             drone.initializeAfterPlacement(stack,owner,new Vec3d(p[0]+0.5,p[1],p[2]+0.5));
             if(!world.spawnEntity(drone)) throw new IllegalStateException("native drone spawn rejected");
             drones.add(drone);spawned.add(new Vec3d(drone.posX,drone.posY,drone.posZ));
+            RunnerEnergyMetrics.track(drone.machine());
             errors.add(new RunnerDroneErrors(drone));
             RunnerContainers.fill(drone.mainInventory(),d.getAsJsonArray("inventory"),"drone "+(drones.size()-1));
         }
         if(spec.v4.computer!=null) {computer=new RunnerComputer(spec.v4.computer,world,root);computer.setup();}
         if(spec.v4.secondComputer!=null) {secondComputer=new RunnerComputer(spec.v4.secondComputer,world,root);secondComputer.setup();}
+        if(Files.isRegularFile(root.resolve("program/route-metrics-enabled"))) routeMetrics=new RunnerRouteMetrics(root);
     }
     static String state(Drone drone) throws Exception {
         Field field=drone.machine().getClass().getDeclaredField("state");field.setAccessible(true);
         Object stack=field.get(drone.machine());synchronized(stack) {return String.valueOf(stack.getClass().getMethod("top").invoke(stack));}
     }
     String tick(long tick) throws Exception {
+        if(routeMetrics!=null) routeMetrics.sample(tick,drones);
+        // Native acceptance player action, scoped to the storage-room fixture.
+        // Lua writes the marker only after mapping and earlier transfers finish.
+        // It changes the real world, never a movement or success predicate.
+        if(!storageRoomChestPlaced && "logistics-storage-room".equals(spec.id) && computer!=null && computer.storageRoomChestRequested()) {
+            net.minecraft.util.math.BlockPos p=new net.minecraft.util.math.BlockPos(3,67,2);
+            if(world.isAirBlock(p)) world.setBlockState(p,net.minecraft.init.Blocks.CHEST.getDefaultState(),3);
+            computer.storageRoomChestPlaced();
+            storageRoomChestPlaced=true;
+        }
         if(!started) {
             if(tick<3) return null;
             if(computer!=null && !computer.prepare(tick)) return null;
@@ -202,6 +215,8 @@ final class RunnerDrones {
             value.add("position",exact(new Vec3d(drone.posX,drone.posY,drone.posZ)));value.add("blockPosition",RunnerObservations.coords(blockPosition(drone)));
             value.add("declaredPosition",spec.v4.drones.get(i).getAsJsonObject().get("position"));value.add("spawnPosition",exact(spawned.get(i)));
             Connector power=(Connector)drone.machine().node();value.addProperty("energy",power.globalBuffer());value.addProperty("energyCapacity",power.globalBufferSize());
+            value.addProperty("energyConsumed",RunnerEnergyMetrics.consumed(drone.machine()));
+            value.addProperty("uptime",drone.machine().upTime());
             value.addProperty("state",state(drone));value.addProperty("lastError",drone.machine().lastError());
             value.addProperty("observedError",errors.get(i).observe());
             value.addProperty("running",drone.machine().isRunning());
@@ -212,6 +227,7 @@ final class RunnerDrones {
     }
     private void sample(String kind,long tick) throws Exception {
         JsonObject value=new JsonObject();value.addProperty("schemaVersion",1);value.addProperty("sequence",sequence);value.addProperty("tick",tick);value.addProperty("kind",kind);
+        value.addProperty("wallNanos",System.nanoTime());
         if(kind.equals("initial")) {JsonObject region=new JsonObject();region.add("min",RunnerObservations.coords(RunnerObservations.pos(spec.min)));region.add("max",RunnerObservations.coords(RunnerObservations.pos(spec.max)));value.add("region",region);value.addProperty("everyTicks",spec.everyTicks);}
         JsonArray changes=new JsonArray();
         for(int x=spec.min[0];x<=spec.max[0];x++) for(int y=spec.min[1];y<=spec.max[1];y++) for(int z=spec.min[2];z<=spec.max[2];z++) {
@@ -239,6 +255,8 @@ final class RunnerDrones {
             catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         }
         for(RunnerDroneErrors observer:errors) observer.close();
+        if(routeMetrics!=null) try {routeMetrics.sample(tick,drones);routeMetrics.close();}
+        catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         return result;
     }
 }

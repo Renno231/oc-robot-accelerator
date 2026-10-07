@@ -22,8 +22,8 @@ class MachineComparisonsTest(unittest.TestCase):
             with self.assertRaises(ValueError): additional_files(root)
     def test_sweep_covers_all_requested_families(self):
         paths=scenario_paths()
-        self.assertEqual(len(paths),24)
-        self.assertEqual([sum(p.parts[1]==family for p in paths) for family in ('logistics','mapping','drones')],[16,2,6])
+        self.assertEqual(len(paths),26)
+        self.assertEqual([sum(p.parts[1]==family for p in paths) for family in ('logistics','mapping','drones')],[18,2,6])
     def test_reload_command_changes_only_root_and_adds_explicit_probe_phase(self):
         original=['java','-Drobotspike.root=old','-Drobotspike.mode=baseline','-jar','forge.jar']
         command=command_for(original,Path('new'),'resume')

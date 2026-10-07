@@ -12,15 +12,17 @@ public final class PacingTransformer implements IClassTransformer {
         if (bytes == null) return null;
         boolean server = "net.minecraft.server.MinecraftServer".equals(transformedName);
         boolean machine = "li.cil.oc.server.machine.Machine".equals(transformedName);
+        boolean wireless="li.cil.oc.server.component.WirelessNetworkCard".equals(transformedName);
         boolean safePool="li.cil.oc.util.SafeThreadPool".equals(transformedName);
         boolean chunks="net.minecraftforge.common.chunkio.ChunkIOExecutor".equals(transformedName);
         boolean chunkPool="net.minecraftforge.common.chunkio.ChunkIOThreadPoolExecutor".equals(transformedName);
         int clocks=clockSites(transformedName);
-        if (!server && !machine && !safePool && !chunks && !chunkPool && clocks==0) return bytes;
+        if (!server && !machine && !wireless && !safePool && !chunks && !chunkPool && clocks==0) return bytes;
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
         if (server) patchPacer(node);
-        if (machine) { patchObservation(node); patchSchedulerObservations(node); patchWorkerDispatch(node); }
+        if (machine) { patchObservation(node); patchSchedulerObservations(node); patchWorkerDispatch(node); patchEnergyMetrics(node); }
+        if(wireless) patchWirelessEnergyMetrics(node);
         if(safePool) patchSafePool(node);
         if(chunks) patchChunkSubmission(node);
         if(chunkPool) patchChunkCompletion(node);
@@ -211,5 +213,33 @@ public final class PacingTransformer implements IClassTransformer {
             }
         }
         if (methods != 1 || returns == 0) throw new IllegalStateException("Unrecognized OC 1.8.9a invocation method");
+    }
+    static void patchEnergyMetrics(ClassNode node) {
+        int count=0;
+        for(MethodNode method:node.methods) if(method.name.equals("update") && method.desc.equals("()V"))
+            for(AbstractInsnNode instruction:method.instructions.toArray()) if(instruction instanceof MethodInsnNode) {
+                MethodInsnNode call=(MethodInsnNode)instruction;
+                if(call.owner.equals("li/cil/oc/api/network/ComponentConnector") && call.name.equals("tryChangeBuffer") && call.desc.equals("(D)Z")) {
+                    if(call.getOpcode()!=Opcodes.INVOKEINTERFACE) throw new IllegalStateException("Unrecognized native OC power debit");
+                    method.instructions.insertBefore(call,new VarInsnNode(Opcodes.ALOAD,0));
+                    call.setOpcode(Opcodes.INVOKESTATIC);call.owner="ocelot/spike/RunnerEnergyMetrics";call.name="debit";
+                    call.desc="(Lli/cil/oc/api/network/ComponentConnector;DLjava/lang/Object;)Z";call.itf=false;count++;
+                }
+            }
+        if(count!=2) throw new IllegalStateException("Unrecognized OC 8ca336fb Machine.update power sites: "+count);
+    }
+    static void patchWirelessEnergyMetrics(ClassNode node) {
+        int count=0;
+        for(MethodNode method:node.methods) if(method.name.equals("checkPower") && method.desc.equals("()V"))
+            for(AbstractInsnNode instruction:method.instructions.toArray()) if(instruction instanceof MethodInsnNode) {
+                MethodInsnNode call=(MethodInsnNode)instruction;
+                if(call.owner.equals("li/cil/oc/api/network/ComponentConnector") && call.name.equals("tryChangeBuffer") && call.desc.equals("(D)Z")) {
+                    if(call.getOpcode()!=Opcodes.INVOKEINTERFACE) throw new IllegalStateException("Unrecognized native OC wireless debit");
+                    method.instructions.insertBefore(call,new VarInsnNode(Opcodes.ALOAD,0));
+                    call.setOpcode(Opcodes.INVOKESTATIC);call.owner="ocelot/spike/RunnerEnergyMetrics";call.name="wirelessDebit";
+                    call.desc="(Lli/cil/oc/api/network/ComponentConnector;DLli/cil/oc/server/component/WirelessNetworkCard;)Z";call.itf=false;count++;
+                }
+            }
+        if(count!=1) throw new IllegalStateException("Unrecognized OC 8ca336fb wireless power sites: "+count);
     }
 }

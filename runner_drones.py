@@ -81,7 +81,7 @@ def slots(values, initial=False, limit=64):
 
 
 def normalize(value):
-    from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY,
+    from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
                                  _component_name, relative, normalize as old, normalized_bytes)
     _object(value, ['schemaVersion', 'id', 'program', 'world', 'robot', 'drones', 'containers',
                     'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks'], ['schemaVersion', 'id', 'world'])
@@ -147,9 +147,13 @@ def normalize(value):
     if 'blocks' in value: result['blocks'] = placed_blocks(value['blocks'], region)
     containers = []
     for c in _array(value.get('containers', []), 64):
-        _object(c, ['position', 'block', 'slots'], ['position', 'block', 'slots'])
+        _object(c, ['position', 'block', 'slots', 'properties'], ['position', 'block', 'slots'])
         containers.append({'position': _inside(c['position'], region), 'block': _text(c['block'], REGISTRY, 128),
                            'slots': slots(c['slots'], True)})
+        if 'properties' in c:
+            props=c['properties']
+            if not isinstance(props,dict) or len(props)>16: raise ValueError('properties bound')
+            containers[-1]['properties']={_text(k,PROPERTY,64):_text(v,PROPERTY,64) for k,v in props.items()}
     if len({tuple(c['position']) for c in containers}) != len(containers): raise ValueError('duplicate container position')
     result['containers'] = containers
     result['expect']['containers'] = []

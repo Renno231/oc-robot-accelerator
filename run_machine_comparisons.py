@@ -8,20 +8,19 @@ from build_machine_comparisons import prepare
 from compare_machine_jobs import compare
 from supervisor import NO_WINDOW
 
-WORKER='term_3f08ef9d-f755-4702-bb3b-884421801f89'
-TASK='task_3bae3a7703e1'
-DISPATCH='ctx_202cc180f096'
+WORKER=TASK=DISPATCH=None
 
 def scenario_paths():
     return sorted(p for family in ('logistics','mapping','drones') for p in (Path('examples')/family).glob('*/scenario.json'))
 
 
 def communicate():
+    if not WORKER: return
     heartbeat=['send','--from',WORKER,'--type','heartbeat','--subject','alive','--task-id',TASK,'--dispatch-id',DISPATCH,'--phase','verifying']
     subprocess.run(['cmd.exe','/d','/c','orca','orchestration',*heartbeat],check=True,creationflags=NO_WINDOW)
     check=subprocess.run(['cmd.exe','/d','/c','orca','orchestration','check','--terminal',WORKER,'--json'],capture_output=True,text=True,check=True,creationflags=NO_WINDOW)
     value=json.loads(check.stdout)
-    if value.get('result',{}).get('count',0):
+    if value.get('result',{}).get('count',0) and not value.get('result',{}).get('replayed',False):
         print(check.stdout,flush=True);raise RuntimeError('coordinator follow-up: pause sweep')
 
 
@@ -43,7 +42,7 @@ def run(root,installation,jobs):
             while True:
                 try: stdout,stderr=process.communicate(timeout=240);break
                 except subprocess.TimeoutExpired:
-                    subprocess.run(['cmd.exe','/d','/c','orca','orchestration','send','--from',WORKER,'--type','heartbeat','--subject','alive','--task-id',TASK,'--dispatch-id',DISPATCH,'--phase','verifying'],check=True,creationflags=NO_WINDOW)
+                    communicate()
             (destination/'native-command.log').write_text(stdout+'\n'+stderr)
             state=json.loads(stdout.strip().splitlines()[-1])
             row={'scenario':label,'variant':variant,'jobId':state['jobId'],'state':state['state'],'wallSeconds':state['elapsedWallSeconds'],'commandExit':process.returncode}
@@ -60,7 +59,10 @@ def run(root,installation,jobs):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,default=Path('.cache/T6-final'));p.add_argument('--installation',type=Path,default=Path('C:/or/drone-install-T6'));p.add_argument('--jobs-root',type=Path,default=Path('C:/or/drone-jobs'))
-    a=p.parse_args();values=run(a.root,a.installation,a.jobs_root)
+    p.add_argument('--worker',default=WORKER);p.add_argument('--task',default=TASK);p.add_argument('--dispatch',default=DISPATCH)
+    a=p.parse_args()
+    if any((a.worker,a.task,a.dispatch)) and not all((a.worker,a.task,a.dispatch)): p.error('worker/task/dispatch must be supplied together')
+    WORKER,TASK,DISPATCH=a.worker,a.task,a.dispatch;values=run(a.root,a.installation,a.jobs_root)
     runs=json.loads((a.root/'runs.json').read_text())
     bad_status=any(r['state']!=('failed' if r['scenario']=='examples/drones/error' else 'passed') for r in runs)
     raise SystemExit(bad_status or any(v[k]['unexpectedDifferences'] for v in values for k in ('natural','accelerated')))

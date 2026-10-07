@@ -54,10 +54,26 @@ local function endpoint(e)
   end
   return serialization.unserialize(serialization.serialize(e))
 end
+-- OC 8ca336fb common/entity/Drone.scala:80: width .75, height .375.
+-- Native Entity.setPosition anchors Y at the bottom. Box center is .1875
+-- above the flight target; map accepts an ordinary shifted box, not a drone.
+local half={x=.375,y=.1875,z=.375,offsetY=.1875}
+map.buildClear(half)
+-- Planning is a few ms even on the 64-chest room (T7), so routes are not cached.
+local function planned(a,b,avoid)
+  if avoid and avoid.blockPositions and avoid[-1]~=map.revision() then
+    map.buildClear(half);avoid.blocks={}
+    for _,p in ipairs(avoid.blockPositions) do local key=map.blockKey(p.x,p.y,p.z);if key then avoid.blocks[key]=true end end
+    avoid[-1]=map.revision()
+  end
+  return map.theta(a,b,half,avoid)
+end
 local function path(a,b,avoid)
-  local names=assert(map.route(a,b,avoid),"no route "..a.." -> "..b)
+  local names=assert(planned(a,b,avoid),"no route "..a.." -> "..b)
   local out={};for _,name in ipairs(names) do local p=map.node(name);p.name=name;out[#out+1]=p end;return out
 end
+-- Read-only route preview uses exactly the dispatch planner.
+function M.plan(a,b) return path(assert(map.place(a),"unknown node or storage "..tostring(a)),assert(map.place(b),"unknown node or storage "..tostring(b))) end
 local function points(names)
   local out={};for _,name in ipairs(names or {}) do local p=map.node(name);out[#out+1]={name=name,x=p.x,y=p.y,z=p.z} end;return out
 end
@@ -193,7 +209,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   elseif kind=="navigate" and d.trip==id and d.job and type(payload)=="string" and #payload<7000 then
     local request=serialization.unserialize(payload);local job=jobs[d.job]
     if type(request)~="table" or not map.node(request.from) or not map.node(request.to) then return end
-    local names=map.route(request.from,request.to,job.avoid)
+    local names=planned(request.from,request.to,job.avoid)
     send(d,"navigation",id,serialization.serialize({route=names and points(names),reason="no route "..request.from.." -> "..request.to},false))
   elseif kind=="report" and type(payload)=="string" and #payload<7000 then
     local result=serialization.unserialize(payload);if type(result)~="table" then return end
@@ -220,12 +236,43 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         local link=result.link
         if type(link)~="table" or not map.node(link.a) or not map.node(link.b) or not map.node(result.to) then return end
         job.avoid=job.avoid or {};job.avoid[link.a..":"..link.b]=true
+        local affected={link}
+        if type(result.offset)=="number" then
+          local a,b=map.node(link.a),map.node(link.b)
+          local dx,dy,dz=b.x-a.x,b.y-a.y,b.z-a.z
+          local length=math.sqrt(dx*dx+dy*dy+dz*dz)
+          if length>0 then
+            map.buildClear(half)
+            -- Refresh all prior coordinates before advancing the key revision;
+            -- a second blockage after an edit must not retain old numeric keys.
+            if job.avoid.blockPositions and job.avoid[-1]~=map.revision() then
+              job.avoid.blocks={}
+              for _,p in ipairs(job.avoid.blockPositions) do
+                local prior=map.blockKey(p.x,p.y,p.z);if prior then job.avoid.blocks[prior]=true end
+              end
+              job.avoid[-1]=map.revision()
+            end
+            -- Offset locates the stopped body along this straight leg. Move
+            -- to the leading face plus a conservative rounding margin.
+            local x,y,z=b.x+0.5-dx/length*result.offset,b.y+0.5-dy/length*result.offset,b.z+0.5-dz/length*result.offset
+            local scale=math.max(math.abs(dx),math.abs(dy),math.abs(dz))
+            local ahead=(math.max(half.x,half.y,half.z)+0.03)*length/scale
+            local bx,by,bz=math.floor(x+dx/length*ahead),math.floor(y+dy/length*ahead),math.floor(z+dz/length*ahead)
+            local key=map.blockKey(bx,by,bz)
+            if key then
+              job.avoid.blocks=job.avoid.blocks or {};job.avoid.blocks[key]=true
+              job.avoid.blockPositions=job.avoid.blockPositions or {};job.avoid.blockPositions[#job.avoid.blockPositions+1]={x=bx,y=by,z=bz};job.avoid[-1]=map.revision()
+              affected=map.linksAtBlock(key,half)
+              for _,original in ipairs(affected) do job.avoid[original.a..":"..original.b]=true end
+            end
+          end
+        end
         job.reason="blocked link "..link.a.." -> "..link.b
-        job.blockedReports=job.blockedReports or {};job.blockedReports[#job.blockedReports+1]={link=link,offset=result.offset,stalledSeconds=result.stalledSeconds}
+        job.blockedReports=job.blockedReports or {};job.blockedReports[#job.blockedReports+1]={link=affected[1] or link,leg=link,links=affected,offset=result.offset,stalledSeconds=result.stalledSeconds}
         if job.action and job.action.kind=="test" and result.candidate then
           job.test="blocked";send(d,"navigation",id,serialization.serialize({reason=job.reason},false));return
         end
-        local alternative=map.route(link.a,result.to,job.avoid)
+        local alternative=planned(link.a,result.to,job.avoid)
         send(d,"navigation",id,serialization.serialize({route=alternative and points(alternative),reason=job.reason},false))
         return
       end
@@ -287,7 +334,7 @@ function M.release(name)
   if d.release then return nil,"release already pending" end
   nextTrip=nextTrip+1;d.release=nextTrip;d.cargo=nil;send(d,"release",d.release)
   local computer=require("computer");local deadline=computer.uptime()+5
-  while d.release and computer.uptime()<deadline do event.pull(0.1) end
+  while d.release and computer.uptime()<deadline do event.pull(math.max(0,deadline-computer.uptime())) end
   if d.release then d.release=nil;return nil,"cargo report timeout" end
   return serialization.unserialize(serialization.serialize(d.cargo))
 end
@@ -356,8 +403,8 @@ local function action(kind,a,b)
   end
   return id
 end
-function M.scan(node) return action("scan",node) end
-function M.test(a,b) return action("test",a,b) end
+function M.scan(node) return action("scan",map.place(node) or node) end
+function M.test(a,b) return action("test",map.place(a) or a,map.place(b) or b) end
 function M.job(steps,opts)
   assert(type(steps)=="table" and #steps>0,"steps required")
   nextJob=nextJob+1;local id=nextJob
@@ -383,7 +430,7 @@ function M.job(steps,opts)
         if step.count and step.take then job.requested=job.requested+step.count;job.remaining=job.remaining+step.count end
         if step.all then job.openEnded=true end
       elseif step.read then step.read=endpoint(step.read)
-      else assert(map.node(step.go),"unknown go node") end
+      else step.go=assert(map.place(step.go),"unknown go node or storage") end
       job.steps[i]=step
     end
     job.openEnded=job.openEnded or job.requested==0

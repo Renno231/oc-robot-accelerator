@@ -19,6 +19,8 @@ import net.minecraftforge.common.util.FakePlayerFactory;
 
 /** Native finite-powered case slots and the existing OpenOS wrapper/outcome mechanism. */
 final class RunnerComputer {
+    boolean storageRoomChestRequested() {return program.storageRoomChestRequested();}
+    void storageRoomChestPlaced() {machine.signal("storage_room_chest_placed");}
     private final JsonObject spec;
     private final WorldServer world;
     private final RunnerProgram program;

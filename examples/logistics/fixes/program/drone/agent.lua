@@ -70,15 +70,29 @@ local function report(id,data)
   modem.send(controller,port,token,"report",id,payload)
 end
 local activeTrip,history,currentPoint,rerouted,testingCandidate
+-- OC 8ca336fb entity/Drone.scala:74-78,430-457: .1 acceleration per
+-- tick, .4 axis cap, .8 drag. component/Drone.scala: getMaxVelocity=8,
+-- getAcceleration=2; convert the latter back to 40 blocks/s^2.
+local acceleration=drone.getAcceleration()*20
+-- From a confirmed hover, ||v_next|| <= .8*(||v||+.1): the scalar
+-- terminal bound is .4 blocks/tick (8 blocks/s); axis clipping only lowers it.
+local speed=math.max(.02,math.min(drone.getMaxVelocity()*math.sqrt(3),acceleration/20*.8/(1-.8)))
+local function flightSleep(offset)
+  -- Reserve braking/settling distance; use the source's upper speed bound,
+  -- not an optimistic ETA. Never weaken either arrival or stall predicate.
+  local near=math.max(1,speed*speed/(2*math.max(acceleration,0.001)))
+  return math.max(0.1,math.min(1,(offset-near)/speed))
+end
 local function fly(path)
   for _,p in ipairs(path) do
     if math.abs(p.x-x)+math.abs(p.y-y)+math.abs(p.z-z)>0.01 then
       local previous=currentPoint or path[1]
+      local offset=math.sqrt((p.x-x)^2+(p.y-y)^2+(p.z-z)^2)
       drone.move(p.x-x,p.y-y,p.z-z)
       local best,progress=math.huge,computer.uptime()
       while drone.getOffset()>=0.02 or drone.getVelocity()>=0.02 do
-        computer.pullSignal(0.1)
-        local offset=drone.getOffset()
+        computer.pullSignal(flightSleep(offset))
+        offset=drone.getOffset()
         if offset<best-0.1 then best=offset;progress=computer.uptime() end
         if computer.uptime()-progress>=3 then
           local stalled=computer.uptime()-progress
@@ -91,7 +105,7 @@ local function fly(path)
           report(activeTrip,{state="blocked",link={a=previous.name,b=p.name},to=path[#path].name,offset=offset,stalledSeconds=stalled,candidate=testingCandidate})
           deadline=computer.uptime()+10
           repeat
-            local e={computer.pullSignal(0.1)}
+            local e={computer.pullSignal(math.max(0.1,deadline-computer.uptime()))}
             if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="navigation" and e[8]==activeTrip then
               local answer=decode(e[9]);assert(answer and answer.route,answer and answer.reason or "no alternative route")
               rerouted=true
@@ -112,7 +126,7 @@ local function goTo(node)
   modem.send(controller,port,token,"navigate",activeTrip,encode({from=currentPoint.name,to=node}))
   local deadline=computer.uptime()+10
   repeat
-    local e={computer.pullSignal(0.1)}
+    local e={computer.pullSignal(math.max(0.1,deadline-computer.uptime()))}
     if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="navigation" and e[8]==activeTrip then
       local answer=decode(e[9]);assert(answer and answer.route,answer and answer.reason or "invalid route")
       return fly(answer.route)

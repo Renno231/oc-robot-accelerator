@@ -45,6 +45,9 @@ return function(case)
     map.name("temporary-name","O",0);check(map.unname("temporary-name"));check(not map.storage("temporary-name"))
     map.save();check(map.load());check(map.storage("iron-source").node=="A" and map.storages()["iron-destination"].side==0)
     check(not pcall(map.name,"duplicate-face","A",0),"duplicate face accepted")
+    check(not pcall(map.name,"B","A",1),"storage named like a node accepted")
+    check(not pcall(map.add,"iron-source",0,65,0),"node named like a storage accepted")
+    check(map.place("iron-source")=="A" and map.place("B")=="B" and map.place("missing")==nil,"place")
   end
   -- Commissioning fixture knows both physical charger positions. Distinct native
   -- radio distances identify their announcements, not an agent position sensor.
@@ -53,9 +56,13 @@ return function(case)
     if port==27103 and first=="lgx_hello" then distances[sender]=distance end
   end)
   local logistics=require("logistics")
+  if case=="names" then
+    local byStorage,byNode=logistics.plan("iron-source","iron-destination"),logistics.plan("A","B")
+    check(#byStorage==#byNode and byStorage[1].name=="A" and byStorage[#byStorage].name=="B","plan by storage name")
+  end
   local function untilTrue(predicate,seconds,message)
     local deadline=computer.uptime()+seconds
-    repeat if predicate() then return end;event.pull(0.1) until computer.uptime()>deadline
+    repeat if predicate() then return end;event.pull(math.max(0.1,deadline-computer.uptime())) until computer.uptime()>deadline
     error(message or "timeout")
   end
   local count=(case=="split" or case=="wait" or case=="fixes" or case=="steps") and 2 or 1
@@ -119,7 +126,7 @@ return function(case)
     local listener=function(_,finished,state) if finished==id then notified=state end end
     event.listen("logistics",listener)
     local deadline=computer.uptime()+180
-    while not notified and computer.uptime()<deadline do event.pull(0.5,"logistics") end
+    while not notified and computer.uptime()<deadline do event.pull(math.max(0,deadline-computer.uptime()),"logistics") end
     event.ignore("logistics",listener)
     check(notified,"completion event missing")
     local result=logistics.status(id);print("job",id,serialization.serialize(result))
@@ -132,12 +139,13 @@ return function(case)
     check(logistics.route("milk-run",steps));check(logistics.routes()[1]=="milk-run")
     result=completed(logistics.run("milk-run"));check(result.state=="done" and result.steps[5].moved==20)
     local sawParallel=false
-    local watch=event.timer(0.1,function()
+    local watch=function()
       local working=0;for _,d in ipairs(logistics.drones()) do if d.state=="working" then working=working+1 end end
       if working==2 then sawParallel=true end
-    end,math.huge)
+    end
+    event.listen("modem_message",watch)
     result=completed(logistics.job({{take=from,item=item,count=600},{put={node="E",side=0},item=item,rest=true}},{drones=2}))
-    event.cancel(watch);check(sawParallel,"step parallel option ignored")
+    event.ignore("modem_message",watch);check(sawParallel,"step parallel option ignored")
     check(result.state=="done" and result.steps[1].moved==600 and result.steps[2].moved==600 and result.trips==3)
     result=completed(logistics.job({{take={node="E",side=0,slots={1}},item=item,count="all"},{put={node="A",side=0,slots={1}},item=item,rest=true},{read={node="E",side=0,slots={1}}},{go="M"}}))
     check(result.state=="done" and result.steps[1].moved==64 and result.steps[2].moved==64 and not next(result.steps[3].listing),"all/slots/read/go")
@@ -176,7 +184,7 @@ return function(case)
     -- d1 is selected by keeping d2 occupied waiting at O (already stocked
     -- cobble, but the deliberately absent iron wait has a bounded timeout).
     local occupying=logistics.transfer(item,1,{node="O",side=0},to,{wait={timeout=20},retries=0,drones=1})
-    event.pull(0.1)
+    untilTrue(function() for _,d in ipairs(logistics.drones()) do if d.state=="working" then return true end end end,5,"waiting job not assigned")
     local active=logistics.drones();local occupied
     for _,d in ipairs(active) do if d.state=="working" then occupied=d.name end end
     -- The native adversary triggers only on d1. If d1 got the waiting job,
@@ -247,6 +255,11 @@ return function(case)
     check(result.state=="done" and result.moved==64 and result.remaining==0)
     d=logistics.drones()[1];check(d.node=="H" and d.state=="idle")
     print("transfer packets",(d.sent or 0)+(d.received or 0)-before,"energy",d.energy)
+    if case=="names" then
+      local id=logistics.job({{go="iron-destination"}})
+      local status;repeat os.sleep(0.5);status=logistics.status(id) until status.state~="queued" and status.state~="active"
+      check(status.state=="done" and status.steps[1].go=="B","go by storage name")
+    end
     if case=="power" then check(d.energy>=4990,"not charged to reserve");os.sleep(0.6) end
   end
   for _,d in ipairs(logistics.drones()) do check(d.state=="idle" and d.node==(d.name=="d1" and "H" or "H2")) end

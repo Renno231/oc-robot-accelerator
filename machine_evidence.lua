@@ -4,6 +4,13 @@ local computer=require('computer')
 local serialization=require('serialization')
 local boots={}
 local archivedJobs={}
+local tripMetrics={}
+event.listen('modem_message',function(_,_,sender,port,_,_,kind,id,text)
+  if port==27103 and kind=='report' and type(text)=='string' then
+    local result=serialization.unserialize(text)
+    if type(result)=='table' and result.metrics then tripMetrics[#tripMetrics+1]=result.metrics end
+  end
+end)
 local originalRequire=require
 local instrumented=false
 require=function(name)
@@ -57,6 +64,9 @@ local function json(v)
 end
 local ok,err=xpcall(assert(loadfile('/home/program/native-main.lua')),debug.traceback)
 local data={jobs=archivedJobs,fleet={},files={},boots=boots,returned=ok,programStarts=count+1,reloadPending=reloadPending}
+data.flightMetrics=tripMetrics
+local planning=io.open('/home/planning-metrics.lua','r')
+if planning then data.planning=serialization.unserialize(planning:read('*a'));planning:close() end
 local lg=package.loaded.logistics
 if lg then
   for id=1,1000 do local s=lg.status(id);if s then data.jobs[tostring(id)]=s end end

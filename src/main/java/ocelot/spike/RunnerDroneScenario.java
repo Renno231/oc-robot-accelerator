@@ -73,7 +73,13 @@ final class RunnerDroneScenario {
         }
         Set<String> positions=new HashSet<>();
         for(JsonElement e:containers) {
-            JsonObject c=RunnerScenario.object(e,"position,block,slots");spec.inside(RunnerScenario.position(c.get("position")));
+            JsonObject c=RunnerScenario.object(e,"position,block,slots"+(e.isJsonObject() && e.getAsJsonObject().has("properties")?",properties":""));spec.inside(RunnerScenario.position(c.get("position")));
+            if(c.has("properties")) {
+                JsonObject props=RunnerScenario.object(c.get("properties"),"*");
+                if(props.entrySet().size()>16) throw RunnerScenario.bad("properties count");
+                for(java.util.Map.Entry<String,JsonElement> prop:props.entrySet())
+                    if(!prop.getKey().matches("[A-Za-z0-9_.+-]{1,64}") || !RunnerScenario.string(prop.getValue()).matches("[A-Za-z0-9_.+-]{1,64}")) throw RunnerScenario.bad("property");
+            }
             if(!positions.add(c.get("position").toString())) throw RunnerScenario.bad("duplicate container position");
             RunnerScenario.registry(c.get("block"));initialSlots(c.get("slots"),64);
         }

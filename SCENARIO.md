@@ -152,6 +152,7 @@ Both kinds of v4 scenarios can declare up to 64 block inventories:
 ```
 
 Container positions must be unique and inside the region. Setup places the block,
+using optional `properties` (for example, `{"facing":"south"}`),
 clears its physical tile inventory and fills the listed slots (same metadata/NBT
 shape as robot inventory). Slots are one-based, bounded to 64, and checked against
 the native block inventory. Results include all declared containers' final contents.

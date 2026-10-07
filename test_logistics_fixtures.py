@@ -3,10 +3,18 @@ from pathlib import Path
 import unittest
 import runner_scenario
 
-CASES = ('pair', 'transfer', 'split', 'shortfall', 'full', 'power', 'security', 'held', 'stack-capacity', 'names', 'steps', 'wait', 'blocked', 'blocked-held', 'furnace', 'fixes')
+CASES = ('pair', 'transfer', 'split', 'shortfall', 'full', 'power', 'security', 'held', 'stack-capacity', 'names', 'steps', 'wait', 'blocked', 'blocked-held', 'furnace', 'fixes', 'storage-room', 'obstacle-room')
 
 
 class LogisticsFixturesTests(unittest.TestCase):
+    def test_storage_room_native_geometry(self):
+        spec=runner_scenario.load(Path('examples/logistics/storage-room/scenario.json')).normalized
+        self.assertEqual(64,len(spec['containers']))
+        self.assertEqual(2,len(spec['drones']))
+        for chest in spec['containers']:
+            x,y,z=chest['position']
+            self.assertIn(x,range(8));self.assertIn(y,range(65,69));self.assertIn(z,(1,3))
+            self.assertEqual('south' if z==1 else 'north',chest['properties']['facing'])
     def test_loader_envelope_and_canonical_program_copies(self):
         source = Path('drone-logistics')
         loader = (source / 'drone/loader.lua').read_bytes()

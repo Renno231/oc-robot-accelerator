@@ -23,6 +23,12 @@ public class RunnerDroneScenarioTest {
     @Test public void nativeDroneContract() throws Exception {
         RunnerScenario spec=RunnerScenario.parse(fixture().toString());assertEquals(1,spec.v4.drones.size());assertNull(spec.hardware);assertEquals("baseline",spec.mode);
     }
+    @Test public void nativeContainerPropertiesAreOptionalAndStrict() throws Exception {
+        JsonObject value=fixture();JsonObject container=value.getAsJsonArray("containers").get(0).getAsJsonObject();
+        container.add("properties",new JsonParser().parse("{\"facing\":\"south\"}"));
+        assertEquals("south",RunnerScenario.parse(value.toString()).v4.containers.get(0).getAsJsonObject().getAsJsonObject("properties").get("facing").getAsString());
+        container.getAsJsonObject("properties").addProperty("facing","invalid space");rejects(value);
+    }
     @Test public void coordinatedModeAndInvalidMachineCombinations() throws Exception {
         JsonObject accelerated=fixture();accelerated.getAsJsonObject("execution").addProperty("mode","coordinated");assertEquals("coordinated",RunnerScenario.parse(accelerated.toString()).mode);
         JsonObject paced=fixture();paced.getAsJsonObject("execution").addProperty("mode","paced");rejects(paced);

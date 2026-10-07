@@ -29,7 +29,7 @@ final class RunnerContainers {
     static void setup(RunnerScenario spec,WorldServer world) throws Exception {
         if(spec.v4==null) return;
         for(JsonElement e:spec.v4.containers) {
-            JsonObject c=e.getAsJsonObject();JsonObject block=new JsonObject();block.add("block",c.get("block"));block.add("properties",new JsonObject());
+            JsonObject c=e.getAsJsonObject();JsonObject block=new JsonObject();block.add("block",c.get("block"));block.add("properties",c.has("properties")?c.get("properties"):new JsonObject());
             world.setBlockState(pos(c),RunnerRuntime.blockState(block),3);
             IInventory inventory=inventory(world,pos(c));inventory.clear();fill(inventory,c.getAsJsonArray("slots"),"container "+pos(c));
         }

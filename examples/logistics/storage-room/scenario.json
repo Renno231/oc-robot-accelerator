@@ -1,0 +1,1237 @@
+{
+  "schemaVersion": 4,
+  "id": "logistics-storage-room",
+  "world": {
+    "region": {
+      "min": [
+        -6,
+        62,
+        -2
+      ],
+      "max": [
+        10,
+        71,
+        11
+      ]
+    },
+    "blocks": [
+      {
+        "min": [
+          -6,
+          62,
+          -2
+        ],
+        "max": [
+          10,
+          71,
+          11
+        ],
+        "block": "minecraft:air"
+      },
+      {
+        "min": [
+          -6,
+          62,
+          -2
+        ],
+        "max": [
+          10,
+          63,
+          11
+        ],
+        "block": "minecraft:stone"
+      }
+    ]
+  },
+  "computer": {
+    "position": [
+      -4,
+      65,
+      2
+    ],
+    "hardware": {
+      "tier": 3,
+      "cpu": "cpu3",
+      "memory": [
+        "ram6"
+      ],
+      "cards": [
+        "wlancard2"
+      ],
+      "storage": [
+        "hdd3"
+      ],
+      "bootDrive": 0
+    },
+    "program": {
+      "directory": "program",
+      "entry": "main.lua"
+    }
+  },
+  "drones": [
+    {
+      "position": [
+        -2,
+        65,
+        2
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
+    },
+    {
+      "position": [
+        -2,
+        65,
+        5
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
+    }
+  ],
+  "blocks": [
+    {
+      "position": [
+        -2,
+        64,
+        2
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
+    },
+    {
+      "position": [
+        -1,
+        64,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        63,
+        2
+      ],
+      "block": "minecraft:redstone_block"
+    },
+    {
+      "position": [
+        -3,
+        64,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        1
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        3
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        5
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
+    },
+    {
+      "position": [
+        -1,
+        64,
+        5
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        63,
+        5
+      ],
+      "block": "minecraft:redstone_block"
+    },
+    {
+      "position": [
+        -3,
+        64,
+        5
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        4
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        6
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -5,
+        65,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -5,
+        65,
+        3
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -5,
+        66,
+        2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -5,
+        66,
+        3
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    }
+  ],
+  "containers": [
+    {
+      "position": [
+        0,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": [
+        {
+          "slot": 1,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 2,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 3,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 4,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 5,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 6,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 7,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 8,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 9,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 10,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 11,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        }
+      ]
+    },
+    {
+      "position": [
+        0,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        0,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        0,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        0,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": [
+        {
+          "slot": 1,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 2,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 3,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 4,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 5,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 6,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 7,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 8,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 9,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 10,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 11,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        }
+      ]
+    },
+    {
+      "position": [
+        0,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        0,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": [
+        {
+          "slot": 1,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 2,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 3,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 4,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 5,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 6,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 7,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 8,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 9,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 10,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        },
+        {
+          "slot": 11,
+          "item": "minecraft:iron_ingot",
+          "count": 64
+        }
+      ]
+    },
+    {
+      "position": [
+        0,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        1,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        2,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        3,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        4,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        5,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        6,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        65,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        65,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        66,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        66,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        67,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        67,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        68,
+        1
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "south"
+      },
+      "slots": []
+    },
+    {
+      "position": [
+        7,
+        68,
+        3
+      ],
+      "block": "minecraft:chest",
+      "properties": {
+        "facing": "north"
+      },
+      "slots": []
+    }
+  ],
+  "execution": {
+    "mode": "baseline",
+    "maxTicks": 18000,
+    "timeoutSeconds": 1000
+  },
+  "observations": {
+    "everyTicks": 1
+  },
+  "expect": {
+    "drones": [
+      {
+        "index": 0,
+        "blockPosition": [
+          -2,
+          65,
+          2
+        ],
+        "running": true
+      },
+      {
+        "index": 1,
+        "blockPosition": [
+          -2,
+          65,
+          5
+        ],
+        "running": true
+      }
+    ]
+  }
+}

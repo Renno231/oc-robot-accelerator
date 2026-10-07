@@ -76,7 +76,10 @@ from below (side 1) slot 1 = output, slot 2 = fuel.
   returns the way it came with its cargo. Blocked means the remaining offset
   has not shrunk by more than 0.1 blocks in 3 s (drones wobble, so small
   movement does not count as progress). Measured at a wall: 0.209-block
-  recoil, then still; detection fired at 3.0 s (T4).
+  recoil, then still; detection fired at 3.0 s (T4). On a blocked shortcut the
+  controller marks the block ahead of the stop point as not clear for that job
+  and reroutes. In flight the drone sleeps 0.1–1 s between checks depending on
+  remaining distance; arrival and blocked rules are unchanged (T7).
 - Item matching: name and damage required, label optional. Source-confirmed
   (`integration/minecraft/ConverterItemStack.scala:55-61`): a drone sees name,
   damage, maxDamage, size, maxSize, hasTag, label (plus enchantments/lore);
@@ -157,11 +160,24 @@ Mapping (`require("map")`, one shared instance, file `/etc/map.cfg`):
 - Named storages: `map.name(storage, node, side)`, `map.unname(storage)`,
   `map.storage(storage)` → `{node, side}`, `map.storages()`. Users and programs
   address storages by name; a node is the hover point and may serve up to 5.
+- Node and storage names share one namespace (a name can't be both).
+  `map.place(name)` → the node for a node or storage name; anywhere logistics
+  takes a node (`go`, `plan`, `scan`, `test`) a storage name means its node.
 - `map.link(a, b)` / `map.unlink(a, b)`: declares the straight flight between
   two nodes clear. Links are the only paths drones fly.
 - `map.route(a, b, avoid)` → list of node names (A*, straight-line distance),
   or nil. `avoid` is an optional set of links to skip.
 - `map.save()`, `map.load()`. Mapping knows nothing about items or drones.
+- Straight-line shortcuts (T7): a link declares the drone body's whole straight
+  flight clear, so every block it sweeps is known clear air. `map.clearLine`
+  checks that a straight flight between any two points sweeps only known-clear
+  blocks (3D grid walk, cost proportional to length; clear set rebuilt only
+  after a map edit). Logistics plans with `map.theta` (any-angle A* using that
+  check); `map.route` and `map.smooth` (A* plus a forward shortcut pass) remain.
+  Theta* was chosen by measurement: equal or fewer stops and shorter flights
+  than A* plus smoothing, at most 6.7 ms controller time per route. On the
+  64-chest storage room a corner trip went from 22 stops to 4, 39 s to 11 s,
+  and 316 to 102 energy. Drone body (source): 0.75 × 0.375 × 0.75.
 
 Map editing: `mapd` serves the map over wireless (port 27104) to holders of the
 key in `/etc/mapd.cfg`; wrong keys get no reply. Every edit saves the map.

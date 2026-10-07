@@ -170,6 +170,10 @@ final class RunnerProgram implements AutoCloseable {
         if(observer==null) throw new IllegalStateException("OC observer disk unavailable");
         synchronized(observer) {return readOutcome();}
     }
+    boolean storageRoomChestRequested() {
+        if(observer==null) return false;
+        synchronized(observer) {return observer.exists("home/storage-room-place-chest");}
+    }
     private String readOutcome() throws Exception {
         if(observer.size("home/runner-console.log")>1024*1024) throw new IOException("program_console_limit");
             if(!observer.exists("home/runner-outcome")) return "";

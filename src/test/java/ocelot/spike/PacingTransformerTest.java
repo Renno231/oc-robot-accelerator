@@ -55,7 +55,13 @@ public class PacingTransformerTest {
         for (String name : new String[]{"update", "run", "save"}) {
             MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, name,
                     name.equals("save") ? "(Lnet/minecraft/nbt/NBTTagCompound;)V" : "()V", null, null);
-            m.visitCode(); m.visitInsn(Opcodes.RETURN); m.visitMaxs(0, 0); m.visitEnd();
+            m.visitCode();
+            if(name.equals("update")) for(int i=0;i<2;i++) {
+                m.visitInsn(Opcodes.ACONST_NULL);m.visitInsn(Opcodes.DCONST_1);
+                m.visitMethodInsn(Opcodes.INVOKEINTERFACE,"li/cil/oc/api/network/ComponentConnector","tryChangeBuffer","(D)Z",true);
+                m.visitInsn(Opcodes.POP);
+            }
+            m.visitInsn(Opcodes.RETURN); m.visitMaxs(0, 0); m.visitEnd();
         }
         MethodVisitor dispatch=w.visitMethod(Opcodes.ACC_PRIVATE,"switchTo","()V",null,null);
         dispatch.visitCode();dispatch.visitInsn(Opcodes.ACONST_NULL);dispatch.visitVarInsn(Opcodes.ALOAD,0);
@@ -66,11 +72,15 @@ public class PacingTransformerTest {
         w.visitEnd();
         byte[] transformed = new PacingTransformer().transform("x", "li.cil.oc.server.machine.Machine", w.toByteArray());
         ClassNode result = new ClassNode(); new ClassReader(transformed).accept(result, 0);
-        int boundaries = 0, originalReturns = 0, schedules=0;
+        int boundaries = 0, originalReturns = 0, schedules=0,energyDebits=0;
         for (MethodNode method : result.methods) for (AbstractInsnNode instruction : method.instructions.toArray()) {
             if (instruction instanceof MethodInsnNode) {
                 MethodInsnNode call = (MethodInsnNode)instruction;
                 if (call.owner.equals("ocelot/spike/Trace") && call.name.equals("machine")) boundaries++;
+                if(call.owner.equals("ocelot/spike/RunnerEnergyMetrics") && call.name.equals("debit")) {
+                    energyDebits++;assertEquals(Opcodes.INVOKESTATIC,call.getOpcode());assertFalse(call.itf);
+                    assertEquals(Opcodes.ALOAD,call.getPrevious().getOpcode());
+                }
                 if(call.owner.equals("ocelot/spike/RunnerScheduler") && call.name.equals("schedule")) {
                     schedules++;assertEquals(Opcodes.INVOKESTATIC,call.getOpcode());assertFalse(call.itf);
                     assertTrue(call.desc.startsWith("(Ljava/util/concurrent/ScheduledExecutorService;"));
@@ -80,14 +90,18 @@ public class PacingTransformerTest {
         }
         assertEquals(6, boundaries);
         assertEquals(4, originalReturns);assertEquals(1,schedules);
+        assertEquals(2,energyDebits);
     }
 
     @Test(expected=IllegalStateException.class) public void missingWorkerDispatchFailsClosed() {
         PacingTransformer.patchWorkerDispatch(new ClassNode());
     }
+    @Test(expected=IllegalStateException.class) public void missingNativeEnergySitesFailClosed() {
+        PacingTransformer.patchEnergyMetrics(new ClassNode());
+    }
 
     @Test public void pinnedAsyncAndEnvironmentClassesHaveExpectedHookShapes() throws Exception {
-        String[] names={"li.cil.oc.util.SafeThreadPool","net.minecraftforge.common.chunkio.ChunkIOExecutor",
+        String[] names={"li.cil.oc.server.component.WirelessNetworkCard","li.cil.oc.util.SafeThreadPool","net.minecraftforge.common.chunkio.ChunkIOExecutor",
             "net.minecraftforge.common.chunkio.ChunkIOThreadPoolExecutor","li.cil.oc.server.fs.Buffered$class",
             "li.cil.oc.server.fs.VirtualFileSystem$class","li.cil.oc.server.fs.FileOutputStreamFileSystem$class",
             "li.cil.oc.server.fs.VirtualFileSystem$VirtualOutputHandle","li.cil.oc.server.fs.VirtualFileSystem$VirtualObject$class",
