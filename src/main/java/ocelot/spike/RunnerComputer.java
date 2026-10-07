@@ -21,8 +21,8 @@ import net.minecraftforge.common.util.FakePlayerFactory;
 final class RunnerComputer {
     boolean storageRoomChestRequested() {return program.storageRoomChestRequested();}
     void storageRoomChestPlaced() {machine.signal("storage_room_chest_placed");}
-    boolean warehouseRemovalRequested() {return program.warehouseRemovalRequested();}
-    void warehouseItemsRemoved() {machine.signal("warehouse_items_removed");}
+    boolean markerRequested(String path) {return program.markerRequested(path);}
+    void signal(String name) {if(!machine.signal(name)) throw new IllegalStateException("container_edit_signal_rejected:"+name);}
     private final JsonObject spec;
     private final WorldServer world;
     private final RunnerProgram program;

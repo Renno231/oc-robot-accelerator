@@ -1,0 +1,4 @@
+minecraft:planks	{[1]="minecraft:log",qty=4}
+minecraft:stick	{[1]="minecraft:planks",[4]="minecraft:planks",qty=4}
+minecraft:torch	{[1]="minecraft:coal:1",[4]="minecraft:stick",qty=4}
+minecraft:brick_block	{[1]="minecraft:brick",[2]="minecraft:brick",[4]="minecraft:brick",[5]="minecraft:brick",qty=1}

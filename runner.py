@@ -77,7 +77,8 @@ def _dispatch(args):
     if args.operation=='validate':
         spec=scenario.load(args.scenario)
         return {'status':'valid','scenario':spec.normalized,
-                'programFiles':sum(size is not None for _,size in spec.program_entries+spec.second_entries),
+                'programFiles':sum(size is not None for _,size in spec.program_entries+spec.second_entries) +
+                               sum(size is not None for _, _, entries in spec.robot_programs for _, size in entries),
                 'worldFiles':sum(size is not None for _,size in spec.world_entries)},0
     if args.operation=='run':
         value=None

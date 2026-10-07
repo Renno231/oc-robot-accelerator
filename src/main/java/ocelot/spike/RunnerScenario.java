@@ -159,7 +159,7 @@ final class RunnerScenario {
         }
         return s;
     }
-    private static JsonObject hardware(JsonElement e) {
+    static JsonObject hardware(JsonElement e) {
         JsonObject h=object(e,"tier,cpu,memory,cards,upgrades,storage,bootDrive,containers");
         if(!new JsonPrimitive("creative").equals(h.get("tier"))) integer(h.get("tier"),1,3);
         componentName(h.get("cpu"));

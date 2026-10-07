@@ -26,14 +26,16 @@ final class RunnerDrones {
     private final List<Drone> drones=new ArrayList<>();
     private final List<Vec3d> spawned=new ArrayList<>();
     private final List<RunnerDroneErrors> errors=new ArrayList<>();
+    private final List<RunnerRobot> robots=new ArrayList<>();
+    private final RunnerContainerEdits containerEdits;
     private RunnerRecording recording;
     private RunnerRouteMetrics routeMetrics;
     private long sequence;
-    private boolean started,storageRoomChestPlaced,warehouseItemsRemoved;
+    private boolean started,storageRoomChestPlaced;
     private RunnerComputer computer,secondComputer;
     private final Map<net.minecraft.util.math.BlockPos,net.minecraft.block.state.IBlockState> previous=new HashMap<>();
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
-    RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;}
+    RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;containerEdits=new RunnerContainerEdits(spec.v4.containerEdits);}
     boolean owns(net.minecraft.entity.Entity entity) {return drones.contains(entity);}
     static void validateReload(JsonObject identity,String scenario,int count) {
         if(!identity.get("scenario").getAsString().equals(scenario)) throw new IllegalStateException("reload_scenario_identity");
@@ -47,6 +49,8 @@ final class RunnerDrones {
         }
     }
     void restore(JsonObject identity) throws Exception {
+        if(spec.v4.robots.size()>0) throw new IllegalStateException("reload_robots_not_supported");
+        if(spec.v4.containerEdits.size()>0) throw new IllegalStateException("reload_container_edits_not_supported");
         validateReload(identity,spec.id,spec.v4.drones.size());
         JsonArray saved=identity.getAsJsonArray("drones");
         for(JsonElement e:saved) {
@@ -63,6 +67,8 @@ final class RunnerDrones {
         recording=new RunnerRecording(root,spec.maxBytes,spec.onFull);started=true;sample("initial",0);
     }
     boolean captureReload() throws Exception {
+        if(spec.v4.robots.size()>0) throw new IllegalStateException("reload_robots_not_supported");
+        if(spec.v4.containerEdits.size()>0) throw new IllegalStateException("reload_container_edits_not_supported");
         if(computer==null) throw new IllegalStateException("reload_probe_requires_controller");
         boolean cargo=false;
         for(Drone d:drones) if(d.posX>3.6 && d.posX<5.6 && RunnerContainers.contents(d.mainInventory()).size()>0) cargo=true;
@@ -75,7 +81,10 @@ final class RunnerDrones {
         Files.write(root.resolve("reload-state.json"),data.toString().getBytes(StandardCharsets.UTF_8),StandardOpenOption.CREATE_NEW);
         world.getMinecraftServer().saveAllWorlds(false);return true;
     }
-    boolean owns(net.minecraft.tileentity.TileEntity tile) {return (computer!=null && computer.owns(tile)) || (secondComputer!=null && secondComputer.owns(tile));}
+    boolean owns(net.minecraft.tileentity.TileEntity tile) {
+        for(RunnerRobot robot:robots) if(robot.owns(tile)) return true;
+        return (computer!=null && computer.owns(tile)) || (secondComputer!=null && secondComputer.owns(tile));
+    }
     private static net.minecraft.util.math.BlockPos blockPosition(Drone drone) {
         return new net.minecraft.util.math.BlockPos(drone.posX,drone.posY,drone.posZ);
     }
@@ -136,6 +145,7 @@ final class RunnerDrones {
         }
         if(spec.v4.computer!=null) {computer=new RunnerComputer(spec.v4.computer,world,root);computer.setup();}
         if(spec.v4.secondComputer!=null) {secondComputer=new RunnerComputer(spec.v4.secondComputer,world,root);secondComputer.setup();}
+        for(JsonElement e:spec.v4.robots) {RunnerRobot robot=new RunnerRobot(e.getAsJsonObject(),world,root);robots.add(robot);robot.setup();}
         if(Files.isRegularFile(root.resolve("program/route-metrics-enabled"))) routeMetrics=new RunnerRouteMetrics(root);
     }
     static String state(Drone drone) throws Exception {
@@ -153,28 +163,12 @@ final class RunnerDrones {
             computer.storageRoomChestPlaced();
             storageRoomChestPlaced=true;
         }
-        // Opt-in fixture action: use the native chest inventory API, just as a
-        // player removing a stack does. No logistics/accounting predicates change.
-        if(!warehouseItemsRemoved && "warehouse-room".equals(spec.id) && computer!=null && computer.warehouseRemovalRequested()) {
-            net.minecraft.tileentity.TileEntity tile=world.getTileEntity(new net.minecraft.util.math.BlockPos(0,65,1));
-            if(!(tile instanceof net.minecraft.inventory.IInventory)) throw new IllegalStateException("warehouse_source_absent");
-            net.minecraft.inventory.IInventory inventory=(net.minecraft.inventory.IInventory)tile;
-            if(inventory.getStackInSlot(0).getCount()!=40) throw new IllegalStateException("warehouse_source_count");
-            inventory.decrStackSize(0,24);inventory.markDirty();
-            computer.warehouseItemsRemoved();warehouseItemsRemoved=true;
-        }
-        if(!warehouseItemsRemoved && "warehouse-furnace-cycle".equals(spec.id) && computer!=null && computer.warehouseRemovalRequested()) {
-            net.minecraft.tileentity.TileEntity tile=world.getTileEntity(new net.minecraft.util.math.BlockPos(7,68,3));
-            if(!(tile instanceof net.minecraft.inventory.IInventory)) throw new IllegalStateException("furnace_cycle_source_absent");
-            net.minecraft.inventory.IInventory inventory=(net.minecraft.inventory.IInventory)tile;
-            if(inventory.getStackInSlot(0).getCount()!=50) throw new IllegalStateException("furnace_cycle_source_count");
-            inventory.decrStackSize(0,20);inventory.markDirty();
-            computer.warehouseItemsRemoved();warehouseItemsRemoved=true;
-        }
+        containerEdits.tick(tick,world,computer,secondComputer);
         if(!started) {
             if(tick<3) return null;
             if(computer!=null && !computer.prepare(tick)) return null;
             if(secondComputer!=null && !secondComputer.prepare(tick)) return null;
+            for(RunnerRobot robot:robots) if(!robot.prepare(tick)) return null;
             for(int i=0;i<drones.size();i++) {
                 Drone drone=drones.get(i);JsonObject d=spec.v4.drones.get(i).getAsJsonObject();
                 Connector power=(Connector)drone.machine().node();
@@ -190,6 +184,12 @@ final class RunnerDrones {
             started=true;
         } else {
             boolean stopped=true;
+            boolean robotsReturned=true;
+            for(int i=0;i<robots.size();i++) {
+                String outcome=robots.get(i).tick();
+                if(outcome==null) robotsReturned=false;
+                else if(!outcome.equals("returned")) return "robot_"+i+":"+outcome;
+            }
             for(int i=0;i<drones.size();i++) {
                 Drone drone=drones.get(i);String state=state(drone);
                 if(drone.isDead) return "drone_error:"+i+":entity removed";
@@ -202,16 +202,28 @@ final class RunnerDrones {
                 String other=secondComputer==null?"returned":secondComputer.tick();
                 if(outcome!=null && !outcome.equals("returned")) return outcome;
                 if(other!=null && !other.equals("returned")) return "second_"+other;
-                if("returned".equals(outcome) && "returned".equals(other)) {
+                if(completionReady(true,"returned".equals(outcome),"returned".equals(other),stopped,robotsReturned)) {
                     String failure=assertions();return failure==null?"passed":failure;
                 }
-            } else if(stopped) {String failure=assertions();return failure==null?"passed":failure;}
+            } else if(completionReady(false,false,false,stopped,robotsReturned)) {String failure=assertions();return failure==null?"passed":failure;}
         }
         if(tick%spec.everyTicks==0) {sample("sample",tick);if(spec.stallTicks>0 && tick-stall.lastChangeTick()>=spec.stallTicks) return "stall_limit";}
         return null;
     }
+    // Host errors are checked above; persistent robot services need not exit when coordinated.
+    static boolean completionReady(boolean coordinated,boolean coordinatorReturned,boolean secondReturned,
+                                   boolean dronesStopped,boolean robotsReturned) {
+        return coordinated ? coordinatorReturned && secondReturned : dronesStopped && robotsReturned;
+    }
     private String assertions() {
         String failure=RunnerContainers.assertions(spec,world);if(failure!=null) return failure;
+        for(JsonElement e:spec.v4.expectedRobots) {
+            JsonObject expected=e.getAsJsonObject();
+            if(expected.has("inventory")) {
+                failure=robots.get(expected.get("index").getAsInt()).checkInventory(expected.getAsJsonArray("inventory"));
+                if(failure!=null) return failure;
+            }
+        }
         for(JsonElement e:spec.expectedBlocks) {
             JsonObject b=e.getAsJsonObject();net.minecraft.util.math.BlockPos p=RunnerContainers.pos(b);
             if(!String.valueOf(world.getBlockState(p).getBlock().getRegistryName()).equals(b.get("block").getAsString())) return "expectation_failed:block "+p;
@@ -226,6 +238,9 @@ final class RunnerDrones {
         return null;
     }
     private static JsonArray exact(Vec3d p) {JsonArray a=new JsonArray();a.add(p.x);a.add(p.y);a.add(p.z);return a;}
+    private JsonArray robotStates() throws Exception {
+        JsonArray result=new JsonArray();for(int i=0;i<robots.size();i++) result.add(robots.get(i).snapshot(i));return result;
+    }
     private JsonArray states() throws Exception {
         JsonArray result=new JsonArray();
         for(int i=0;i<drones.size();i++) {
@@ -252,16 +267,23 @@ final class RunnerDrones {
             net.minecraft.util.math.BlockPos p=new net.minecraft.util.math.BlockPos(x,y,z);JsonObject changed=RunnerObservations.changedBlock(previous,p,world.getBlockState(p));if(changed!=null) changes.add(changed);
         }
         value.add("blocks",changes);JsonArray state=states();value.add("drones",state);
+        if(!robots.isEmpty()) value.add("robots",robotStates());
         value.add("containers",RunnerContainers.result(spec,world));
         if(computer!=null) value.add("computer",computer.snapshot());
         if(secondComputer!=null) value.add("secondComputer",secondComputer.snapshot());
         if(recording.record(value.toString(),kind,tick)) sequence++;
-        stall.observe(tick,state.toString()+(computer==null?"":"|"+value.get("computer"))+(secondComputer==null?"":"|"+value.get("secondComputer")),changes.size()>0);
+        stall.observe(tick,state.toString()+(robots.isEmpty()?"":"|"+value.get("robots"))+(computer==null?"":"|"+value.get("computer"))+(secondComputer==null?"":"|"+value.get("secondComputer")),changes.size()>0);
     }
     JsonObject result(long tick) {
         JsonObject result=new JsonObject();result.addProperty("runnerSchemaVersion",1);result.addProperty("scenarioId",spec.id);
         try {if(recording!=null) sample("final",tick);result.add("drones",states());result.add("containers",RunnerContainers.result(spec,world));}
         catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
+        if(!robots.isEmpty()) {
+            try {result.add("robots",robotStates());}
+            catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
+            for(RunnerRobot robot:robots) try {robot.close();}
+            catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
+        }
         try {if(recording!=null) {recording.close();result.add("observationCoverage",recording.coverage());}}
         catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         if(computer!=null) {

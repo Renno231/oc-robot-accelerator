@@ -174,9 +174,9 @@ final class RunnerProgram implements AutoCloseable {
         if(observer==null) return false;
         synchronized(observer) {return observer.exists("home/storage-room-place-chest");}
     }
-    boolean warehouseRemovalRequested() {
+    boolean markerRequested(String path) {
         if(observer==null) return false;
-        synchronized(observer) {return observer.exists("home/warehouse-remove-items");}
+        synchronized(observer) {return observer.exists(path);}
     }
     private String readOutcome() throws Exception {
         if(observer.size("home/runner-console.log")>1024*1024) throw new IOException("program_console_limit");

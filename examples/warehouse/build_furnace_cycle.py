@@ -40,6 +40,9 @@ def build(target=None, seed=128, shortfall=False, ram=1):
         value['blocks'].append({'position':[-3,64,z],'block':'opencomputers:capacitor','energy':1600})
     value['execution'] = {'mode':'coordinated','maxTicks':36000,'timeoutSeconds':2100}
     value['observations'] = {'everyTicks':10}
+    value['containerEdits'] = ([{'position':[7,68,3],'slot':1,'count':20,'expectedCount':50,
+                               'request':{'computer':0,'marker':'home/warehouse-remove-items',
+                                          'signal':'warehouse_items_removed'}}] if shortfall else [])
     total = seed - (20 if shortfall else 0)
     value['expect']['containers'] = [
         {'position':[6,65,1],'slots':[{'slot':27,'item':'minecraft:brick','count':64}]},

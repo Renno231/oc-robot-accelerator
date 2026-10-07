@@ -1972,5 +1972,22 @@
         ]
       }
     ]
-  }
+  },
+  "containerEdits": [
+    {
+      "position": [
+        0,
+        65,
+        1
+      ],
+      "slot": 1,
+      "count": 24,
+      "expectedCount": 40,
+      "request": {
+        "computer": 0,
+        "marker": "home/warehouse-remove-items",
+        "signal": "warehouse_items_removed"
+      }
+    }
+  ]
 }
