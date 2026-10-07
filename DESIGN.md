@@ -2,8 +2,9 @@
 
 ## Status (2026-10-06)
 
-Built and verified in the accelerator (T1–T6): mapping, logistics, the drone
-loader and program, the map service and tablet client. 24 native scenarios
+Built and verified in the accelerator (T1–T7): mapping, logistics, the drone
+loader and program, the map service and tablet client, straight-line routing.
+Warehouse: designed below, not yet built. 24 native scenarios
 (16 logistics, 2 mapping, 6 drone) pass at normal speed and accelerated, with
 no differences in job results, inventories, positions or files (T6). Not yet
 done: a hand test on a real tablet with the player's GPS, and an install
@@ -232,6 +233,53 @@ reply):
   `"navigation"`. Held and lost drones: `"release"` / `"cargo"`, `"found"`.
 - Drones parse data with `load("return " .. s, "=d", "t", {})`; no OpenOS on
   drones.
+
+### Warehouse (decided 2026-10-07)
+
+An optional OpenOS library on the logistics computer: `require("warehouse")`.
+It uses mapping and logistics and adds nothing to them, except that
+`logistics.status` exposes each job's item and endpoints so any program can
+see what a job moved where.
+
+Storage names belong to the map. The warehouse keeps notes keyed by those
+names; it never stores positions or sides.
+
+- Membership is opt-in: `warehouse.add(storage, settings)`,
+  `warehouse.remove(storage)`, `warehouse.members()`. Only members are stock:
+  fetch takes from them, store puts into them. Settings (all optional):
+  - `filter`: list of items the storage is for;
+  - `priority`: number, higher first; unset counts as 0;
+  - `inventory`: shared key for storages that are the same physical inventory
+    (e.g. one chest reached from two nodes). Default: the storage name. The
+    catalogue counts one entry per inventory, never twice.
+- Groups: `warehouse.group(name, type, {role = storage, ...})`,
+  `warehouse.ungroup(name)`, `warehouse.groups(type?)`. A group is one machine
+  whose faces are storages (e.g. a furnace: input, fuel, output). `type` is an
+  opaque label; the warehouse gives it no meaning. Group storages are not stock.
+- Catalogue, per inventory: item counts, slot count, free slots, `maxSize` per
+  item seen, time of last read. Counts are last-known, not guarantees. It is
+  learned from:
+  1. `warehouse.scan(storages?)`: an explicit read job;
+  2. every finished logistics job touching a member (from `logistics.status`
+     on the `logistics` event), whoever submitted it;
+  3. shortfalls: a take that found less than expected sets that item's count
+     in that storage to what the drone actually found.
+  No periodic sweeps.
+- Queries: `find(item)` → `{{storage, count}}`, `count(item)`,
+  `contents(storage)`.
+- `fetch(item, n, to, opts)` → logistics job id. Sources: largest count
+  first, route distance breaking ties; one step-list job.
+- `store(item, n, from, opts)` → logistics job id. Destination tiers: (1)
+  members whose filter accepts the item, (2) members already holding it with
+  room, (3) empty members. Within a tier, higher `priority` first. Members
+  with a filter that rejects the item are never used.
+- Items match by name and damage, label optional, as in logistics. Items that
+  differ only in NBT are merged (OC hides NBT by default).
+- Persistent: `/etc/warehouse.cfg` (members, groups), `/etc/warehouse.db`
+  (catalogue). Memory proportional to inventories × item types.
+- No reservations: two fetches may target the same items; the second gets
+  the normal logistics partial/failed result. No keep-stocked policies yet.
+- CLI `bin/warehouse.lua` first; a menu UI comes later over the same API.
 
 ## Agnostic means compatible by construction
 
