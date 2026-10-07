@@ -11,6 +11,10 @@ local function read(path,default)
 end
 local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
 local db={}
+-- Reservations belong to warehouse-submitted jobs, not the logistics router.
+-- Inventory aliases share a key, so two faces cannot reserve the same stock.
+local inFlight={}
+local pendingCatalogue={}
 local limits=read("/etc/warehouse.stacks",{})
 local limitsDirty=false
 local function limitKey(i) return i.name..":"..tostring(i.damage or 0) end
@@ -74,10 +78,13 @@ local function item(i)
 end
 local function matches(a,b) return a.name==b.name and a.damage==(b.damage or 0) and (not b.label or a.label==b.label) end
 local function itemKey(i) return serialization.serialize({i.name,i.damage or 0,i.label},false) end
-local function grouped(storage)
-  for _,g in pairs(cfg.groups) do for _,s in pairs(g.roles) do if s==storage then return true end end end
-end
 local function inventory(storage) local s=cfg.members[storage];return s and (s.inventory or storage) end
+local function grouped(storage)
+  local key=inventory(storage) or storage
+  for _,g in pairs(cfg.groups) do for _,s in pairs(g.roles) do
+    if (inventory(s) or s)==key then return true end
+  end end
+end
 local function rebuildKeys()
   keys={};keySet={}
   for storage in pairs(cfg.members) do track(inventory(storage)) end
@@ -118,6 +125,39 @@ function M.groups(kind) local out={};for n,g in pairs(cfg.groups) do if not kind
 local function quantity(e,i)
   local n=0;for _,v in pairs(e and e.items or {}) do if matches(v.item,i) then n=n+v.count end end;return n
 end
+local function reserved(key,i,direction)
+  local count=0
+  for _,job in pairs(inFlight) do for _,r in ipairs(job) do
+    if r.key==key and r.direction==direction and matches(r.item,i) then count=count+r.count end
+  end end
+  return count
+end
+local function incomingCapacity(key,i,maximum)
+  local same,other=0,{}
+  for _,job in pairs(inFlight) do for _,r in ipairs(job) do
+    if r.key==key and r.direction=='put' then
+      if matches(r.item,i) then same=same+r.count
+      else local k=limitKey(r.item);other[k]=other[k] or {item=r.item,count=0,maximum=r.maximum};other[k].count=other[k].count+r.count end
+    end
+  end end
+  local used=same
+  for _,r in pairs(other) do
+    local room=0;for _,v in pairs(db[key] and db[key].items or {}) do if matches(v.item,r.item) then room=room+v.room end end
+    used=used+math.ceil(math.max(0,r.count-room)/r.maximum)*maximum
+  end
+  return used
+end
+local function submit(steps,opts,reservations)
+  local id=logistics.job(steps,opts)
+  local s=id and logistics.status(id)
+  if id and s and s.state~='done' and s.state~='failed' and s.state~='partial' then
+    inFlight[id]=reservations;pendingCatalogue[id]=true
+  end
+  return id
+end
+-- A logistics terminal state can precede delivery of its completion event.
+-- Callers requiring a catalogue barrier wait until that event is incorporated.
+function M.settled(id) return not pendingCatalogue[id] end
 function M.find(i)
   i=item(i);local out={}
   for _,list in pairs(entries()) do local c=quantity(list[1].entry,i);if c>0 then out[#out+1]={storage=list[1].storage,count=c} end end
@@ -146,7 +186,7 @@ local function at(endpoint)
   for s,e in pairs(endpointStorages) do if e.node==endpoint.node and e.side==endpoint.side then return s end end
 end
 local function readStorage(storage)
-  return logistics.job({{read=storage}},{drones=1,retries=0})
+  return submit({{read=storage}},{drones=1,retries=0},{})
 end
 -- Explicit scans are independent one-face read jobs: even a completely full
 -- chest fits the existing result packet bound, unlike a 64-face result.
@@ -233,6 +273,9 @@ local function finished(_,id)
     if (s.refused or 0)>0 and s.to and not s.to.slots then full(at(s.to),s.item,touched) end
   end
   for key in pairs(touched) do if db[key] then saveInventory(key) end end
+  -- Release only after the final ledger has been incorporated in the catalogue.
+  inFlight[id]=nil
+  pendingCatalogue[id]=nil
   maintain()
   local learned=limitsDirty;saveLimits()
   if observed or next(touched) or learned then changed() end
@@ -251,12 +294,12 @@ end
 function M.fetch(i,n,to,opts)
   i=item(i);positive(n);local candidates,total={},0
   for _,faces in pairs(entries()) do
-    local count=quantity(faces[1].entry,i)
+    local count=math.max(0,quantity(faces[1].entry,i)-reserved(faces[1].key,i,'take'))
     if count>0 then candidates[#candidates+1]={faces=faces,count=count};total=total+count end
   end
   if total<n then return nil,"requested "..n..", available "..total end
   table.sort(candidates,function(a,b) return a.count>b.count end)
-  local steps,remaining,cursor={},n,1;total=0;local target=node(to)
+  local steps,reservations,remaining,cursor={},{},n,1;total=0;local target=node(to)
   while remaining>0 and cursor<=#candidates do
     -- Route all equal-count inventories at the cut-off, preserving the
     -- distance tie-break, but never route lower-count unused inventories.
@@ -272,10 +315,11 @@ function M.fetch(i,n,to,opts)
     table.sort(batch,function(a,b) if a.distance~=b.distance then return a.distance<b.distance end;return a.storage<b.storage end)
     for _,c in ipairs(batch) do if remaining==0 then break end;local take=math.min(remaining,c.count)
       steps[#steps+1]={take=c.storage,item=i,count=take};remaining=remaining-take
+      reservations[#reservations+1]={key=inventory(c.storage),item=i,count=take,direction='take'}
     end
   end
   if remaining>0 then return nil,"requested "..n..", available "..total end
-  steps[#steps+1]={put=to,item=i,rest=true};return logistics.job(steps,opts)
+  steps[#steps+1]={put=to,item=i,rest=true};return submit(steps,opts,reservations)
 end
 local function accepts(settings,i)
   if not settings.filter then return nil end
@@ -292,7 +336,7 @@ function M.store(i,n,from,opts)
         local held=quantity(e,i);local room=0;for _,v in pairs(e.items) do if matches(v.item,i) then room=room+v.room end end
         local occupied=0;for _,v in pairs(e.items) do occupied=occupied+v.count end
         local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
-        local capacity=e.full and e.full[itemKey(i)] and 0 or e.freeSlots*maximum+room
+        local capacity=e.full and e.full[itemKey(i)] and 0 or math.max(0,e.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum))
         if tier and capacity>0 then
           candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity}
         end
@@ -302,14 +346,15 @@ function M.store(i,n,from,opts)
   end
   table.sort(candidates,function(a,b) if a.tier~=b.tier then return a.tier<b.tier end;if a.priority~=b.priority then return a.priority>b.priority end;return a.storage<b.storage end)
   -- Interleave takes and puts, allowing a large request to split naturally.
-  local steps,remaining,used={},n,{};local source=node(from)
+  local steps,reservations,remaining,used={},{},n,{};local source=node(from)
   for _,c in ipairs(candidates) do if remaining==0 then break end
     if not used[c.key] and distance(source,c.storage)<math.huge then
       used[c.key]=true;total=total+c.capacity;local amount=math.min(remaining,c.capacity)
       steps[#steps+1]={take=from,item=i,count=amount};steps[#steps+1]={put=c.storage,item=i,count=amount};remaining=remaining-amount
+      reservations[#reservations+1]={key=c.key,item=i,count=amount,direction='put',maximum=maximum}
     end
   end
   if remaining>0 then return nil,"requested "..n..", capacity "..total..", unknown inventories "..unknown end
-  return logistics.job(steps,opts)
+  return submit(steps,opts,reservations)
 end
 return M

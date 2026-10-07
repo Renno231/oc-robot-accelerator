@@ -124,7 +124,10 @@ def reconstruct(path, *, max_bytes=MAX_BYTES, max_line=MAX_LINE, on_record=None)
                 from runner_drones import observation
                 observation(record)
                 info['lastDrones'] = record['drones']
-                info['coverage'] = 'sampled region blocks, declared drones and containers; excludes transient changes and other entities'
+                if 'robots' in record: info['lastRobots'] = record['robots']
+                info['coverage'] = ('sampled region blocks, declared drones, robots and containers; excludes transient changes and other entities'
+                                    if 'robots' in record else
+                                    'sampled region blocks, declared drones and containers; excludes transient changes and other entities')
             else:
                 if not isinstance(robot,dict): raise ValueError('robot observation missing')
                 _position(robot.get('position'))

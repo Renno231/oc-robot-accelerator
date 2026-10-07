@@ -231,7 +231,7 @@ def _stop_tree(process):
         process.wait(timeout=3)
 
 
-def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present=False, second_present=False):
+def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present=False, second_present=False, robot_count=0):
     path = root / 'result.json'
     _no_link(path)
     if path.stat().st_size > RESULT_LIMIT:
@@ -249,9 +249,9 @@ def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present
     if type(value.get('elapsedNanos')) is not int or value['elapsedNanos'] < 0:
         raise ValueError('result elapsedNanos invalid')
     if scenario_id is not None:
-        if drone_count or computer_present:
+        if drone_count or computer_present or robot_count:
             from runner_drones import completed_result
-            completed_result(value, scenario_id, drone_count, computer_present,second_present)
+            completed_result(value, scenario_id, drone_count, computer_present,second_present,robot_count)
             return value
         if (value.get('runnerSchemaVersion') != 1 or value.get('scenarioId') != scenario_id or
                 not isinstance(value.get('program'), dict) or value['program'].get('status') != 'returned'):
@@ -260,7 +260,7 @@ def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present
 
 
 def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
-            prepare=None, scenario_id=None, on_launch=lambda pid: None, drone_count=0, computer_present=False,second_present=False):
+            prepare=None, scenario_id=None, on_launch=lambda pid: None, drone_count=0, computer_present=False,second_present=False,robot_count=0):
     """Structured process owner. Caller preparation shares the same budget and cancellation.
 
     ``prepare`` only installs already-frozen scenario inputs; it does not own a process.
@@ -362,7 +362,7 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
         report['return_code'] = process.returncode
         if process.returncode != 0:
             raise ValueError('server nonzero exit: ' + str(process.returncode))
-        _result(root, args.mode, args.ticks, scenario_id, drone_count, computer_present,second_present)
+        _result(root, args.mode, args.ticks, scenario_id, drone_count, computer_present,second_present,robot_count)
         if scenario_id is not None:
             report['runtimeLogging'] = runtime_profile.verify_proof(root)
         check()

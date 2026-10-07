@@ -63,12 +63,12 @@ local start=computer.uptime()
 local function scan() local ids=wh.scan();assert(#ids==64);for _,id in ipairs(ids) do assert(done(id).state=='done') end end
 scan();assert(wh.count(clay)==config.seed and wh.count(coal)==20 and wh.count(brick)==0)
 if config.concurrentProbe then
-  -- Separate diagnostic fixture: demonstrate selection overlap without fixing
-  -- policy or silently claiming that concurrent fetch is reservation-aware.
+  -- Both jobs are submitted before either finishes: warehouse reservations
+  -- must select disjoint inputs across the room's stock inventory faces.
   local a=assert(wh.fetch(clay,64,'furnA.in',{drones=1,retries=0}))
   local b=assert(wh.fetch(clay,64,'furnB.in',{drones=1,retries=0}))
   local ca,cb=done(a),done(b)
-  assert(ca.moved+cb.moved<128 and (ca.state=='partial' or cb.state=='partial'),'concurrency finding not reproduced')
+  assert(ca.moved==64 and cb.moved==64 and ca.state=='done' and cb.state=='done','concurrent fetch reservation failed')
   local remaining=wh.count(clay)
   local reads=done(lg.job({{read='furnA.in'},{read='furnB.in'}},{drones=1,retries=0}))
   local inside=0;for _,step in ipairs(reads.steps) do for _,v in pairs(step.listing) do inside=inside+v.size end end
@@ -83,8 +83,8 @@ if config.shortfall then
 end
 local groups=wh.groups('furnace');local names={};for n in pairs(groups) do names[#names+1]=n end;table.sort(names)
 local amount=config.seed/2
--- fetch has last-known catalogue selection, not reservations. Serialize clay
--- submissions; each phase still uses two drones for clay + fuel concurrently.
+-- Keep the cycle's historical sequential loading order for native regression;
+-- the dedicated concurrent probe exercises overlapping warehouse submissions.
 for _,name in ipairs(names) do
   local roles=groups[name].roles
   local a=assert(wh.fetch(clay,amount,roles.input,{drones=1,retries=0}))

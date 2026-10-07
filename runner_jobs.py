@@ -255,7 +255,9 @@ def _install(inputs, root, execution, check):
     for name, cap, entries in [('program',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
                                ('second-program',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
                                ('eeprom',scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES),
-                               ('world',scenario.WORLD_BYTES,scenario.WORLD_ENTRIES)]:
+                               ('world',scenario.WORLD_BYTES,scenario.WORLD_ENTRIES),
+                               *[(r['program']['directory'],scenario.PROGRAM_BYTES,scenario.PROGRAM_ENTRIES)
+                                 for r in normalized.get('robots', [])]]:
         source = inputs/name
         if source.exists():
             listing = scenario._scan(source,cap,entries,check)
@@ -269,7 +271,8 @@ def _install(inputs, root, execution, check):
     if not isinstance(expected,dict) or {k:v for k,v in expected.items() if k!='scenario.json'} != actual_inputs:
         raise ValueError('frozen input hash drift')
     settings = ('opencomputers {\n version="1.8.9a"\n computer { executionDelay=%d }\n'
-                ' power { ignorePower=false }\n internet { enableHttp=false, enableTcp=false }\n}\n' % execution['executionDelayMillis'])
+                ' power { ignorePower=%s }\n internet { enableHttp=false, enableTcp=false }\n}\n' %
+                (execution['executionDelayMillis'], 'true' if execution.get('infiniteEnergy', False) else 'false'))
     (root/'config/opencomputers/settings.conf').write_text(settings,encoding='utf-8')
     hashes['generated/config/opencomputers/settings.conf'] = supervisor._digest(
         root/'config/opencomputers/settings.conf',float('inf'),check)
@@ -306,7 +309,8 @@ def worker(root, jobid, token):
                                      scenario_id=launch['scenarioId'],on_launch=on_launch,
                                      drone_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('drones', [])),
                                      computer_present='computer' in scenario.read_json(job/'inputs/runner-scenario.json'),
-                                     second_present='secondComputer' in scenario.read_json(job/'inputs/runner-scenario.json'))
+                                     second_present='secondComputer' in scenario.read_json(job/'inputs/runner-scenario.json'),
+                                     robot_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('robots', [])))
         report = outcome['report']; cleanup_ok = report['cleanup_ok']
         state = 'cancelled' if report['cancelled'] else report['status']
         value.update(state=state,reason=report['reason'][:2048],runtime='runtime',

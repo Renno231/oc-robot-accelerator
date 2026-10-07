@@ -54,7 +54,7 @@ class DroneScenarioTests(unittest.TestCase):
                  (['drones', 0, 'eepromData'], 12), (['drones', 0, 'eepromData'], 'x' * (1024 * 1024 + 1)),
                  (['drones', 0, 'inventory'], [{'slot': 9, 'item': 'minecraft:stone', 'count': 1}]),
                  (['drones', 0, 'inventory'], [{'slot': 1, 'item': 'minecraft:stone', 'count': 1}] * 2),
-                 (['containers'], valid()['containers'] * 65),
+                 (['containers'], valid()['containers'] * 129),
                  (['containers'], valid()['containers'] * 2),
                  (['containers', 0, 'position'], [99, 65, 0]),
                  (['containers', 0, 'slots'], [{'slot': 1, 'item': 'minecraft:stone', 'count': 0}]),

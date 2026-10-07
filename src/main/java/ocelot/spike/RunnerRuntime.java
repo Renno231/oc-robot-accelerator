@@ -69,7 +69,7 @@ final class RunnerRuntime {
         }
         if(spec.v4!=null) {power=new RunnerPower(spec,world);power.setup();}
         RunnerContainers.setup(spec,world);
-        if(spec.v4!=null && (spec.v4.drones.size()>0 || spec.v4.computer!=null)) {
+        if(spec.v4!=null && (spec.v4.drones.size()>0 || spec.v4.computer!=null || spec.v4.robots.size()>0)) {
             drones=new RunnerDrones(spec,world,root);drones.setup();return;
         }
         BlockPos location=pos(spec.position);

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 4,
+  "id": "robot-crafting-smoke",
+  "world": {
+    "region": {"min": [-2,63,-2], "max": [6,67,2]},
+    "blocks": [
+      {"min": [-2,63,-2], "max": [6,67,2], "block": "minecraft:air"},
+      {"min": [-2,63,-2], "max": [6,63,2], "block": "minecraft:stone"}
+    ]
+  },
+  "drones": [],
+  "computer": {
+    "position": [5,65,0],
+    "hardware": {"tier": 3, "cpu": "cpu3", "memory": ["ram6"], "cards": ["wlancard2"], "storage": ["hdd3"], "bootDrive": 0},
+    "program": {"directory": "controller"}
+  },
+  "robots": [
+    {
+      "position": [0,65,0], "facing": "north", "energy": 20000,
+      "hardware": {"tier": 3, "cpu": "cpu3", "memory": ["ram6"], "cards": ["wlancard2"], "storage": ["hdd3"], "bootDrive": 0,
+                   "upgrades": ["inventoryupgrade", "inventorycontrollerupgrade", "craftingupgrade"]},
+      "program": {"directory": "crafter-a"}
+    },
+    {
+      "position": [2,65,0], "facing": "south", "energy": 20000,
+      "hardware": {"tier": 3, "cpu": "cpu3", "memory": ["ram6"], "cards": ["wlancard2"], "storage": ["hdd3"], "bootDrive": 0,
+                   "upgrades": ["inventoryupgrade", "inventorycontrollerupgrade", "craftingupgrade"]},
+      "program": {"directory": "crafter-b"}
+    }
+  ],
+  "containers": [
+    {"position": [0,64,0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:planks", "count": 4}]},
+    {"position": [2,64,0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:planks", "count": 4}]},
+    {"position": [4,64,0], "block": "minecraft:chest", "slots": [{"slot": 1, "item": "minecraft:stone", "count": 8}, {"slot": 2, "item": "minecraft:stone", "count": 4}]}
+  ],
+  "containerEdits": [
+    {"position": [4,64,0], "slot": 1, "count": 3, "expectedCount": 8,
+     "request": {"computer": 0, "marker": "home/remove-request", "signal": "items_removed"}},
+    {"position": [4,64,0], "slot": 2, "count": 2, "expectedCount": 4, "atTick": 3}
+  ],
+  "execution": {"mode": "coordinated", "infiniteEnergy": true, "maxTicks": 3000, "timeoutSeconds": 180},
+  "observations": {"everyTicks": 10},
+  "expect": {
+    "containers": [
+      {"position": [0,64,0], "slots": [{"slot": 1, "item": "minecraft:crafting_table", "count": 1}]},
+      {"position": [2,64,0], "slots": [{"slot": 1, "item": "minecraft:crafting_table", "count": 1}]},
+      {"position": [4,64,0], "slots": [{"slot": 1, "item": "minecraft:stone", "count": 5}, {"slot": 2, "item": "minecraft:stone", "count": 2}]}
+    ],
+    "robots": [{"index": 0, "inventory": [{"slot": 12, "count": 0}]}, {"index": 1, "inventory": [{"slot": 12, "count": 0}]}]
+  }
+}

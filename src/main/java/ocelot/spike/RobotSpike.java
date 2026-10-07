@@ -108,8 +108,9 @@ public final class RobotSpike {
         }
         started = System.nanoTime();
         Trace.open(root, runnerScenario == null && scenario.trace);
-        if (li.cil.oc.Settings.get().httpEnabled() || li.cil.oc.Settings.get().tcpEnabled() || li.cil.oc.Settings.get().ignorePower())
-            throw new IllegalStateException("OC must disable Internet and retain power accounting");
+        boolean infiniteEnergy=runnerScenario!=null && runnerScenario.v4!=null && runnerScenario.v4.infiniteEnergy;
+        if (li.cil.oc.Settings.get().httpEnabled() || li.cil.oc.Settings.get().tcpEnabled() || li.cil.oc.Settings.get().ignorePower()!=infiniteEnergy)
+            throw new IllegalStateException("OC must disable Internet and match declared power accounting");
         initialized = true;
     }
 

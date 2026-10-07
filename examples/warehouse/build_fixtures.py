@@ -43,6 +43,9 @@ def build():
     value['execution']['maxTicks'] = 30000
     value['execution']['timeoutSeconds'] = 1800
     value['observations'] = {'everyTicks': 10}
+    value['containerEdits'] = [{'position':[0,65,1],'slot':1,'count':24,'expectedCount':40,
+                               'request':{'computer':0,'marker':'home/warehouse-remove-items',
+                                          'signal':'warehouse_items_removed'}}]
     expected = {(0, 65, 1): 0, (0, 67, 1): 0, (0, 68, 1): 15,
                 (1, 65, 1): 64, (2, 65, 1): 64, (3, 65, 1): 64,
                 (4, 65, 1): 60, (5, 65, 1): 27, (6, 65, 1): 0,

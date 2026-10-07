@@ -290,6 +290,7 @@ class Scenario:
     eeprom_entries: tuple = ()
     second_program: Path | None = None
     second_entries: tuple = ()
+    robot_programs: tuple = ()  # (normalized directory, source path, bounded entries)
 
 
 def _resolve_hardware(value, root):
@@ -375,15 +376,26 @@ def load(path, forbidden_roots=(), check=lambda: None, on_normalized=lambda valu
             entry=second_program/normalized['secondComputer']['program']['entry']
             if not entry.is_file(): raise ValueError('second entry Lua file missing')
             _no_link(entry)
+        robot_programs = []
+        sources = [p for p in (program, second_program) if p is not None]
+        for i, robot in enumerate(normalized.get('robots', [])):
+            source = _source(root, value['robots'][i]['program']['directory'])
+            if any(overlap(source, p) for p in sources): raise ValueError('robot program sources overlap')
+            entries = _scan(source, PROGRAM_BYTES, PROGRAM_ENTRIES, check)
+            if any(size is not None and size > PROGRAM_FILE_BYTES for _, size in entries): raise ValueError('robot program file byte bound exceeded')
+            entry = _no_link(source / robot['program']['entry'])
+            if not entry.is_file(): raise ValueError('robot entry Lua file missing')
+            robot_programs.append((robot['program']['directory'], source, entries)); sources.append(source)
         world = _source(root, value['world']['source']) if 'source' in value['world'] else None
         world_entries = ()
         if world:
             if program is not None and overlap(program, world): raise ValueError('program and world sources overlap')
             if second_program is not None and overlap(second_program,world): raise ValueError('second program and world sources overlap')
+            if any(overlap(p, world) for _, p, _ in robot_programs): raise ValueError('robot program and world sources overlap')
             world_entries = _scan(world, WORLD_BYTES, WORLD_ENTRIES, check)
             if not (world / 'level.dat').is_file(): raise ValueError('source world must contain level.dat')
         check()
-        return Scenario(manifest, original, normalized, program, program_entries, world, world_entries, hardware_preset, tuple(eeprom_entries),second_program,second_entries)
+        return Scenario(manifest, original, normalized, program, program_entries, world, world_entries, hardware_preset, tuple(eeprom_entries),second_program,second_entries,tuple(robot_programs))
     except TimeoutError:
         raise
     except (OSError, UnicodeError, RecursionError) as exc:
@@ -429,7 +441,7 @@ def freeze(spec, destination, check=lambda: None):
     if spec.hardware_preset is not None: manifests.append(('hardware-preset.json', spec.hardware_preset))
     for name, data in manifests:
         check(); (destination / name).write_bytes(data); hashes[name] = hashlib.sha256(data).hexdigest()
-    for prefix, source, entries in [('program', spec.program, spec.program_entries), ('second-program',spec.second_program,spec.second_entries), ('world', spec.world, spec.world_entries)]:
+    for prefix, source, entries in [('program', spec.program, spec.program_entries), ('second-program',spec.second_program,spec.second_entries), ('world', spec.world, spec.world_entries), *spec.robot_programs]:
         if source is not None:
             hashes.update({prefix + '/' + name: sha for name, sha in copy_tree(source, destination / prefix, entries, check).items()})
     if spec.eeprom_entries:
