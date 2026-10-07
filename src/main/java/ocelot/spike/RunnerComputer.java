@@ -21,6 +21,8 @@ import net.minecraftforge.common.util.FakePlayerFactory;
 final class RunnerComputer {
     boolean storageRoomChestRequested() {return program.storageRoomChestRequested();}
     void storageRoomChestPlaced() {machine.signal("storage_room_chest_placed");}
+    boolean warehouseRemovalRequested() {return program.warehouseRemovalRequested();}
+    void warehouseItemsRemoved() {machine.signal("warehouse_items_removed");}
     private final JsonObject spec;
     private final WorldServer world;
     private final RunnerProgram program;

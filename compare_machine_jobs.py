@@ -72,26 +72,40 @@ def comparable(state,result,evidence):
             native['blockedReports'][id]=job.pop('blockedReports',None)
         native['evidence']=evidence
         native['boots']=native['evidence'].pop('boots')
+        native['warehouseMemory']=native['evidence'].pop('warehouseMemory',None)
+        native['warehousePerformance']=native['evidence'].pop('warehousePerformance',None)
     return native
 
 
-def compare(root,a,b):
-    sa,ra,ea=read_job(root,a);sb,rb,eb=read_job(root,b)
+def compare(root,a,b,reference_root=None):
+    sa,ra,ea=read_job(reference_root or root,a);sb,rb,eb=read_job(root,b)
     if ra['scenarioId']!=rb['scenarioId']: raise ValueError('different scenarios')
     if ('computer' in ra and ea is None) or ('computer' in rb and eb is None): raise ValueError('missing native Lua evidence')
     ca=comparable(sa,ra,ea);cb=comparable(sb,rb,eb)
-    measured={k:{'a':ca.pop(k,None),'b':cb.pop(k,None)} for k in ('blockedReports','boots')}
+    measured={k:{'a':ca.pop(k,None),'b':cb.pop(k,None)} for k in ('blockedReports','boots','warehouseMemory','warehousePerformance')}
     differences=diff(ca,cb)
     # os.time is native world time (OC OSAPI.scala:65-76). Retain raw file
     # differences, but classify timestamp-only changes only if node order agrees.
     allowed=set()
     fa=ca.get('evidence',{}).get('files',{})
     fb=cb.get('evidence',{}).get('files',{})
+    # An empty Lua table exports as []: drone-only cases have no config files.
+    # Keep its raw shape in differences; use an empty map only for leaf lookup.
+    fa=fa if isinstance(fa,dict) else {}
+    fb=fb if isinstance(fb,dict) else {}
     ma=fa.get('/etc/map.cfg',{}).get('nodes',{}) if isinstance(fa,dict) else {}
     mb=fb.get('/etc/map.cfg',{}).get('nodes',{}) if isinstance(fb,dict) else {}
     if isinstance(ma,dict) and isinstance(mb,dict) and ma.keys()==mb.keys():
         if sorted(ma,key=lambda k:(ma[k].get('created',0),k))==sorted(mb,key=lambda k:(mb[k].get('created',0),k)):
             allowed={'$.evidence.files./etc/map.cfg.nodes.'+k+'.created' for k in ma}
+    # Catalogue observation uptime is a measurement, not item/capacity state.
+    # All warehouse accounting, routes, group configuration and reboot results
+    # remain strict; only the exact named timestamp leaf is classified.
+    for prefix,wa,wb in (
+            ('$.evidence.files./etc/warehouse.db.',fa.get('/etc/warehouse.db',{}),fb.get('/etc/warehouse.db',{})),
+            ('$.evidence.warehouse.catalogue.',ca.get('evidence',{}).get('warehouse',{}).get('catalogue',{}),cb.get('evidence',{}).get('warehouse',{}).get('catalogue',{}))):
+        if isinstance(wa,dict) and isinstance(wb,dict) and wa.keys()==wb.keys():
+            allowed.update(prefix+k+'.time' for k in wa)
     measured['bootIntervals']={}
     for side in ('a','b'):
         previous={};intervals={}
@@ -100,15 +114,18 @@ def compare(root,a,b):
             if sender in previous: intervals.setdefault(sender,[]).append(boot['time']-previous[sender])
             previous[sender]=boot['time']
         measured['bootIntervals'][side]=intervals
-    return {'a':a,'b':b,'scenario':ra['scenarioId'],'differences':differences,
+    out={'a':a,'b':b,'scenario':ra['scenarioId'],'differences':differences,
             'unexpectedDifferences':[d for d in differences if d['path'] not in allowed],
             'clockFileDifferences':[d for d in differences if d['path'] in allowed],'measurements':measured,
             'ticks':{'a':ra['ticks'],'b':rb['ticks'],'delta':rb['ticks']-ra['ticks']},
             'wallSeconds':{'a':sa['elapsedWallSeconds'],'b':sb['elapsedWallSeconds']},
             'energy':{'a':[d['energy'] for d in ra.get('drones',[])]+[ra[k]['energy'] for k in ('computer','secondComputer') if k in ra],
                       'b':[d['energy'] for d in rb.get('drones',[])]+[rb[k]['energy'] for k in ('computer','secondComputer') if k in rb]}}
+    if reference_root is not None: out.update(aRoot=str(reference_root),bRoot=str(root))
+    return out
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('a');p.add_argument('b');p.add_argument('--jobs-root',type=Path,default=Path('C:/or/drone-jobs'))
-    args=p.parse_args();value=compare(args.jobs_root,args.a,args.b);print(json.dumps(value,indent=2));raise SystemExit(bool(value['unexpectedDifferences']))
+    p.add_argument('--reference-root',type=Path,help='optional separate jobs root holding the reference job')
+    args=p.parse_args();value=compare(args.jobs_root,args.a,args.b,args.reference_root);print(json.dumps(value,indent=2));raise SystemExit(bool(value['unexpectedDifferences']))

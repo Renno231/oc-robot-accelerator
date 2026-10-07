@@ -1,11 +1,12 @@
 # Drone logistics — design
 
-## Status (2026-10-06)
+## Status (2026-10-07)
 
-Built and verified in the accelerator (T1–T7): mapping, logistics, the drone
+Built and verified in the accelerator (T1–T8): mapping, logistics, the drone
 loader and program, the map service and tablet client, straight-line routing.
-Warehouse: designed below, not yet built. 24 native scenarios
-(16 logistics, 2 mapping, 6 drone) pass at normal speed and accelerated, with
+Warehouse library and CLI are built, including persistent opt-in stock,
+groups, shared inventories and event-derived counts. 29 native scenarios
+(18 logistics, 2 mapping, 6 drone, 3 warehouse) pass at normal speed and accelerated, with
 no differences in job results, inventories, positions or files (T6). Not yet
 done: a hand test on a real tablet with the player's GPS, and an install
 procedure.
@@ -259,12 +260,16 @@ names; it never stores positions or sides.
 - Catalogue, per inventory: item counts, slot count, free slots, `maxSize` per
   item seen, time of last read. Counts are last-known, not guarantees. It is
   learned from:
-  1. `warehouse.scan(storages?)`: an explicit read job;
+  1. `warehouse.scan(storages?)`: explicit one-face read jobs, returning their
+     job ids (one per distinct inventory);
   2. every finished logistics job touching a member (from `logistics.status`
      on the `logistics` event), whoever submitted it;
   3. shortfalls: a take that found less than expected sets that item's count
      in that storage to what the drone actually found.
   No periodic sweeps.
+  Mutations estimate slot occupancy from the counted items and reported stack sizes;
+  a full-face short sets the count to observed remaining stock (zero if exhausted,
+  possibly nonzero for unmergeable NBT cargo), and a refused put marks it full until a later read. Only explicit reads survey inventories.
 - Queries: `find(item)` → `{{storage, count}}`, `count(item)`,
   `contents(storage)`.
 - `fetch(item, n, to, opts)` → logistics job id. Sources: largest count

@@ -182,7 +182,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           job.moved=0
           for i,s in ipairs(job.steps) do
             local r=(progress.steps or {})[i] or {};s.moved=s.moved+(r.moved or 0);s.maxSize=r.maxSize or s.maxSize
-            for _,key in ipairs({"taken","returned","overflow"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+            for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+            s.short=s.short or r.short
+            if r.short then s.found=(r.left or 0)+(r.returned or 0)
+            elseif s.found then s.found=math.max(0,s.found-(r.taken or 0)+(r.returned or 0)) end
             if s.put then job.moved=job.moved+s.moved end
           end
           job.remaining=math.max(0,job.requested-job.moved)
@@ -292,7 +295,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           local r=(result.steps or {})[i] or {}
           s.moved=s.moved+(r.moved or 0);if r.listing then s.listing=r.listing;s.size=r.size end
           s.maxSize=r.maxSize or s.maxSize
-          for _,key in ipairs({"taken","returned","overflow"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+          for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+          s.short=s.short or r.short
+          if r.short then s.found=(r.left or 0)+(r.returned or 0)
+          elseif s.found then s.found=math.max(0,s.found-(r.taken or 0)+(r.returned or 0)) end
           if s.all then s.complete=s.complete or r.complete;if not s.complete then complete=false;job.openEnded=true end
           elseif s.count and s.moved<s.count then complete=false end
         end
@@ -312,6 +318,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       end
       job.moved=job.moved+(result.moved or 0);job.remaining=job.requested-job.moved;job.trips=job.trips+1
       job.maxSize=result.maxSize or job.maxSize;job.taken=job.taken+(result.taken or 0);job.returned=job.returned+(result.returned or 0);job.overflow=job.overflow+(result.overflow or 0)
+      job.refused=(job.refused or 0)+(result.refused or 0)
+      job.short=job.short or result.short
+      if result.short then job.found=(result.left or 0)+(result.returned or 0)
+      elseif job.found then job.found=math.max(0,job.found-(result.taken or 0)+(result.returned or 0)) end
       if (result.held or 0)>0 then job.held[#job.held+1]={drone=d.name,item=job.item,count=result.held};d.state="held" else d.state="idle" end
       d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
       if result.recharge then
@@ -389,7 +399,9 @@ function M.transfer(item,count,from,to,opts)
 end
 function M.status(id)
   local job=jobs[id];if not job then return nil end
-  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","steps","blockedReports","scan","test"}) do out[key]=job[key] end
+  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","steps","blockedReports","scan","test","item","from","to","refused"}) do out[key]=job[key] end
+  out.overflowEndpoint=job.opts.overflow
+  out.short=job.short;out.found=job.found
   return serialization.unserialize(serialization.serialize(out))
 end
 local function action(kind,a,b)

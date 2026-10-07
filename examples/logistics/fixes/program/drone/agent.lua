@@ -146,12 +146,14 @@ local function indexes(endpoint,size)
   local result={};for i=1,size do result[i]=i end;return result
 end
 local function take(endpoint,item,wanted)
-  local size=inv.getInventorySize(endpoint.side);if not size then return 0,nil,"source has no inventory" end
-  local taken,maxSize=0,nil
+  local size=inv.getInventorySize(endpoint.side);if not size then return 0,nil,"source has no inventory",0 end
+  local taken,maxSize,left=0,nil,0
   for _,source in ipairs(indexes(endpoint,size)) do
+    local remaining=0
     if source<=size then
       for cargo=1,slots do
         local stack=inv.getStackInSlot(endpoint.side,source)
+        remaining=match(stack,item) and stack.size or 0
         if not match(stack,item) or taken>=wanted then break end
         maxSize=stack.maxSize
         local held=inv.getStackInInternalSlot(cargo)
@@ -160,14 +162,15 @@ local function take(endpoint,item,wanted)
           if room>0 then
             drone.select(cargo)
             local got=inv.suckFromSlot(endpoint.side,source,math.min(room,wanted-taken,stack.size))
-            if type(got)=="number" then taken=taken+got end
+            if type(got)=="number" then taken=taken+got;remaining=remaining-got end
           end
         end
       end
     end
+    left=left+remaining
     if taken>=wanted then break end
   end
-  return taken,maxSize
+  return taken,maxSize,nil,left
 end
 local function put(endpoint,item,wanted)
   local size=inv.getInventorySize(endpoint.side);if not size then return 0,"destination has no inventory" end
@@ -208,18 +211,18 @@ local function cargoRoom(item)
   return false
 end
 local function waitingTake(endpoint,item,wanted,wait,reserve)
-  local total,maxSize,reason=take(endpoint,item,wanted)
-  if not wait then return total,maxSize,reason,false end
+  local total,maxSize,reason,left=take(endpoint,item,wanted)
+  if not wait then return total,maxSize,reason,false,left end
   local deadline=computer.uptime()+wait.timeout;local delay=0.05
   while total<wanted and computer.uptime()<deadline do
-    if computer.energy()<reserve then return total,maxSize,"wait interrupted to charge",true end
+    if computer.energy()<reserve then return total,maxSize,"wait interrupted to charge",true,left end
     if not cargoRoom(item) then break end
     computer.pullSignal(math.min(delay,math.max(0,deadline-computer.uptime())))
     delay=math.min(0.5,delay*2)
-    local got,maximum,why=take(endpoint,item,wanted-total)
+    local got,maximum,why,remaining=take(endpoint,item,wanted-total);left=remaining
     total=total+got;maxSize=maximum or maxSize;reason=why
   end
-  return total,maxSize,reason,false
+  return total,maxSize,reason,false,left
 end
 local function runSteps(task,id,result)
   local ledger={};result.steps={};result.cargo={}
@@ -251,11 +254,12 @@ local function runSteps(task,id,result)
       end
     elseif step.take and step.count>0 then
       goTo(step.take.node)
-      local got,maximum,why,recharge=waitingTake(step.take,step.item,step.count,task.wait,task.reserve)
+      local got,maximum,why,recharge,left=waitingTake(step.take,step.item,step.count,task.wait,task.reserve)
       r.moved=got;r.taken=got;r.maxSize=maximum
       ledger[#ledger+1]={step=i,source=step.take,item=step.item,count=got}
-      if step.all then r.complete=got<step.count and cargoRoom(step.item)
-      elseif got<step.count and cargoRoom(step.item) then result.reason=why or "source shortfall" end
+      if step.all then r.complete=got<step.count and cargoRoom(step.item);r.short=r.complete or nil
+      elseif got<step.count and cargoRoom(step.item) then r.short=not recharge or nil;result.reason=why or "source shortfall" end
+      r.left=r.short and left or nil
       if task.split==false and maximum and step.count>slots*maximum then result.refused=true;result.reason="requested "..step.count.." exceeds actual one trip "..slots*maximum.." ("..slots.." slots x "..maximum..")" end
       if recharge then result.recharge=true end
       progress()
@@ -265,7 +269,7 @@ local function runSteps(task,id,result)
       amount=math.min(amount,step.rest and math.huge or step.count)
       if amount>0 then
         goTo(step.put.node);local got,why,maximum=put(step.put,step.item,amount);r.moved=got;r.maxSize=maximum;consume(step.item,got,true)
-        if got<amount then result.refused=true;result.reason=why end
+        if got<amount then r.refused=amount-got;result.refused=true;result.reason=why end
         progress()
         if result.refused then break end
       end
@@ -330,7 +334,9 @@ while true do
           return
         end
         travel(task.routes.take)
-        result.taken,result.maxSize,result.reason,result.recharge=waitingTake(task.from,task.item,task.count,task.wait,task.reserve)
+        local left;result.taken,result.maxSize,result.reason,result.recharge,left=waitingTake(task.from,task.item,task.count,task.wait,task.reserve)
+        result.short=not result.recharge and result.taken<task.count and cargoRoom(task.item) or nil
+        result.left=result.short and left or nil
         report(id,{state="progress",taken=result.taken,moved=0,held=cargoCount()})
         if result.recharge then
           result.returned=put(task.from,task.item,result.taken)
@@ -342,6 +348,7 @@ while true do
         end
         travel(task.routes.put)
         result.moved,result.reason=put(task.to,task.item,result.taken)
+        result.refused=result.taken-result.moved
         report(id,{state="progress",taken=result.taken,moved=result.moved,held=cargoCount()})
         local remaining=result.taken-result.moved
         if remaining>0 then

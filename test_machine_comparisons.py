@@ -22,8 +22,8 @@ class MachineComparisonsTest(unittest.TestCase):
             with self.assertRaises(ValueError): additional_files(root)
     def test_sweep_covers_all_requested_families(self):
         paths=scenario_paths()
-        self.assertEqual(len(paths),26)
-        self.assertEqual([sum(p.parts[1]==family for p in paths) for family in ('logistics','mapping','drones')],[18,2,6])
+        self.assertEqual(len(paths),29)
+        self.assertEqual([sum(p.parts[1]==family for p in paths) for family in ('logistics','mapping','drones','warehouse')],[18,2,6,3])
     def test_reload_command_changes_only_root_and_adds_explicit_probe_phase(self):
         original=['java','-Drobotspike.root=old','-Drobotspike.mode=baseline','-jar','forge.jar']
         command=command_for(original,Path('new'),'resume')
@@ -66,6 +66,46 @@ class MachineComparisonsTest(unittest.TestCase):
             value=compare(root,'a','b');self.assertEqual(len(value['differences']),2);self.assertEqual(value['unexpectedDifferences'],[])
             path=root/'b/runtime/world/opencomputers/disk/home/equivalence.json';data=json.loads(path.read_text());data['files']['/etc/map.cfg']['nodes']['A']['created']=6;path.write_text(json.dumps(data))
             self.assertTrue(compare(root,'a','b')['unexpectedDifferences'])
+
+    def test_drone_only_empty_lua_file_table_does_not_break_clock_lookup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for job in ('a','b'):
+                native=root/job/'runtime';disk=native/'world/opencomputers/disk/home';disk.mkdir(parents=True)
+                (root/job/'job.json').write_text(json.dumps({'state':'passed','elapsedWallSeconds':1}))
+                (native/'result.json').write_text(json.dumps({'scenarioId':'test','status':'passed','reason':'passed','computer':{'energy':1},'ticks':1}))
+                (disk/'equivalence.json').write_text(json.dumps({'jobs':[],'boots':[],'files':[]}))
+            self.assertEqual([],compare(root,'a','b')['unexpectedDifferences'])
+
+    def test_warehouse_clock_and_memory_are_measured_but_counts_are_strict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for job,stamp in (('a',1),('b',2)):
+                native=root/job/'runtime';disk=native/'world/opencomputers/disk/home';disk.mkdir(parents=True)
+                (root/job/'job.json').write_text(json.dumps({'state':'passed','elapsedWallSeconds':1}))
+                (native/'result.json').write_text(json.dumps({'scenarioId':'test','status':'passed','reason':'passed','computer':{'energy':1},'ticks':1}))
+                evidence={'jobs':{},'boots':[], 'warehouseMemory':{'after':stamp},
+                          'warehouse':{'catalogue':{'stock':{'count':5,'time':stamp}},'reboot':True},
+                          'files':{'/etc/warehouse.db':{'stock':{'count':5,'time':stamp}}}}
+                (disk/'equivalence.json').write_text(json.dumps(evidence))
+            value=compare(root,'a','b')
+            self.assertEqual([],value['unexpectedDifferences'])
+            self.assertEqual(2,len(value['clockFileDifferences']))
+            self.assertEqual({'a':{'after':1},'b':{'after':2}},value['measurements']['warehouseMemory'])
+            path=root/'b/runtime/world/opencomputers/disk/home/equivalence.json'
+            evidence=json.loads(path.read_text());evidence['warehouse']['catalogue']['stock']['count']=4;path.write_text(json.dumps(evidence))
+            self.assertTrue(compare(root,'a','b')['unexpectedDifferences'])
+
+    def test_separate_native_admission_roots_preserve_reference_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots=[Path(tmp)/'reference',Path(tmp)/'candidate']
+            for root,job in zip(roots,('a','b')):
+                native=root/job/'runtime';native.mkdir(parents=True)
+                (root/job/'job.json').write_text(json.dumps({'state':'passed','elapsedWallSeconds':1}))
+                (native/'result.json').write_text(json.dumps({'scenarioId':'test','status':'passed','reason':'passed','ticks':1}))
+            value=compare(roots[1],'a','b',roots[0])
+            self.assertEqual([],value['unexpectedDifferences'])
+            self.assertEqual(str(roots[0]),value['aRoot']);self.assertEqual(str(roots[1]),value['bRoot'])
 
 
 if __name__=='__main__': unittest.main()

@@ -29,7 +29,7 @@ final class RunnerDrones {
     private RunnerRecording recording;
     private RunnerRouteMetrics routeMetrics;
     private long sequence;
-    private boolean started,storageRoomChestPlaced;
+    private boolean started,storageRoomChestPlaced,warehouseItemsRemoved;
     private RunnerComputer computer,secondComputer;
     private final Map<net.minecraft.util.math.BlockPos,net.minecraft.block.state.IBlockState> previous=new HashMap<>();
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
@@ -152,6 +152,16 @@ final class RunnerDrones {
             if(world.isAirBlock(p)) world.setBlockState(p,net.minecraft.init.Blocks.CHEST.getDefaultState(),3);
             computer.storageRoomChestPlaced();
             storageRoomChestPlaced=true;
+        }
+        // Opt-in fixture action: use the native chest inventory API, just as a
+        // player removing a stack does. No logistics/accounting predicates change.
+        if(!warehouseItemsRemoved && "warehouse-room".equals(spec.id) && computer!=null && computer.warehouseRemovalRequested()) {
+            net.minecraft.tileentity.TileEntity tile=world.getTileEntity(new net.minecraft.util.math.BlockPos(0,65,1));
+            if(!(tile instanceof net.minecraft.inventory.IInventory)) throw new IllegalStateException("warehouse_source_absent");
+            net.minecraft.inventory.IInventory inventory=(net.minecraft.inventory.IInventory)tile;
+            if(inventory.getStackInSlot(0).getCount()!=40) throw new IllegalStateException("warehouse_source_count");
+            inventory.decrStackSize(0,24);inventory.markDirty();
+            computer.warehouseItemsRemoved();warehouseItemsRemoved=true;
         }
         if(!started) {
             if(tick<3) return null;

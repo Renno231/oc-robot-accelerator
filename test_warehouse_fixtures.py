@@ -1,0 +1,44 @@
+"""Frozen deployment/bounds checks; warehouse behavior is proven in native OC."""
+from pathlib import Path
+import unittest
+import runner_scenario
+
+
+class WarehouseFixturesTests(unittest.TestCase):
+    def test_room_is_bounded_and_copies_canonical_api(self):
+        root = Path('examples/warehouse/room')
+        spec = runner_scenario.load(root / 'scenario.json').normalized
+        self.assertEqual(64, len(spec['containers']))
+        self.assertEqual(2, len(spec['drones']))
+        self.assertEqual('baseline', spec['execution']['mode'])
+        self.assertEqual(Path('examples/warehouse/room.lua').read_bytes(), (root / 'program/main.lua').read_bytes())
+        for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'drone/agent.lua', 'bin/warehouse.lua'):
+            self.assertEqual((Path('drone-logistics') / path).read_bytes(), (root / 'program' / path).read_bytes())
+        self.assertEqual(Path('drone-logistics/drone/loader.lua').read_bytes(), (root / 'loader.lua').read_bytes())
+        for chest in spec['containers']:
+            expected = 'minecraft:trapped_chest' if chest['position'][0] % 2 else 'minecraft:chest'
+            self.assertEqual(expected, chest['block'])
+
+    def test_logistics_has_no_warehouse_dependency(self):
+        text = Path('drone-logistics/lib/logistics.lua').read_text()
+        self.assertNotIn('warehouse', text)
+
+    def test_slot_scope_scenario_copies_canonical_api(self):
+        root=Path('examples/warehouse/slots')
+        spec=runner_scenario.load(root/'scenario.json').normalized
+        self.assertEqual(3,len(spec['containers']))
+        self.assertEqual(Path('examples/warehouse/slots.lua').read_bytes(),(root/'program/main.lua').read_bytes())
+        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','drone/agent.lua','bin/warehouse.lua'):
+            self.assertEqual((Path('drone-logistics')/path).read_bytes(),(root/'program'/path).read_bytes())
+
+    def test_nbt_scenario_uses_real_native_tagged_stacks(self):
+        root=Path('examples/warehouse/nbt');spec=runner_scenario.load(root/'scenario.json').normalized
+        stacks=spec['containers'][0]['slots']
+        self.assertEqual(5,len(stacks));self.assertEqual(5,len({s['nbt'] for s in stacks}))
+        self.assertTrue(all(s['count']==16 and s['item']=='minecraft:iron_ingot' for s in stacks))
+        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','drone/agent.lua','bin/warehouse.lua'):
+            self.assertEqual((Path('drone-logistics')/path).read_bytes(),(root/'program'/path).read_bytes())
+
+
+if __name__ == '__main__':
+    unittest.main()

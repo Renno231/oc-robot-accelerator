@@ -47,20 +47,22 @@ local function quote(s)
     return string.format('\\u%04x',string.byte(c))
   end)..'"'
 end
-local function json(v)
-  if v==nil then return 'null' end
-  if type(v)=='string' then return quote(v) end
-  if type(v)=='number' or type(v)=='boolean' then return tostring(v) end
+local function json(out,v)
+  if v==nil then out:write('null');return end
+  if type(v)=='string' then out:write(quote(v));return end
+  if type(v)=='number' or type(v)=='boolean' then out:write(tostring(v));return end
   assert(type(v)=='table','unsupported evidence value '..type(v))
   local n,array=0,true
   for k in pairs(v) do n=n+1;if type(k)~='number' or k<1 or k%1~=0 then array=false end end
   array=array and n==#v
-  local out={}
-  if array then for i=1,n do out[#out+1]=json(v[i]) end;return '['..table.concat(out,',')..']' end
+  if array then
+    out:write('[');for i=1,n do if i>1 then out:write(',') end;json(out,v[i]) end;out:write(']');return
+  end
   local keys={};for k in pairs(v) do keys[#keys+1]=k end
   table.sort(keys,function(a,b) return tostring(a)<tostring(b) end)
-  for _,k in ipairs(keys) do out[#out+1]=quote(tostring(k))..':'..json(v[k]) end
-  return '{'..table.concat(out,',')..'}'
+  out:write('{')
+  for i,k in ipairs(keys) do if i>1 then out:write(',') end;out:write(quote(tostring(k)),':');json(out,v[k]) end
+  out:write('}')
 end
 local ok,err=xpcall(assert(loadfile('/home/program/native-main.lua')),debug.traceback)
 local data={jobs=archivedJobs,fleet={},files={},boots=boots,returned=ok,programStarts=count+1,reloadPending=reloadPending}
@@ -68,15 +70,28 @@ data.flightMetrics=tripMetrics
 local planning=io.open('/home/planning-metrics.lua','r')
 if planning then data.planning=serialization.unserialize(planning:read('*a'));planning:close() end
 local lg=package.loaded.logistics
+local warehouse=io.open('/home/warehouse-results.lua','r')
+if warehouse then data.warehouse=assert(serialization.unserialize(warehouse:read('*a')));warehouse:close() end
+local memory=io.open('/home/warehouse-memory.lua','r')
+if memory then data.warehouseMemory=assert(serialization.unserialize(memory:read('*a')));memory:close() end
+local performance=io.open('/home/warehouse-performance.lua','r')
+if performance then data.warehousePerformance=assert(serialization.unserialize(performance:read('*a')));performance:close() end
 if lg then
   for id=1,1000 do local s=lg.status(id);if s then data.jobs[tostring(id)]=s end end
   for _,d in ipairs(lg.drones()) do
     data.fleet[#data.fleet+1]={name=d.name,address=d.address,state=d.state,node=d.node,cargo=d.cargo,releasePending=d.releasePending,boots=d.boots}
   end
 end
-for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes'}) do
+for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes','/etc/warehouse.cfg'}) do
   local f=io.open(path,'r')
   if f then local s=f:read('*a');f:close();data.files[path]=assert(serialization.unserialize(s)) end
 end
-local out=assert(io.open('/home/equivalence.json','w'));out:write(json(data));out:close()
+local journal=io.open('/etc/warehouse.db','r')
+if journal then
+  local catalogue={};for line in journal:lines() do local r=assert(serialization.unserialize(line));catalogue[r.key]=r.value end
+  journal:close();data.files['/etc/warehouse.db']=catalogue
+end
+-- Stream through OpenOS's bounded file buffer, not one large recursively
+-- concatenated JSON string competing with the loaded controller libraries.
+local out=assert(io.open('/home/equivalence.json','w'));json(out,data);out:close()
 if not ok then error(err,0) end
