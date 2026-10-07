@@ -404,6 +404,25 @@ function M.status(id)
   out.short=job.short;out.found=job.found
   return serialization.unserialize(serialization.serialize(out))
 end
+-- Public enumeration: callers need not guess ids or access scheduler tables.
+function M.jobs(summary)
+  assert(summary==nil or type(summary)=="boolean","summary must be boolean")
+  local out={};for id,job in pairs(jobs) do
+    local s
+    if summary then
+      -- Lists/status bars need identities and counters, not a copy of every
+      -- retained read packet. Details remain available through status(id).
+      local i,from,to=job.item,job.from,job.to
+      for _,step in ipairs(job.steps or {}) do
+        i=i or step.item;from=from or step.take or step.read or step.go
+        to=step.put or step.go or to
+      end
+      s=serialization.unserialize(serialization.serialize({state=job.state,requested=job.requested,moved=job.moved,item=i,from=from,to=to,reason=job.reason}))
+    else s=M.status(id) end
+    s.id=id;out[#out+1]=s
+  end
+  table.sort(out,function(a,b) return a.id>b.id end);return out
+end
 local function action(kind,a,b)
   nextJob=nextJob+1;local id=nextJob
   local job={id=id,state="queued",requested=0,moved=0,remaining=1,held={},active={},trips=0,shortfalls=0,taken=0,returned=0,overflow=0,opts={drones=1}}

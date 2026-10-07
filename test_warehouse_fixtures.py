@@ -1,10 +1,22 @@
 """Frozen deployment/bounds checks; warehouse behavior is proven in native OC."""
 from pathlib import Path
+import hashlib
 import unittest
 import runner_scenario
 
 
 class WarehouseFixturesTests(unittest.TestCase):
+    def test_ui_deployment_uses_unmodified_qmenu_and_pure_view(self):
+        root=Path('examples/warehouse/room/program')
+        for path in ('lib/warehouse/view.lua','lib/warehouse/ui.lua'):
+            self.assertEqual((Path('drone-logistics')/path).read_bytes(),(root/path).read_bytes())
+        self.assertEqual(Path('fixtures/qmenu.lua').read_bytes(),(root/'lib/qmenu.lua').read_bytes())
+        self.assertEqual('5c2bc7dc41f18f70de3c01463d6c90720a19a7dc3260cd0ca7e3be4bbd020f27',hashlib.sha256(Path('fixtures/qmenu.lua').read_bytes()).hexdigest())
+        text=Path('drone-logistics/lib/warehouse/view.lua').read_text(encoding='utf-8')
+        for dependency in ('component','gpu','term','qmenu','tty'):
+            self.assertNotIn('require("'+dependency+'")',text)
+        self.assertEqual(Path('examples/warehouse/ui-tests.lua').read_bytes(),(root/'ui-tests.lua').read_bytes())
+
     def test_room_is_bounded_and_copies_canonical_api(self):
         root = Path('examples/warehouse/room')
         spec = runner_scenario.load(root / 'scenario.json').normalized

@@ -2,12 +2,14 @@
 
 ## Status (2026-10-07)
 
-Built and verified in the accelerator (T1–T8): mapping, logistics, the drone
+Built and verified in the accelerator (T1–T9): mapping, logistics, the drone
 loader and program, the map service and tablet client, straight-line routing.
-Warehouse library and CLI are built, including persistent opt-in stock,
+Warehouse library, CLI and qmenu UI are built, including persistent opt-in stock,
 groups, shared inventories and event-derived counts. 29 native scenarios
-(18 logistics, 2 mapping, 6 drone, 3 warehouse) pass at normal speed and accelerated, with
-no differences in job results, inventories, positions or files (T6). Not yet
+(18 logistics, 2 mapping, 6 drone, 3 warehouse) have normal-speed and accelerated
+proofs. The T9 warehouse comparisons and refreshed 26-scenario regression match
+their baselines in job results, inventories, positions and configuration;
+clocks, CPU, memory and UI draw totals are measured separately. Not yet
 done: a hand test on a real tablet with the player's GPS, and an install
 procedure.
 
@@ -87,8 +89,8 @@ from below (side 1) slot 1 = output, slot 2 = fuel.
   damage, maxDamage, size, maxSize, hasTag, label (plus enchantments/lore);
   raw NBT only if `allowItemStackNBTTags` (default false). `maxSize` gives the
   real stack size at pickup.
-- Deferred: the controller remembering reported stack sizes per item type, and
-  automatically combining separate requests into one trip.
+- The optional warehouse layer remembers reported per-item stack sizes.
+  Combining separate logistics requests into one trip remains deferred.
 - Drone cargo capacity (source): 4 slots per inventory upgrade
   (`entity/Drone.scala:255-257`), max 8 (`Drone.scala:79`). A tier-2 drone has
   3 upgrade slots (`template/DroneTemplate.scala:87-89`), so 8 slots is
@@ -261,8 +263,8 @@ names; it never stores positions or sides.
   item seen, time of last read. Counts are last-known, not guarantees. It is
   learned from:
   1. `warehouse.scan(storages?)`: explicit one-face read jobs, returning their
-     job ids (one per distinct inventory);
-  2. every finished logistics job touching a member (from `logistics.status`
+     job ids (one per distinct inventory); explicit names can be nonmembers;
+  2. every finished logistics job touching a named storage (from `logistics.status`
      on the `logistics` event), whoever submitted it;
   3. shortfalls: a take that found less than expected sets that item's count
      in that storage to what the drone actually found.
@@ -271,9 +273,12 @@ names; it never stores positions or sides.
   a full-face short sets the count to observed remaining stock (zero if exhausted,
   possibly nonzero for unmergeable NBT cargo), and a refused put marks it full until a later read. Only explicit reads survey inventories.
 - Queries: `find(item)` → `{{storage, count}}`, `count(item)`,
-  `contents(storage)`.
+  `contents(storage)`, `stackSize(item)`. Contents of observed nonmembers remain
+  available; automatic stock counts and selection use distinct member inventories.
 - `fetch(item, n, to, opts)` → logistics job id. Sources: largest count
-  first, route distance breaking ties; one step-list job.
+  first, route distance breaking ties; one step-list job. Route-check only the
+  inventories needed and equal-count candidates at the cut-off, with unreachable
+  sources skipped. Store route-checks candidates in tier/priority order until full.
 - `store(item, n, from, opts)` → logistics job id. Destination tiers: (1)
   members whose filter accepts the item, (2) members already holding it with
   room, (3) empty members. Within a tier, higher `priority` first. Members
@@ -281,10 +286,24 @@ names; it never stores positions or sides.
 - Items match by name and damage, label optional, as in logistics. Items that
   differ only in NBT are merged (OC hides NBT by default).
 - Persistent: `/etc/warehouse.cfg` (members, groups), `/etc/warehouse.db`
-  (catalogue). Memory proportional to inventories × item types.
+  (catalogue), `/etc/warehouse.stacks` (limits learned from every listing and
+  reported maxSize, at member and nonmember endpoints). Unknown limits report
+  the item and requested/capacity numbers; reading the source teaches them.
+  Memory proportional to inventories × item types.
 - No reservations: two fetches may target the same items; the second gets
   the normal logistics partial/failed result. No keep-stocked policies yet.
-- CLI `bin/warehouse.lua` first; a menu UI comes later over the same API.
+- CLI `bin/warehouse.lua`: no arguments or `ui` opens the qmenu 1.1.0 UI.
+  `lib/warehouse/view.lua` owns pure screen rows, actions, sorting, substring
+  search, display-width/UTF-8 fitting and paging; `ui.lua` renders dirty qmenu
+  options and waits on events. Tabs: Items, Storages, Machines, Jobs. Actions use
+  public APIs, including `logistics.jobs(true)` for compact recent summaries and
+  `logistics.status(id)` for full detail (`jobs()` also supports full enumeration).
+  Logical selection survives live updates; messages temporarily replace the
+  footer. Viewport and foreground/background (including palette mode) restore
+  on normal exit, interruption and error.
+- `event.push("warehouse", "changed")`: once per finished handler that changed
+  catalogue knowledge, and after add/remove/group/ungroup configuration edits.
+  The UI has no timed polling; its only timer expires footer messages.
 
 ## Agnostic means compatible by construction
 

@@ -7,6 +7,7 @@ local restarting=io.open('/home/warehouse-journal-reboot','r')
 if restarting then
   restarting:close();assert(map.load())
   local wh=require('warehouse')
+  assert(wh.stackSize({name='minecraft:iron_ingot',damage=0})==64 and wh.stackSize({name='minecraft:ender_pearl',damage=0})==16,'learned stack sizes lost on reboot')
   assert(wh.count({name='minecraft:iron_ingot',damage=0})==1 and wh.count({name='minecraft:ender_pearl',damage=0})==16,'incomplete compaction lost data on reboot')
   local members=wh.members();assert(not members.a and members.b.filter[1].name=='minecraft:ender_pearl' and members.c)
   print('warehouse incremental journal and interrupted-compaction reboot verified');return
@@ -28,7 +29,11 @@ local function done(id) assert(id);wait(function() return complete[id] end);retu
 local function scan(storages) for _,id in ipairs(wh.scan(storages)) do assert(done(id).state=='done') end end
 local iron={name='minecraft:iron_ingot',damage=0};local pearl={name='minecraft:ender_pearl',damage=0}
 local gold={name='minecraft:gold_ingot',damage=0}
-wh.add('a');wh.add('b',{filter={pearl}});wh.add('c');scan()
+wh.add('b',{filter={pearl}});wh.add('c');scan()
+-- A read at a nonmember endpoint teaches limits even though it is not stock.
+assert(done(lg.job({{read='a'}},{drones=1})).state=='done')
+assert(wh.stackSize(iron)==64 and wh.contents('a').slots==27 and wh.count(iron)==0,'nonmember read did not teach the stack limit')
+wh.add('a');scan({'a'})
 wh.remove('a')
 local none,reason=wh.store(pearl,435,'a')
 assert(not none and reason:find('capacity 434',1,true),'real 16-item stack limit not used')
@@ -55,14 +60,17 @@ wh.remove('a')
 none,reason=wh.store(iron,1729,'a')
 assert(not none and reason:find('capacity 1728',1,true),'empty inventory forgot seen maxSize')
 none,reason=wh.store(gold,1,'a')
-assert(not none and reason:find('capacity 0',1,true) and reason:find('unknown inventories 1',1,true),'unseen item size guessed')
+assert(not none and reason:find('capacity 0',1,true) and reason:find('unknown stack size for minecraft:gold_ingot:0',1,true) and reason:find('reading the source teaches it',1,true),'unseen item size guessed')
 assert(done(assert(wh.store(iron,1,'a',{drones=1,retries=0}))).state=='done')
 assert(wh.count(iron)==1 and wh.count(pearl)==16)
 -- Thirteen real read jobs exercise complete incremental snapshots, followed
 -- by a reboot with the next snapshot unfinished. No fake reports or timers.
 for i=1,13 do assert(done(lg.job({{read='c'}},{drones=1})).state=='done') end
+-- Nonmember observations are now retained for the UI. Reach the same unfinished
+-- replacement seam without assuming the old member-only journal row count.
+for i=1,20 do if fs.exists('/etc/warehouse.db.new') then break end;assert(done(lg.job({{read='c'}},{drones=1})).state=='done') end
 local records=0;local file=assert(io.open('/etc/warehouse.db','r'));for _ in file:lines() do records=records+1 end;file:close()
-assert(records==9,'journal grows with history instead of inventory count')
+assert(records<=12,'journal grows with history instead of inventory count')
 assert(fs.exists('/etc/warehouse.db.new'),'interrupted compaction seam not reached')
 print('warehouse slot scope, distance tie, 16-stack and retained limits verified')
 local mark=assert(io.open('/home/warehouse-journal-reboot','w'));mark:write('restart with unfinished incremental snapshot');mark:close()

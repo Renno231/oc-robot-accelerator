@@ -100,6 +100,7 @@ pcall(collectgarbage,'collect')
 local memory={before=before,afterLibrary=afterLibrary,after=computer.freeMemory(),total=computer.totalMemory(),roomInventories=64,itemTypes=12,gc=gc}
 print('warehouse memory',serialization.serialize(memory))
 save('/home/warehouse-memory.lua',memory)
+assert(loadfile('/home/program/ui-tests.lua'))()(done,wait)
 local source=storage(0,0,'N');local second=storage(0,2,'N');local third=storage(0,3,'N')
 local external=storage(7,3,'S');local outsider=storage(7,0,'N')
 -- Keep only explicitly opted-in sources during fetch acceptance.
@@ -120,13 +121,21 @@ local s=done(id);assert(s.state=='done' and s.moved==75)
 assert(#s.steps==4 and s.steps[1].take.node==name(0,0) and s.steps[2].take.node==name(0,2) and s.steps[3].take.node==name(0,3),'largest-count source order')
 assert(wh.count(iron)==15 and count(source)==0 and count(second)==0 and count(third)==15)
 results.fetch=s
--- Membership does not require an initial scan. Learn observed deliveries, but
--- do not invent the pre-existing inventory size or capacity.
+-- Nonmember observations now remain available to the UI. Re-adding a formerly
+-- scanned face retains its known contents/capacity, rather than erasing stock.
 wh.add(external)
 assert(done(lg.transfer(iron,3,outsider,external,{drones=1,retries=0})).state=='done')
-assert(count(external)==3 and wh.contents(external).capacityUnknown,'unscanned delivery was not learned')
+assert(count(external)==78 and wh.contents(external).slots==27,'nonmember observation was lost')
 assert(done(lg.transfer(iron,3,external,outsider,{drones=1,retries=0})).state=='done')
-assert(count(external)==0);wh.remove(external)
+assert(count(external)==75);wh.remove(external)
+-- A truly unread face still learns only the delivery, not pre-existing slots.
+-- Approach the now-empty first chest from below using a temporary named face.
+map.add('unreadFace',0,64,1,{faces={[1]=true}});map.link('H','unreadFace');map.name('unread','unreadFace',1)
+wh.add('unread')
+assert(done(lg.transfer(iron,3,outsider,'unread',{drones=1,retries=0})).state=='done')
+assert(count('unread')==3 and wh.contents('unread').capacityUnknown,'unscanned delivery invented capacity')
+assert(done(lg.transfer(iron,3,'unread',outsider,{drones=1,retries=0})).state=='done')
+assert(count('unread')==0);wh.remove('unread');map.unname('unread');map.remove('unreadFace')
 -- Someone else submitted this transfer: warehouse must observe it too.
 s=done(lg.transfer(iron,40,external,source,{drones=1,retries=0}))
 assert(s.state=='done' and s.item.name==iron.name and s.from.node==name(7,3) and s.to.node==name(0,0))

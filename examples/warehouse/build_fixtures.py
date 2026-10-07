@@ -21,6 +21,10 @@ def build():
     for y in range(65, 68):
         for z in range(1, 5):
             value['blocks'].append({'position': [-6, y, z], 'block': 'opencomputers:capacitor', 'energy': 1600})
+    # UI acceptance adds real fetch/return and queued-cancellation go jobs.
+    # Extend only the finite native charger bank; never top up running drones.
+    for z in (0,-1,-2,7,8,9):
+        value['blocks'].append({'position': [-2,64,z], 'block': 'opencomputers:capacitor', 'energy': 1600})
     for chest in value['containers']:
         x, y, z = chest['position']
         # Adjacent vanilla chests can expose a combined Forge inventory. Alternate
@@ -52,6 +56,12 @@ def build():
         shutil.copyfile(ROOT / 'drone-logistics' / path, destination)
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', target / 'loader.lua')
     shutil.copyfile(ROOT / 'examples/warehouse/room.lua', program / 'main.lua')
+    for path in ('lib/warehouse/view.lua', 'lib/warehouse/ui.lua'):
+        destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(ROOT/'drone-logistics'/path,destination)
+    shutil.copyfile(ROOT/'fixtures/qmenu.lua',program/'lib/qmenu.lua')
+    for name in ('ui-tests.lua','warehouse-before.lua'):
+        shutil.copyfile(ROOT/'examples/warehouse'/name,program/name)
     build_slots()
     build_nbt()
 

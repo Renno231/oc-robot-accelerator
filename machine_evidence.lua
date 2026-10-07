@@ -76,13 +76,17 @@ local memory=io.open('/home/warehouse-memory.lua','r')
 if memory then data.warehouseMemory=assert(serialization.unserialize(memory:read('*a')));memory:close() end
 local performance=io.open('/home/warehouse-performance.lua','r')
 if performance then data.warehousePerformance=assert(serialization.unserialize(performance:read('*a')));performance:close() end
+local ui=io.open('/home/warehouse-ui-results.lua','r')
+if ui then data.warehouseUI=assert(serialization.unserialize(ui:read('*a')));ui:close() end
+local uiPlanning=io.open('/home/ui-planning.lua','r')
+if uiPlanning then data.warehouseUIPlanning=assert(serialization.unserialize(uiPlanning:read('*a')));uiPlanning:close() end
 if lg then
   for id=1,1000 do local s=lg.status(id);if s then data.jobs[tostring(id)]=s end end
   for _,d in ipairs(lg.drones()) do
     data.fleet[#data.fleet+1]={name=d.name,address=d.address,state=d.state,node=d.node,cargo=d.cargo,releasePending=d.releasePending,boots=d.boots}
   end
 end
-for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes','/etc/warehouse.cfg'}) do
+for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes','/etc/warehouse.cfg','/etc/warehouse.stacks'}) do
   local f=io.open(path,'r')
   if f then local s=f:read('*a');f:close();data.files[path]=assert(serialization.unserialize(s)) end
 end

@@ -83,6 +83,19 @@ def compare(root,a,b,reference_root=None):
     if ('computer' in ra and ea is None) or ('computer' in rb and eb is None): raise ValueError('missing native Lua evidence')
     ca=comparable(sa,ra,ea);cb=comparable(sb,rb,eb)
     measured={k:{'a':ca.pop(k,None),'b':cb.pop(k,None)} for k in ('blockedReports','boots','warehouseMemory','warehousePerformance')}
+    # UI memory/CPU/draw totals vary with native event delivery; acceptance
+    # booleans, session count, config, catalogue and physical jobs remain strict.
+    measured['warehouseUI']={}
+    for side,c in (('a',ca),('b',cb)):
+        e=c.get('evidence',{})
+        measured['warehouseUI'][side]={'planningCPU':{}}
+        for variant,operations in e.get('warehouseUIPlanning',{}).items():
+            measured['warehouseUI'][side]['planningCPU'][variant]={}
+            for kind,stats in operations.items():
+                measured['warehouseUI'][side]['planningCPU'][variant][kind]=stats.pop('cpuSeconds',None)
+        ui=e.get('warehouseUI',{})
+        for k in ('memory','renders','writes'):
+            measured['warehouseUI'][side][k]=ui.pop(k,None)
     differences=diff(ca,cb)
     # os.time is native world time (OC OSAPI.scala:65-76). Retain raw file
     # differences, but classify timestamp-only changes only if node order agrees.

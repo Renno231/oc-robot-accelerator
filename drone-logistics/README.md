@@ -88,3 +88,22 @@ replay's observation prefix. Native measurements record wall time,
 uptime, positions and successful machine/radio energy debits, including sleeping
 costs and excluding recharge (`Machine.scala:526–540`,
 `server/component/WirelessNetworkCard.scala:87–95`, at the pinned revision).
+
+## Warehouse UI
+
+Run `warehouse` (no arguments) or `warehouse ui` with
+qmenu 1.1.0 installed as `/lib/qmenu.lua`. A GPU resolution of at least 50×16
+is required. Left/Right switches Items, Storages, Machines and Jobs; Up/Down
+selects, Enter acts, PageUp/PageDown pages, `/` searches (empty clears), and
+Backspace or `q` goes back (`q` on a tab exits). Actions and errors appear in
+the footer rather than modal messages. Inventory/job changes update live.
+
+Items offers fetch with a destination, quantity (one observed stack by default,
+or `all`) and confirmation. Storages offers scans, store-from, membership,
+filter, priority and shared-inventory settings. Machines edits opaque typed
+groups and roles (it does not process items); Jobs shows status and permits
+only queued cancellations. All actions call the same public warehouse/logistics
+APIs as the CLI. Reading any source learns its real stack limit; unknown limits
+fail explicitly rather than assuming 64. Nonmembers may be scanned and viewed,
+but never enter automatic stock selection. Configuration, catalogue and learned
+limits persist in `/etc/warehouse.cfg`, `.db`, and `.stacks` respectively.

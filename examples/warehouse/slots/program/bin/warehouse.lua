@@ -5,7 +5,8 @@ local function decode(s) return assert(serialization.unserialize(assert(s,"seria
 local function item() return args[1]:sub(1,1)=="{" and decode(args[1]) or {name=args[1],damage=tonumber(args[4]) or 0} end
 local function endpoint(s) return s:sub(1,1)=="{" and decode(s) or s end
 local value,err
-if command=="add" then value=warehouse.add(args[1],args[2] and decode(args[2]))
+if not command or command=="ui" then local ok,problem=require("warehouse.ui").show();if not ok then error(problem,0) end;return
+elseif command=="add" then value=warehouse.add(args[1],args[2] and decode(args[2]))
 elseif command=="remove" then value=warehouse.remove(args[1])
 elseif command=="members" then value=warehouse.members()
 elseif command=="group" then value=warehouse.group(args[1],args[2],decode(args[3]))

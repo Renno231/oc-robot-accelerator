@@ -107,5 +107,23 @@ class MachineComparisonsTest(unittest.TestCase):
             self.assertEqual([],value['unexpectedDifferences'])
             self.assertEqual(str(roots[0]),value['aRoot']);self.assertEqual(str(roots[1]),value['bRoot'])
 
+    def test_ui_measurements_leave_acceptance_and_route_counts_strict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for job,measurement in (('a',1),('b',2)):
+                native=root/job/'runtime';disk=native/'world/opencomputers/disk/home';disk.mkdir(parents=True)
+                (root/job/'job.json').write_text(json.dumps({'state':'passed','elapsedWallSeconds':1}))
+                (native/'result.json').write_text(json.dumps({'scenarioId':'test','status':'passed','reason':'passed','computer':{'energy':1},'ticks':1}))
+                evidence={'jobs':{},'boots':[],'files':{},
+                          'warehouseUI':{'sessions':9,'live':True,'memory':{'minimumFree':measurement},'renders':measurement,'writes':measurement},
+                          'warehouseUIPlanning':{'after':{'fetch':{'plans':1,'cpuSeconds':measurement}}}}
+                (disk/'equivalence.json').write_text(json.dumps(evidence))
+            self.assertEqual([],compare(root,'a','b')['unexpectedDifferences'])
+            path=root/'b/runtime/world/opencomputers/disk/home/equivalence.json'
+            evidence=json.loads(path.read_text());evidence['warehouseUIPlanning']['after']['fetch']['plans']=2;path.write_text(json.dumps(evidence))
+            self.assertTrue(compare(root,'a','b')['unexpectedDifferences'])
+            evidence['warehouseUIPlanning']['after']['fetch']['plans']=1;evidence['warehouseUI']['live']=False;path.write_text(json.dumps(evidence))
+            self.assertTrue(compare(root,'a','b')['unexpectedDifferences'])
+
 
 if __name__=='__main__': unittest.main()

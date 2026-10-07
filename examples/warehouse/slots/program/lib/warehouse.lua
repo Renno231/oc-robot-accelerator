@@ -11,16 +11,33 @@ local function read(path,default)
 end
 local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
 local db={}
+local limits=read("/etc/warehouse.stacks",{})
+local limitsDirty=false
+local function limitKey(i) return i.name..":"..tostring(i.damage or 0) end
+local function learn(i,maximum)
+  if i and type(maximum)=="number" and maximum>0 then
+    local k=limitKey(i)
+    if limits[k]~=maximum then limits[k]=maximum;limitsDirty=true end
+  end
+end
+local function saveLimits()
+  if not limitsDirty then return end
+  local f=assert(io.open("/etc/warehouse.stacks","w"));f:write(serialization.serialize(limits));f:close();limitsDirty=false
+end
 local rows,keys,staging=0,{},nil
+local keySet={}
+local function track(key) if not keySet[key] then keySet[key]=true;keys[#keys+1]=key end end
 -- Append one inventory record, not the entire catalogue, on an observation.
 -- Replay streams the journal; memory remains proportional to current inventory types.
 do local f=io.open("/etc/warehouse.db","r");if f then
   for line in f:lines() do local r=assert(serialization.unserialize(line),"invalid warehouse journal");db[r.key]=r.value;rows=rows+1 end
   f:close()
 end end
+for _,e in pairs(db) do for _,v in pairs(e.items or {}) do learn(v.item,v.maxSize) end end
 local function saveConfig()
   local f=assert(io.open("/etc/warehouse.cfg","w"));f:write(serialization.serialize(cfg));f:close()
 end
+local function changed() event.push("warehouse","changed") end
 local function saveInventory(key)
   local line=serialization.serialize({key=key,value=db[key]},false).."\n"
   local f=assert(io.open("/etc/warehouse.db","a"));f:write(line);f:close();rows=rows+1
@@ -62,8 +79,9 @@ local function grouped(storage)
 end
 local function inventory(storage) local s=cfg.members[storage];return s and (s.inventory or storage) end
 local function rebuildKeys()
-  local seen={};keys={}
-  for storage in pairs(cfg.members) do local key=inventory(storage);if not seen[key] then seen[key]=true;keys[#keys+1]=key end end
+  keys={};keySet={}
+  for storage in pairs(cfg.members) do track(inventory(storage)) end
+  for key in pairs(db) do track(key) end
   table.sort(keys)
 end
 rebuildKeys()
@@ -77,7 +95,7 @@ local function entries()
 end
 local function prune()
   local used={};for s in pairs(cfg.members) do used[inventory(s)]=true end
-  for key in pairs(db) do if not used[key] then db[key]=nil end end
+  for key in pairs(db) do if not used[key] and not map.storage(key) then db[key]=nil end end
   compact();rebuildKeys()
 end
 function M.add(storage,settings)
@@ -86,16 +104,16 @@ function M.add(storage,settings)
   assert(settings.priority==nil or (type(settings.priority)=="number" and math.abs(settings.priority)<math.huge),"invalid priority")
   assert(settings.inventory==nil or (type(settings.inventory)=="string" and settings.inventory~=""),"invalid inventory")
   if settings.filter then assert(type(settings.filter)=="table","filter list required");for i,v in ipairs(settings.filter) do settings.filter[i]=item(v) end end
-  cfg.members[storage]=settings;saveConfig();prune();return true
+  cfg.members[storage]=settings;saveConfig();prune();changed();return true
 end
-function M.remove(storage) local existed=cfg.members[storage]~=nil;cfg.members[storage]=nil;saveConfig();prune();return existed end
+function M.remove(storage) local existed=cfg.members[storage]~=nil;cfg.members[storage]=nil;saveConfig();prune();changed();return existed end
 function M.members() return copy(cfg.members) end
 function M.group(name,kind,roles)
   assert(type(name)=="string" and name~="" and type(kind)=="string" and type(roles)=="table" and next(roles),"group name, type and roles required")
   for role,s in pairs(roles) do assert(type(role)=="string" and map.storage(s),"invalid group role/storage") end
-  cfg.groups[name]={type=kind,roles=copy(roles)};saveConfig();return true
+  cfg.groups[name]={type=kind,roles=copy(roles)};saveConfig();changed();return true
 end
-function M.ungroup(name) local existed=cfg.groups[name]~=nil;cfg.groups[name]=nil;saveConfig();return existed end
+function M.ungroup(name) local existed=cfg.groups[name]~=nil;cfg.groups[name]=nil;saveConfig();changed();return existed end
 function M.groups(kind) local out={};for n,g in pairs(cfg.groups) do if not kind or g.type==kind then out[n]=copy(g) end end;return out end
 local function quantity(e,i)
   local n=0;for _,v in pairs(e and e.items or {}) do if matches(v.item,i) then n=n+v.count end end;return n
@@ -106,9 +124,10 @@ function M.find(i)
   table.sort(out,function(a,b) return a.storage<b.storage end);return out
 end
 function M.count(i) local n=0;for _,v in ipairs(M.find(i)) do n=n+v.count end;return n end
-function M.contents(storage) local key=inventory(storage);return key and db[key] and copy(db[key]) or nil end
+function M.contents(storage) local key=inventory(storage) or storage;return db[key] and copy(db[key]) or nil end
+function M.stackSize(i) return limits[limitKey(item(i))] end
 local function observe(storage,step)
-  local key=inventory(storage);if not key or not step.listing or not step.size then return end
+  local key=inventory(storage) or storage;if not key or not step.listing or not step.size then return end
   local e={items={},slots=step.size,freeSlots=step.size,time=computer.uptime(),verified=true}
   for _,stack in pairs(step.listing) do
     local i=item(stack);local k=itemKey(i);local v=e.items[k] or {item=i,count=0,maxSize=stack.maxSize,stacks=0,room=0}
@@ -118,11 +137,13 @@ local function observe(storage,step)
   for k,v in pairs(db[key] and db[key].items or {}) do if not e.items[k] then
     e.items[k]={item=v.item,count=0,maxSize=v.maxSize,stacks=0,room=0}
   end end
-  db[key]=e;saveInventory(key)
+  track(key)
+  db[key]=e;saveInventory(key);return true
 end
+local endpointStorages
 local function at(endpoint)
   if not endpoint then return end
-  for s in pairs(cfg.members) do local e=map.storage(s);if e and e.node==endpoint.node and e.side==endpoint.side then return s end end
+  for s,e in pairs(endpointStorages) do if e.node==endpoint.node and e.side==endpoint.side then return s end end
 end
 local function readStorage(storage)
   return logistics.job({{read=storage}},{drones=1,retries=0})
@@ -132,16 +153,16 @@ end
 function M.scan(storages)
   local list={}
   if type(storages)=="string" then storages={storages} end
-  if storages then for _,s in ipairs(storages) do assert(inventory(s),"not a warehouse member");list[#list+1]=s end
+  if storages then for _,s in ipairs(storages) do assert(map.storage(s),"unknown storage");list[#list+1]=s end
   else for _,faces in pairs(entries()) do list[#list+1]=faces[1].storage end end
   table.sort(list);compact();local ids,seen={},{}
-  for _,s in ipairs(list) do local key=inventory(s);if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
+  for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
   return ids
 end
 local function adjust(storage,i,delta,maximum,touched)
   if not storage or delta==0 then return end
-  local key=inventory(storage);local e=db[key];touched[key]=storage
-  if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
+  local key=inventory(storage) or storage;local e=db[key];touched[key]=storage
+  if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
   local function change(k,v,n)
     v.maxSize=maximum or v.maxSize
     if not v.maxSize then
@@ -169,26 +190,30 @@ local function adjust(storage,i,delta,maximum,touched)
 end
 local function short(storage,i,returned,touched)
   if not storage then return end
-  local key=inventory(storage);local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
   local n=quantity(e,i);adjust(storage,i,-n,nil,touched)
   if returned>0 then adjust(storage,i,returned,nil,touched) end
   touched[key]=storage
 end
 local function full(storage,i,touched)
   if not storage then return end
-  local key=inventory(storage);local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
   e.full=e.full or {};e.full[itemKey(i)]=true;e.freeSlots=0
   for _,v in pairs(e.items) do if matches(v.item,i) then v.room=0 end end
   e.estimated=true;touched[key]=storage
 end
 local function finished(_,id)
   local s=logistics.status(id);if not s then return end
-  local touched={}
+  endpointStorages=map.storages()
+  local touched={};local observed=false
+  learn(s.item,s.maxSize)
   if s.steps then
     -- Agent ledger subtracts returns AND overflow from take.moved, so use
     -- taken-returned for the source, not moved. Puts report actual deliveries.
     for _,step in ipairs(s.steps) do
-      if step.read then local storage=at(step.read);if storage and not step.read.slots then observe(storage,step) end
+      learn(step.item,step.maxSize)
+      for _,stack in pairs(step.listing or {}) do learn(stack,stack.maxSize) end
+      if step.read then local storage=at(step.read);if storage and not step.read.slots then observed=observe(storage,step) or observed end
       elseif step.take then
         local storage=at(step.take);adjust(storage,step.item,-(step.taken or 0)+(step.returned or 0),step.maxSize,touched)
         -- A full-face short reports observed remaining stock, not necessarily
@@ -209,6 +234,9 @@ local function finished(_,id)
   end
   for key in pairs(touched) do if db[key] then saveInventory(key) end end
   maintain()
+  local learned=limitsDirty;saveLimits()
+  if observed or next(touched) or learned then changed() end
+  endpointStorages=nil
 end
 event.listen("logistics",finished)
 local function positive(n) assert(type(n)=="number" and n>0 and n<math.huge and n%1==0,"positive count required") end
@@ -223,13 +251,30 @@ end
 function M.fetch(i,n,to,opts)
   i=item(i);positive(n);local candidates,total={},0
   for _,faces in pairs(entries()) do
-    local best,dist;for _,face in ipairs(faces) do local d=distance(face.storage,node(to));if not best or d<dist then best,dist=face,d end end
-    local count=quantity(best.entry,i);if count>0 and dist<math.huge then candidates[#candidates+1]={storage=best.storage,count=count,distance=dist};total=total+count end
+    local count=quantity(faces[1].entry,i)
+    if count>0 then candidates[#candidates+1]={faces=faces,count=count};total=total+count end
   end
   if total<n then return nil,"requested "..n..", available "..total end
-  table.sort(candidates,function(a,b) if a.count~=b.count then return a.count>b.count end;if a.distance~=b.distance then return a.distance<b.distance end;return a.storage<b.storage end)
-  local steps,remaining={},n
-  for _,c in ipairs(candidates) do if remaining==0 then break end;local take=math.min(remaining,c.count);steps[#steps+1]={take=c.storage,item=i,count=take};remaining=remaining-take end
+  table.sort(candidates,function(a,b) return a.count>b.count end)
+  local steps,remaining,cursor={},n,1;total=0;local target=node(to)
+  while remaining>0 and cursor<=#candidates do
+    -- Route all equal-count inventories at the cut-off, preserving the
+    -- distance tie-break, but never route lower-count unused inventories.
+    local batch={};local count=candidates[cursor].count
+    repeat
+      local c=candidates[cursor];local best,dist=nil,math.huge
+      for _,face in ipairs(c.faces) do local d=distance(face.storage,target)
+        if d<dist or (d==dist and best and face.storage<best) then best,dist=face.storage,d end
+      end
+      if best then batch[#batch+1]={storage=best,distance=dist,count=count};total=total+count end
+      cursor=cursor+1
+    until cursor>#candidates or candidates[cursor].count~=count
+    table.sort(batch,function(a,b) if a.distance~=b.distance then return a.distance<b.distance end;return a.storage<b.storage end)
+    for _,c in ipairs(batch) do if remaining==0 then break end;local take=math.min(remaining,c.count)
+      steps[#steps+1]={take=c.storage,item=i,count=take};remaining=remaining-take
+    end
+  end
+  if remaining>0 then return nil,"requested "..n..", available "..total end
   steps[#steps+1]={put=to,item=i,rest=true};return logistics.job(steps,opts)
 end
 local function accepts(settings,i)
@@ -237,10 +282,10 @@ local function accepts(settings,i)
   for _,v in ipairs(settings.filter) do if matches(i,v) then return true end end;return false
 end
 function M.store(i,n,from,opts)
-  i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum
-  for _,e in pairs(db) do for _,v in pairs(e.items) do if matches(v.item,i) and v.maxSize then maximum=maximum and math.min(maximum,v.maxSize) or v.maxSize end end end
+  i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum=limits[limitKey(i)]
+  if not maximum then return nil,"requested "..n..", capacity 0, unknown stack size for "..i.name..":"..i.damage.."; reading the source teaches it" end
   for _,faces in pairs(entries()) do
-    local best,uncertain
+    local uncertain
     for _,face in ipairs(faces) do
       local e=face.entry;local accept=accepts(face.settings,i)
       if accept~=false and e and not e.capacityUnknown and maximum then
@@ -248,22 +293,23 @@ function M.store(i,n,from,opts)
         local occupied=0;for _,v in pairs(e.items) do occupied=occupied+v.count end
         local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
         local capacity=e.full and e.full[itemKey(i)] and 0 or e.freeSlots*maximum+room
-        if tier and capacity>0 and distance(node(from),face.storage)<math.huge then
-          local c={storage=face.storage,tier=tier,priority=face.settings.priority or 0,capacity=capacity}
-          if not best or c.tier<best.tier or (c.tier==best.tier and (c.priority>best.priority or (c.priority==best.priority and c.storage<best.storage))) then best=c end
+        if tier and capacity>0 then
+          candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity}
         end
       elseif accept~=false and (not e or e.capacityUnknown or not maximum) then uncertain=true end
     end
-    if best then candidates[#candidates+1]=best;total=total+best.capacity end
     if uncertain then unknown=unknown+1 end
   end
-  if total<n then return nil,"requested "..n..", capacity "..total..", unknown inventories "..unknown end
   table.sort(candidates,function(a,b) if a.tier~=b.tier then return a.tier<b.tier end;if a.priority~=b.priority then return a.priority>b.priority end;return a.storage<b.storage end)
   -- Interleave takes and puts, allowing a large request to split naturally.
-  local steps,remaining={},n
-  for _,c in ipairs(candidates) do if remaining==0 then break end;local amount=math.min(remaining,c.capacity)
-    steps[#steps+1]={take=from,item=i,count=amount};steps[#steps+1]={put=c.storage,item=i,count=amount};remaining=remaining-amount
+  local steps,remaining,used={},n,{};local source=node(from)
+  for _,c in ipairs(candidates) do if remaining==0 then break end
+    if not used[c.key] and distance(source,c.storage)<math.huge then
+      used[c.key]=true;total=total+c.capacity;local amount=math.min(remaining,c.capacity)
+      steps[#steps+1]={take=from,item=i,count=amount};steps[#steps+1]={put=c.storage,item=i,count=amount};remaining=remaining-amount
+    end
   end
+  if remaining>0 then return nil,"requested "..n..", capacity "..total..", unknown inventories "..unknown end
   return logistics.job(steps,opts)
 end
 return M

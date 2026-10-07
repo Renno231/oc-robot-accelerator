@@ -388,6 +388,60 @@
     },
     {
       "position": [
+        -2,
+        64,
+        0
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        -1
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        -2
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        7
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        8
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
+        -2,
+        64,
+        9
+      ],
+      "block": "opencomputers:capacitor",
+      "energy": 1600
+    },
+    {
+      "position": [
         10,
         64,
         7
