@@ -398,6 +398,15 @@ are bounded per tick and indirect calls cost a tick each. Event bursts are coale
 rate-limited and partial, persistence is written on a short timer, and nothing polls. Native runs
 measure controller calls per component per tick and per second (mean, peak, budget exhaustion).
 
+**Fleet board.** A Fleet tab shows drones and robot CPUs as a departure board, one row per unit:
+status (colour-coded), job and request, current task, from and to (last known place, no live
+tracking), progress, and last update time; plus each fleet's busy share over a recent window and a
+bottleneck line ("drones 83% busy; 3 steps waiting for a drone") that says what to add next. Actions:
+take a unit out of service and back (it finishes current work, then gets none; used to change
+hardware while running), recall a drone home after its job, and re-check a unit (re-query cproc,
+ping a drone; clears UNKNOWN). Logistics and the MES keep the needed data: per-unit task,
+destination, last update and a rolling utilization record; cproc status includes robot energy.
+
 **Hardware.** The controller is a tier-3 computer with a tier-3 screen; UI designed at 160x50.
 
 ## Agnostic means compatible by construction
