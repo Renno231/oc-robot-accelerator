@@ -383,6 +383,21 @@ unchanged.
   on an MES controller the Stock tab covers it.
 - `cproc` is unchanged; on an MES station it serves its buffer side and receives inputs by drone.
 
+**Scaling.** The system grows by adding hardware as need grows: more drones, more crafting robots
+(CPUs), more machine groups, more storages. None of these is a fixed quantity; the MES, warehouse and
+logistics use whatever is registered, and throughput should rise as hardware is added. Tests use
+realistic counts (6+ drones) unless the test is specifically about scarcity.
+
+**Distribution.** Calls and events between layers carry plain data only (no functions, no live
+shared tables), so any layer boundary can later become a network link and layers can move to their
+own computers or servers. Logistics, warehouse and map stay together (logistics node); MES and the
+recipe database/planner stay together (production node); UIs and robots may be anywhere.
+
+**Component-call budget.** The controller's own component calls (GPU, modem, filesystem, transposer)
+are bounded per tick and indirect calls cost a tick each. Event bursts are coalesced: UI redraws are
+rate-limited and partial, persistence is written on a short timer, and nothing polls. Native runs
+measure controller calls per component per tick and per second (mean, peak, budget exhaustion).
+
 **Hardware.** The controller is a tier-3 computer with a tier-3 screen; UI designed at 160x50.
 
 ## Agnostic means compatible by construction
