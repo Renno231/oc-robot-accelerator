@@ -359,9 +359,12 @@ receipts, then continues.
 **Stockkeeper.** The user's stockkeeper rules (stock conditions linked to saved plans) submit MES
 requests.
 
-**Integration with the crafting system.** The user's system keeps working standalone (one robot,
-transposer storage); the MES is a second mode of the same libraries, chosen by the controller's
-configuration:
+**Integration with the crafting system.** The user's system is the simple baseline (one robot,
+transposer storage, one user at a time) and keeps working standalone; the MES is what that setup
+grows into, as a second mode of the same libraries chosen by the controller's configuration.
+Growing up loses nothing: saved plans, kits, tool rules, stockkeeper rules and recipes carry over
+unchanged.
+
 - Stock source: `craft_plans.inventory` reads the warehouse catalogue on an MES controller, so
   planning in `craft.lua`, `stockkeeper` checks and `count` see warehouse stock.
 - Execution: `craft_plans.run` / `craft_kits.run` either run directly on one robot (today) or
