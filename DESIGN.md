@@ -305,6 +305,62 @@ names; it never stores positions or sides.
   catalogue knowledge, and after add/remove/group/ungroup configuration edits.
   The UI has no timed polling; its only timer expires footer messages.
 
+## MES (manufacturing execution)
+
+Decided with the user 2026-10-05 to 2026-10-08. Sources: the user's notes ("current thoughts on the
+autocrafting system": craft-manager, cprocs, stockkeeper) and the design conversation. A
+simplification of anything here is a proof of concept only and needs the user's permission to ship.
+
+**Layers.** Map: where things are. Logistics: moving items. Warehouse: what is stored where,
+reservations, machine and crafter groups. The user's `recipes` library: recipe storage and recipe
+import. MES (`craftsystem/usr/lib/mes.lua`, CLI `usr/bin/mes.lua`): turns requests into work over
+those layers; it reads recipes and never writes them. UI (`mes_ui`): over all of them.
+
+**Requests and plans.** A request is one or more goal items (plans can be merged, e.g. a batch of
+OpenComputers parts). The user's planner produces a dependency graph; the MES executes the graph,
+not a flattened list. Several requests run at the same time, each with its own graph and
+reservations.
+
+**Execution is event-driven.** A step is ready when all its inputs are available to it. Completion
+of drone jobs, cproc jobs and machine output are events; each one updates its step, and a finished
+step triggers its dependants to check readiness and start. Replies are routed to the step that
+issued the work. No straight-line walking and no global stage barrier.
+
+**Crafting CPUs.** A crafting robot running `cproc` is a CPU with its own buffer chest (one buffer per
+robot). Like an AE2 CPU it works one job at a time: one cproc job (a chain of robot tasks) per
+robot. Ready robot steps from any request or branch go to whichever robot is free (or the one chosen
+for the step). Drones deliver inputs, the MES confirms delivery, submits the job, relays cproc's
+progress, and on completion collects the buffer.
+
+**Machines.** A machine type is a pool of machine groups (one group = one machine: roles to storages,
+with the slots each role's face exposes). A processing step uses any group of the type (split), one
+group, or a chosen set. Machines are scheduled per load, not owned per step. Admission follows AE2
+blocking mode: non-blocking types (a vanilla furnace) take loads while input room allows; blocking
+types (multi-input, e.g. copper + tin) take a load only when their inputs are empty or hold the same
+recipe. Output never gates admission; it is collected continuously and attributed to loads FIFO by
+item. Fuel, batch and timing come from the type; output is read when due, not blindly polled.
+
+**Hand-off.** An output whose consuming step already has its robot or machine goes there directly
+(furnace output to `cpu1` buffer); otherwise it goes to stock, reserved for its request.
+
+**Live state.** Every crafter and machine has a state (idle, busy with which request/step/loads,
+unknown). Unknown robots stay unavailable until confirmed idle.
+
+**Failure.** On a failed step the MES re-reads the affected storages, reconciles its ledger with what
+is actually there, re-plans the remaining work from that state, and retries up to a limit; then the
+request fails and reports where its items are.
+
+**Cancel.** Start no new work; in-flight drone, robot and machine work finishes its current unit;
+buffer, machine and drone contents are returned to stock.
+
+**Reboot.** Requests persist. On boot the MES reconciles with real storage contents and robot
+receipts, then continues.
+
+**Stockkeeper.** The user's stockkeeper rules (stock conditions linked to saved plans) submit MES
+requests.
+
+**Hardware.** The controller is a tier-3 computer with a tier-3 screen; UI designed at 160x50.
+
 ## Agnostic means compatible by construction
 
 The basic request is: move this item, this amount, from A to B. Logistics
