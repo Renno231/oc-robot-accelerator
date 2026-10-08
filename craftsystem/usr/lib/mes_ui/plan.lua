@@ -1,7 +1,8 @@
 -- Plan preview: the stages as a chain. Enter on a stage chooses its crafter
 -- or machines; the last rows run it or save it.
 local ui=require("mes_ui.core");local wh=require("warehouse")
-local S={hints="Enter on a stage: choose machines · ⌫ back"}
+local S={hints="Enter on a stage: choose machines · R refresh · ⌫ back · H help",
+  help={{"Enter","on a stage: choose its crafter or machines; on the last rows: run, re-plan, save"}}}
 local function mes() return require("mes") end
 local circled={"①","②","③","④","⑤","⑥","⑦","⑧","⑨"}
 
@@ -82,7 +83,7 @@ function S:activate(r)
   elseif r.run then
     local id=ui.try(mes().run,plan);if id then ui.replace("mes_ui.run",{id=id}) end
   elseif r.replan then
-    ui.busy("Re-planning…");local p=ui.try(mes().plan,plan.item,plan.qty);if p then self.plan=p;self:refresh() end
+    local p=require("mes_ui.choice").plan(plan.item,plan.qty);if p then self.plan=p;self:refresh() end
   elseif r.save then
     ui.prompt("Save plan","Plan name",ui.label(plan.item).." x"..plan.qty,function(name)
       local ok=ui.try(function() return require("craft_plans").save(name,plan) end);if ok then ui.ok("Saved plan "..name) end

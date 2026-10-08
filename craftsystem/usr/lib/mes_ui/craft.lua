@@ -1,6 +1,7 @@
 -- Craft: runs at the top, then craftable items matching the filter.
 local ui=require("mes_ui.core");local wh=require("warehouse")
-local S={filterable=true,hints="type to search · Enter craft or open run"}
+local S={filterable=true,hints="Enter/C craft or open run · F search · R refresh · H help",
+  help={{"Enter / C","craft the selected item, or open the selected run"}}}
 local function mes() return require("mes") end
 local glyph={running="▶",complete="✓",failed="✗",unknown="?"}
 local colour={running="accent",complete="good",failed="bad",unknown="warn"}
@@ -25,7 +26,7 @@ function S:rebuild()
     end
     rows[#rows+1]={text="",heading=true}
   end
-  rows[#rows+1]={text=ui.filterText=="" and "Craftable  (type to search)" or ("Craftable matching \""..ui.filterText.."\""),fg=P.accent,heading=true}
+  rows[#rows+1]={text=ui.filterText=="" and "Craftable  (F to search)" or ("Craftable matching \""..ui.filterText.."\""),fg=P.accent,heading=true}
   local room=math.max(a.h*2,24)
   local found=ui.try(mes().search,ui.filterText,room) or {}
   for _,id in ipairs(found) do
@@ -41,6 +42,10 @@ function S:filtered()
   for i,r in ipairs(self.rows) do if r.item then first=i;break end end
   self.list:set(first or 1)
 end
+function S:refresh() self:rebuild();self.list:refresh() end
+function S:key(char,code)
+  if code==ui.keys.c then self:activate(self.rows[self.list.cur]);return true end
+end
 function S:signal(name,what)
   if name=="mes" and (what=="done" or what=="stage") then
     self:rebuild();self.list:refresh()
@@ -50,10 +55,6 @@ function S:activate(r)
   if not r then return end
   if r.run then ui.push("mes_ui.run",{id=r.run});return end
   if not r.item then return end
-  ui.prompt("Craft "..ui.label(r.item),"How many?",1,function(n)
-    ui.busy("Planning "..n.." "..ui.label(r.item).."…")
-    local plan=ui.try(mes().plan,r.item,n)
-    if plan then ui.push("mes_ui.plan",{plan=plan}) end
-  end,{integer=true,min=1})
+  require("mes_ui.choice").craft(r.item)
 end
 return S

@@ -1,6 +1,8 @@
 -- Stock: warehouse totals, filter as you type, locations and fetch.
 local ui=require("mes_ui.core");local wh=require("warehouse")
-local S={filterable=true,hints="type to filter · Enter actions · R rescan all"}
+local S={filterable=true,hints="Enter/E fetch · C craft · W where · S rescan item · F search · H help",
+  help={{"Enter / E","fetch the selected item to a storage"},{"C","craft the selected item"},
+    {"W","show where it is"},{"S","rescan the storages holding it"},{"Shift+R","rescan every stock storage (drones)"}}}
 
 function S:open()
   local a=ui.area();self.index={};self.rev=-1
@@ -47,29 +49,33 @@ function S:filtered() self:rebuild();self.list:set(1);self:draw() end
 function S:signal(name)
   if name=="warehouse" and wh.revision()~=self.rev then self:rebuild();self.list:refresh();self:draw() end
 end
-function S:key(char)
-  if (char==82) then -- R
+function S:refresh() self:rebuild();self.list:refresh();self:draw() end
+function S:key(char,code)
+  local keys=ui.keys
+  if code==keys.r and require("keyboard").isShiftDown() then
     local ids=ui.try(wh.scan);if ids then ui.ok("Rescanning: "..#ids.." read jobs queued") end;return true
   end
+  local v=code==keys.e and "fetch" or code==keys.w and "where" or code==keys.s and "scan" or code==keys.c and "craft"
+  if v then self:action(v);return true end
 end
-function S:actions(i)
+-- Enter is fetch, as E (export) and Enter are in the inventory program.
+function S:actions(i) self:action("fetch",i) end
+function S:action(v,i)
   local e=self:selected(i);if not e then return end
-  local rows={{text="Fetch to a storage…",value="fetch"},{text="Show where it is",value="where"},{text="Rescan its storages",value="scan"}}
-  ui.pick(ui.label(e.item),rows,function(v)
-    if v=="fetch" then
-      require("mes_ui.flows").pickStorage("Fetch "..ui.label(e.item).." to…",{},function(to)
-        ui.prompt("Fetch "..ui.label(e.item),"How many? (have "..ui.num(e.count)..")",math.min(e.count,64),function(n)
-          local id=ui.try(wh.fetch,e.item,n,to);if id then ui.ok("Job #"..tostring(id)..": fetching "..n.." "..ui.label(e.item).." → "..to) end
-        end,{integer=true,min=1})
-      end)
-    elseif v=="where" then
-      local list={};for _,f in ipairs(wh.find(e.item)) do list[#list+1]={text=ui.fit(f.storage,24)..ui.right(ui.num(f.count),8),locked=true} end
-      if #list==0 then list[1]={text="nowhere: count is zero",locked=true} end
-      ui.pick(ui.label(e.item).." · "..ui.num(e.count),list,function() end,{nofilter=true,note="⌫ close"})
-    elseif v=="scan" then
-      local names={};for _,f in ipairs(wh.find(e.item)) do names[#names+1]=f.storage end
-      if #names>0 then local ids=ui.try(wh.scan,names);if ids then ui.ok(#ids.." read jobs queued") end end
-    end
-  end,{nofilter=true})
+  if v=="craft" then require("mes_ui.choice").craft(ui.id(e.item))
+  elseif v=="fetch" then
+    require("mes_ui.flows").pickStorage("Fetch "..ui.label(e.item).." to…",{},function(to)
+      ui.prompt("Fetch "..ui.label(e.item),"How many? (have "..ui.num(e.count)..")",math.min(e.count,64),function(n)
+        local id=ui.try(wh.fetch,e.item,n,to);if id then ui.ok("Job #"..tostring(id)..": fetching "..n.." "..ui.label(e.item).." → "..to) end
+      end,{integer=true,min=1})
+    end)
+  elseif v=="where" then
+    local list={};for _,f in ipairs(wh.find(e.item)) do list[#list+1]={text=ui.fit(f.storage,24)..ui.right(ui.num(f.count),8),locked=true} end
+    if #list==0 then list[1]={text="nowhere: count is zero",locked=true} end
+    ui.pick(ui.label(e.item).." · "..ui.num(e.count),list,function() end,{nofilter=true,note="⌫ close"})
+  elseif v=="scan" then
+    local names={};for _,f in ipairs(wh.find(e.item)) do names[#names+1]=f.storage end
+    if #names>0 then local ids=ui.try(wh.scan,names);if ids then ui.ok(#ids.." read jobs queued") end else ui.notify("nothing to rescan: count is zero") end
+  end
 end
 return S

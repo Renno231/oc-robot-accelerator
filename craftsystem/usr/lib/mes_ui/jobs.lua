@@ -1,6 +1,6 @@
 -- Jobs: logistics jobs newest first, read one window at a time.
 local ui=require("mes_ui.core");local lg=require("logistics")
-local S={hints="Enter details · ↑↓ PgUp PgDn"}
+local S={hints="Enter details · R refresh · H help",help={{"Enter","show the selected job's steps"}}}
 local colour={done="good",partial="warn",failed="bad",running="accent",queued="dim",cancelled="dim"}
 
 local function where(e) if type(e)~="table" then return e and tostring(e) or "" end;return e.storage or e.node or "?" end
@@ -54,6 +54,7 @@ function S:details(i,pane)
     ui.pick("Job #"..j.id,rows,function() end,{nofilter=true,note="⌫ close"})
   end
 end
+function S:refresh() self.fresh=false;local _,total=lg.jobs(true,1,0);self.total=total or 0;self.list:refresh();self:draw() end
 function S:signal(name)
   if name=="logistics" or name=="logistics_work" then self.fresh=false;self.list:refresh();ui.title("Jobs",ui.num(self.total).." logistics jobs") end
 end

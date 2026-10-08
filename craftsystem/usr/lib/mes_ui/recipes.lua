@@ -1,6 +1,7 @@
 -- Recipes: import by laying items out in a chest, or browse by item.
 local ui=require("mes_ui.core");local wh=require("warehouse")
-local S={filterable=true,hints="Enter import or show · type to search items"}
+local S={filterable=true,hints="Enter show · I import · F search · R refresh · H help",
+  help={{"Enter","show the selected item's recipes, or import on the import row"},{"I","import a recipe from a chest"}}}
 local function mes() return require("mes") end
 local function recipes() return require("recipes") end
 
@@ -16,12 +17,14 @@ function S:rebuild()
   local rows,P=self.rows,ui.P;for k=#rows,1,-1 do rows[k]=nil end
   rows[1]={text="+ Import a recipe from a chest…",fg=P.good,import=true}
   rows[2]={text="",heading=true}
-  rows[3]={text=ui.filterText=="" and "Items with recipes  (type to search)" or ("Items matching \""..ui.filterText.."\""),fg=P.accent,heading=true}
+  rows[3]={text=ui.filterText=="" and "Items with recipes  (F to search)" or ("Items matching \""..ui.filterText.."\""),fg=P.accent,heading=true}
   for _,id in ipairs(ui.try(mes().search,ui.filterText,math.max(24,ui.area().h*2)) or {}) do
     rows[#rows+1]={text="  "..ui.fit(ui.label(id),32)..id,item=id}
   end
 end
 function S:draw() ui.title("Recipes","processing and crafting recipes") end
+function S:refresh() self:rebuild();self.list:refresh() end
+function S:key(char,code) if code==ui.keys.i then self:import();return true end end
 function S:filtered() self:rebuild();self.list:set(self.rows[4] and 4 or 1) end
 function S:activate(r)
   if not r then return end

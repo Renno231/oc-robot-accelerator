@@ -7,17 +7,19 @@ local component=require("component");local event=require("event");local computer
 local unicode=require("unicode");local keyboard=require("keyboard");local keys=keyboard.keys
 local qmenu=require("qmenu")
 
-local ui={tabs={"craft","stock","setup","recipes","jobs"},
-  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs"},keys=keys}
+local ui={tabs={"craft","stock","setup","recipes","jobs","manage"},
+  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs",manage="Manage"},keys=keys}
 local P={bg=0x10161C,bar=0x1D2731,box=0x26323E,fg=0xD6DDE4,dim=0x6E7C88,accent=0x4FB3E8,
   good=0x7BC96F,warn=0xE6B450,bad=0xE0646E,sel=0x4FB3E8,selFg=0x10161C}
 ui.P=P
 local gpu,W,H
 local stack,modals,tabHits={},{},{}
 local message,messageColour,messageUntil
-local running,repaintAll,footerDirty,headerDirty
+local running,repaintAll,footerDirty,headerDirty,guarded
 local status,statusAt="",-math.huge
-ui.filterText=""
+local termFg,termBg
+-- F starts search: typed characters edit the filter until Enter.
+ui.filterText="";ui.searching=false
 
 ---------------------------------------------------------------- text helpers
 local len,sub=unicode.len,unicode.sub
@@ -108,6 +110,7 @@ function ui.list(menu,spec)
     local o=ui.decorate(menu:addOption(spec.name..k,spec.x,spec.y+k-1,blank),spec.bg)
     o:bind(keys.up,function() L:move(-1) end);o:bind(keys.down,function() L:move(1) end)
     o:bind(keys.pageUp,function() L:move(-spec.h) end);o:bind(keys.pageDown,function() L:move(spec.h) end)
+    o:bind(keys.left,function() L:move(-spec.h) end);o:bind(keys.right,function() L:move(spec.h) end)
     o:bind(keys.home,function() L:set(1) end);o:bind(keys["end"],function() L:set(math.huge) end)
     o:bind(keys.enter,function() local n=spec.count();if n>0 and spec.activate and not L.lockedRow then spec.activate(L.cur) end end)
     o._uiTouch=function() L:set(L.top+k-1) end
@@ -333,8 +336,9 @@ local function footer()
   local top=stack[#stack]
   local hint=modals[1] and "" or (top and top.hints or "")
   if message then ui.text(2,H,ui.fit(message,W-2),messageColour,P.bar)
+  elseif ui.searching then ui.text(2,H,ui.fit("search: "..ui.filterText.."▏   Enter done · ⌫ erase · ↑↓ list",W-2),P.accent,P.bar)
   else
-    local r="Tab: next tab · ⌫ back · ^Q quit";local room=W-2-len(r)-2
+    local r="H help · Tab next tab · ⌫ back · Q quit";local room=W-2-len(r)-2
     ui.text(2,H,ui.fit(hint,math.max(0,room)),P.dim,P.bar);if room>0 then ui.text(W-len(r),H,r,P.dim,P.bar) end
   end
   footerDirty=false
@@ -353,7 +357,7 @@ local function open(modname,arg)
   local mod=require(modname)
   local s=setmetatable({mod=modname,tab=stack[1] and stack[1].tab or arg and arg.tab},{__index=mod})
   s.menu=qmenu.create();s.menu._onError=ui.notify
-  stack[#stack+1]=s;ui.filterText=""
+  stack[#stack+1]=s;ui.filterText="";ui.searching=false
   ui.fill(1,2,W,H-2,P.bg)
   s:open(arg);repaintAll=true
   return s
@@ -363,7 +367,7 @@ function ui.push(modname,arg) return open(modname,arg) end
 function ui.pop()
   local s=table.remove(stack);if s and s.close then s:close() end
   if #stack==0 then running=false end
-  ui.filterText=current() and current().filter or "";repaintAll=true
+  ui.filterText=current() and current().filter or "";ui.searching=false;repaintAll=true
 end
 -- Replace the top screen (e.g. plan preview -> its run view).
 function ui.replace(modname,arg) local s=table.remove(stack);if s and s.close then s:close() end;return open(modname,arg) end
@@ -396,6 +400,29 @@ local function touch(x,y)
   if menu:getSelected()==o then menu:handleEvent(keys.enter);return end
   if o._uiTouch then o._uiTouch() else menu:setSelected(o) end
 end
+-- Keys every screen shares; a screen's key() runs first and may claim any.
+local global={
+  {"Tab / Shift+Tab","next / previous tab"},{"↑ ↓  PgUp PgDn  ← →","move · page"},
+  {"⌫","back"},{"H","this help"},{"Q  or  Ctrl+Q","quit"}}
+function ui.help()
+  local s=current();local rows={}
+  local function add(k,d,fg) rows[#rows+1]={text=ui.fit(k,22)..(d or ""),fg=fg,locked=true} end
+  add(ui.titles[s.tab] or "",nil,P.accent)
+  for _,h in ipairs(s.help or {}) do add("  "..h[1],h[2]) end
+  if s.filterable then add("  F","search: type, Enter done");add("  Shift+F","clear the search") end
+  if s.refresh then add("  R","refresh this view") end
+  add("",nil);add("Everywhere",nil,P.accent)
+  for _,h in ipairs(global) do add("  "..h[1],h[2]) end
+  ui.pick("Keys · "..(ui.titles[s.tab] or ""),rows,function() end,{nofilter=true,note="⌫ close",w=64})
+end
+local function searchKey(s,char,code)
+  if code==keys.back then
+    if ui.filterText=="" then ui.searching=false else ui.filterText=sub(ui.filterText,1,len(ui.filterText)-1);s:filtered(ui.filterText) end
+  elseif code==keys.enter then ui.searching=false
+  elseif code==keys.up or code==keys.down or code==keys.pageUp or code==keys.pageDown then ui.searching=false;s.menu:handleEvent(code)
+  elseif char>=32 and char<127 then ui.filterText=ui.filterText..string.char(char);s:filtered(ui.filterText) end
+  footerDirty=true
+end
 local function key(char,code)
   if keyboard.isControlDown() and (code==keys.q or code==keys.c) then running=false;return end
   local m=modals[#modals]
@@ -403,19 +430,26 @@ local function key(char,code)
     if not (m.key and m.key(char,code)) then m.menu:handleEvent(code) end
     return
   end
+  local s=current()
+  if ui.searching and code~=keys.tab then return searchKey(s,char,code) end
   if code==keys.tab then
+    ui.searching=false
     local cur=stack[1].tab;local n=#ui.tabs
     for k,name in ipairs(ui.tabs) do if name==cur then
       ui.switch(ui.tabs[(k+(keyboard.isShiftDown() and n-2 or 0))%n+1]);return
     end end
   end
-  local s=current()
   if s.key and s:key(char,code) then return end
-  if s.filterable then
-    if code==keys.back and ui.filterText~="" then ui.filterText=sub(ui.filterText,1,len(ui.filterText)-1);s:filtered(ui.filterText);return end
-    if char>32 and char<127 then ui.filterText=ui.filterText..string.char(char);s:filtered(ui.filterText);return end
+  if code==keys.q then ui.quit();return
+  elseif code==keys.h then ui.help();return
+  elseif code==keys.f and s.filterable then
+    if keyboard.isShiftDown() then ui.filterText="";s:filtered("") else ui.searching=true end
+    footerDirty=true;return
+  elseif code==keys.r and s.refresh then s:refresh();ui.ok("Refreshed");return end
+  if code==keys.back then
+    if s.filterable and ui.filterText~="" then ui.filterText=sub(ui.filterText,1,len(ui.filterText)-1);s:filtered(ui.filterText);return end
+    if #stack>1 then ui.pop() end;return
   end
-  if code==keys.back then if #stack>1 then ui.pop() end;return end
   s.menu:handleEvent(code)
 end
 local function signal(name,...)
@@ -425,7 +459,7 @@ local function signal(name,...)
 end
 local handle
 -- A failing screen or callback reports in the footer; the UI keeps running.
-local function guarded(e)
+function guarded(e)
   local ok,err=xpcall(handle,debug.traceback,e)
   if not ok then
     ui.fail((tostring(err):match("^[^\n]*"):gsub("^[^:]+:%d+: ","")));repaintAll=true
@@ -451,6 +485,39 @@ function ui.flush()
   if footerDirty then footer() end
 end
 function ui.repaint() repaintAll=true end
+function ui.quit() running=false end
+local function isOpen(m) for _,x in ipairs(modals) do if x==m then return true end end end
+-- Block the caller until modal m closes, handling events meanwhile: lets a
+-- synchronous callback (the planner's selectChoice) ask the user. Returns
+-- false if the UI is quitting.
+function ui.wait(m)
+  ui.flush()
+  while running and isOpen(m) do
+    local e=table.pack(event.pull(message and math.max(0.05,messageUntil-computer.uptime()) or math.huge))
+    if e[1] then guarded(e) end
+    if message and computer.uptime()>=messageUntil then message=nil;footerDirty=true end
+    if running then ui.flush() end
+  end
+  return running
+end
+-- Hand the whole screen to another full-screen program (fn) and take it back
+-- afterwards. The UI registers no listeners and pulls no events while fn
+-- runs; events fn consumes are gone, so the header is re-read and every
+-- screen repainted on return. Returns fn's results, or nil,err if it threw.
+function ui.suspend(fn,...)
+  for k=#modals,1,-1 do modals[k]=nil end
+  gpu.setForeground(termFg);gpu.setBackground(termBg);gpu.fill(1,1,W,H," ")
+  pcall(function() require("term").setCursor(1,1) end)
+  local r=table.pack(xpcall(fn,debug.traceback,...))
+  pcall(function() require("term").setCursorBlink(false) end)
+  W,H=gpu.getResolution();repaintAll=true
+  if ui.statusSource then statusAt=computer.uptime();status=ui.statusSource() end
+  if not r[1] then
+    pcall(function() local f=io.open("/tmp/mes_ui.log","a");f:write(r[2],"\n");f:close() end)
+    return nil,(tostring(r[2]):match("^[^\n]*"):gsub("^[^:]+:%d+: ",""))
+  end
+  return table.unpack(r,2,r.n)
+end
 
 function ui.run(opts)
   opts=opts or {}
@@ -459,7 +526,7 @@ function ui.run(opts)
   if gpu.getDepth()==1 then
     for k in pairs(P) do P[k]=0xFFFFFF end;P.bg,P.bar,P.box,P.selFg=0,0,0,0
   end
-  local fg,bg=gpu.getForeground(),gpu.getBackground()
+  local fg,bg=gpu.getForeground(),gpu.getBackground();termFg,termBg=fg,bg
   ui.statusSource=opts.status or function()
     local ok,lg=pcall(require,"logistics");if not ok then return "" end
     local idle,total=0,0;for _,d in ipairs(lg.drones()) do total=total+1;if d.state=="idle" then idle=idle+1 end end
