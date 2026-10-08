@@ -3,7 +3,7 @@
 -- a crafting table with an arrow to the product.
 local ui=require("mes_ui.core")
 local S={hints="arrows move · Enter edit cell · S save · ⌫ back"}
-local function mes() return require("mes") end
+local function recipes() return require("recipes") end
 local GRID={1,2,3,10,11,12,19,20,21}
 
 local function stackOf(id,qty,label) local i=ui.item(id);return {name=i.name,damage=i.damage,size=qty,label=label} end
@@ -138,7 +138,7 @@ function S:edit(slot)
   if not (self.kind=="crafting" and role=="input") then rows[#rows+1]={text="Quantity… (now "..(c.size or 1)..")",value="qty"} end
   rows[#rows+1]={text="Replace item…",value="put"}
   if role=="input" then
-    for _,f in ipairs(ui.try(mes().oreFamilies,ui.id(c)) or {}) do rows[#rows+1]={text="Accept any #"..f..(self.ore[slot]==f and "  (on)" or ""),value="ore:"..f} end
+    for _,f in ipairs(ui.try(recipes().oreFamilies,ui.id(c)) or {}) do rows[#rows+1]={text="Accept any #"..f..(self.ore[slot]==f and "  (on)" or ""),value="ore:"..f} end
     if self.ore[slot] then rows[#rows+1]={text="Exact item only",value="exact"} end
   end
   rows[#rows+1]={text="Clear slot",value="clear",fg=ui.P.bad}
@@ -151,9 +151,9 @@ function S:edit(slot)
   end,{nofilter=true})
 end
 function S:save()
-  local d=ui.try(mes().recipeFromSlots,self.kind,self.cells,self.size,self.type);if not d then return end
+  local d=ui.try(recipes().recipeFromSlots,self.kind,self.cells,self.size,self.type);if not d then return end
   for _,x in ipairs(d.inputs) do if self.ore[x.slot] then x.ore=self.ore[x.slot] end end
-  local ok,why=mes().saveRecipe(d)
+  local ok,why=recipes().save(d)
   if ok then ui.ok("Saved: "..self:summary());ui.pop()
   elseif why=="duplicate" then ui.notify("That recipe already exists; nothing added")
   else ui.fail(tostring(why)) end
@@ -163,7 +163,7 @@ function S:key(char,code)
   if (char==68 or char==100) and self.readonly then
     if self.d.source=="db" then ui.fail("recipes from the database can't be removed here");return true end
     ui.confirm("Remove recipe","Remove this "..(self.d.source or "").." recipe?",function()
-      if ui.try(mes().removeRecipe,self.item,self.index) then ui.ok("Removed");ui.pop() end end)
+      if ui.try(recipes().remove,self.item,self.index) then ui.ok("Removed");ui.pop() end end)
     return true
   end
   if code==ui.keys.back and self.dirty and not self.readonly then

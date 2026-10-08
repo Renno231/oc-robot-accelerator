@@ -2,6 +2,7 @@
 local ui=require("mes_ui.core");local wh=require("warehouse")
 local S={filterable=true,hints="Enter import or show · type to search items"}
 local function mes() return require("mes") end
+local function recipes() return require("recipes") end
 
 function S:open()
   local a=ui.area();self.rows={}
@@ -26,7 +27,7 @@ function S:activate(r)
   if not r then return end
   if r.import then return self:import() end
   if r.item then
-    local list=ui.try(mes().recipes,r.item) or {}
+    local list=ui.try(recipes().list,r.item) or {}
     if #list==0 then ui.notify("no recipes for "..ui.label(r.item));return end
     local rows={}
     for k,x in ipairs(list) do
@@ -42,7 +43,7 @@ end
 -- Source (transposer side or a drone-read storage), kind, type, then edit.
 function S:import()
   local rows={}
-  for _,t in ipairs(ui.try(mes().transposerInventories) or {}) do
+  for _,t in ipairs(ui.try(recipes().transposerInventories) or {}) do
     rows[#rows+1]={text="Transposer "..t.address:sub(1,8).."… "..ui.fit(ui.sides[t.side],6)..t.size.." slots, "..t.used.." used",value={transposer=t.address,side=t.side}}
   end
   rows[#rows+1]={text="A mapped storage (a drone reads it)…",value={storage=true},fg=ui.P.accent}
@@ -50,7 +51,7 @@ function S:import()
     if src.storage then
       require("mes_ui.flows").pickStorage("Import · read which storage?",{},function(s) self:readStorage(s) end)
     else
-      local slots,size=ui.try(mes().readSlots,src);if slots then self:kind(slots,size) end
+      local slots,size=ui.try(recipes().readSlots,src);if slots then self:kind(slots,size) end
     end
   end,{nofilter=true})
 end
@@ -65,7 +66,7 @@ function S:signal(name,id,state)
     self.waiting=nil
     local s=require("logistics").status(id);local step=s and s.steps and s.steps[1]
     if not step or not step.listing then ui.fail("could not read "..w.storage..": "..tostring(s and (s.reason or s.state)));return end
-    local slots,size=ui.try(mes().slotsFromListing,step.listing,step.size);if slots then self:kind(slots,size) end
+    local slots,size=ui.try(recipes().slotsFromListing,step.listing,step.size);if slots then self:kind(slots,size) end
   end
 end
 function S:kind(slots,size)
@@ -75,11 +76,11 @@ function S:kind(slots,size)
     {text="Processing: inputs first, product in the last 4 slots",value="processing"},
     {text="Crafting: 3×3 in the left columns, product in slot 14",value="crafting"}},function(kind)
     if kind=="crafting" then
-      local d=ui.try(mes().recipeFromSlots,"crafting",slots,size);if d then ui.push("mes_ui.recipe_edit",{draft=d,size=size,slots=slots}) end
+      local d=ui.try(recipes().recipeFromSlots,"crafting",slots,size);if d then ui.push("mes_ui.recipe_edit",{draft=d,size=size,slots=slots}) end
     else
       local rows={};for n,def in pairs(mes().types()) do rows[#rows+1]={text=ui.fit(n,14).." in→"..table.concat(def.inputs,","),value=n} end
       rows[#rows+1]={text="+ New machine type…",value=false,fg=ui.P.accent}
-      local function go(t) local d=ui.try(mes().recipeFromSlots,"processing",slots,size,t);if d then ui.push("mes_ui.recipe_edit",{draft=d,size=size,slots=slots}) end end
+      local function go(t) local d=ui.try(recipes().recipeFromSlots,"processing",slots,size,t);if d then ui.push("mes_ui.recipe_edit",{draft=d,size=size,slots=slots}) end end
       ui.pick("Import · which machine type makes it?",rows,function(t)
         if t then go(t) else require("mes_ui.flows").editType(nil,nil,go) end
       end)
