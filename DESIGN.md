@@ -359,6 +359,19 @@ receipts, then continues.
 **Stockkeeper.** The user's stockkeeper rules (stock conditions linked to saved plans) submit MES
 requests.
 
+**Integration with the crafting system.** The user's system keeps working standalone (one robot,
+transposer storage); the MES is a second mode of the same libraries, chosen by the controller's
+configuration:
+- Stock source: `craft_plans.inventory` reads the warehouse catalogue on an MES controller, so
+  planning in `craft.lua`, `stockkeeper` checks and `count` see warehouse stock.
+- Execution: `craft_plans.run` / `craft_kits.run` either run directly on one robot (today) or
+  submit an MES request; `stockkeeper`, `craftplan`, `craftkit` and `craft.lua` use the MES through
+  them without rewrites.
+- UIs: `mes_ui` is the controller UI and opens the user's `craft_management_ui` for plans, kits,
+  tools and stockkeeper rather than duplicating them. `inv.lua` stays the single-storage browser;
+  on an MES controller the Stock tab covers it.
+- `cproc` is unchanged; on an MES station it serves its buffer side and receives inputs by drone.
+
 **Hardware.** The controller is a tier-3 computer with a tier-3 screen; UI designed at 160x50.
 
 ## Agnostic means compatible by construction
