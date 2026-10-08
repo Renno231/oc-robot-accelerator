@@ -2,7 +2,8 @@
 -- and storages. Enter on any row edits it; "+" rows start a picker flow.
 local ui=require("mes_ui.core");local map=require("map");local wh=require("warehouse")
 local F=require("mes_ui.flows")
-local S={hints="Enter edit · + rows add · D remove",filterable=false}
+local S={hints="Enter edit · + rows add · D remove · R refresh · H help",filterable=false,
+  help={{"Enter","edit the selected row; on a + row, add one"},{"D","remove the selected machine, crafter, storage or type"}}}
 local function mes() return require("mes") end
 
 function S:open()
@@ -106,7 +107,7 @@ function S:activate(r)
   end
 end
 function S:key(char,code)
-  if char==68 or char==100 then -- D/d removes the selected thing
+  if code==ui.keys.d then -- D removes the selected thing
     local r=self.rows[self.list.cur]
     if r and (r.kind=="machine" or r.kind=="crafter" or r.kind=="storage" or r.kind=="type") then
       if r.kind=="type" then

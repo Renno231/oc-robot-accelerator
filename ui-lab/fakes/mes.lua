@@ -27,7 +27,55 @@ function M.search(text,limit)
 end
 local function have(id) local n,d=id:match("^([^:]+:[^:]+):(%d+)$");return wh.count(n and {name=n,damage=tonumber(d)} or {name=id,damage=0}) end
 local function inp(id,n) return {item=id,need=n,have=have(id)} end
+-- Planner choices, in craftingv4_4's order (recipe, stock policy, then each
+-- slot's ingredient, then the ingredients' own nodes), with its yield_data.
+local function stock()
+  -- Minimal InventoryCache: what select_oredict's wildcard expansion reads.
+  local slots={};for _,e in ipairs(wh.totals()) do slots[#slots+1]=e.item end
+  return {countItemByName=function(_,n)
+      local base=n:gsub(":%*%s*$","");local at,total={},0
+      for k,i in ipairs(slots) do if i.name==base then at[#at+1]=k;total=total+wh.count(i) end end
+      return total,at
+    end,
+    getItemInSlot=function(_,k) local i=slots[k];return {name=i.name,damage=i.damage,size=wh.count(i)} end}
+end
+local recipes={
+  ["minecraft:torch"]={{[2]="minecraft:coal",[5]="minecraft:stick",qty=4},{[2]="minecraft:coal:1",[5]="minecraft:stick",qty=4}},
+  ["minecraft:stick"]={{[2]="ore:plankWood",[5]="ore:plankWood",qty=4}},
+  ["minecraft:planks"]={{[5]="ore:logWood",qty=4}},
+  ["minecraft:coal:1"]={{[1]="ore:logWood,1",isProcessing=true,machineType="furnace",qty=1}},
+  ["minecraft:brick_block"]={{[1]="minecraft:brick",[2]="minecraft:brick",[4]="minecraft:brick",[5]="minecraft:brick",qty=1}},
+  ["minecraft:brick"]={{[1]="minecraft:clay_ball,1",isProcessing=true,machineType="furnace",qty=1}},
+}
+local ore={["ore:plankWood"]={"minecraft:planks","minecraft:planks:1","minecraft:planks:2","minecraft:planks:3","minecraft:planks:4","minecraft:planks:5",wildcards={}},
+  ["ore:logWood"]={"minecraft:log","minecraft:log:1",wildcards={"minecraft:log2:*"}}}
+local function choose(item,opts)
+  local inv,seen,todo,picked=stock(),{},{item},{}
+  while #todo>0 do
+    local name=table.remove(todo)
+    if not seen[name] and recipes[name] then seen[name]=true
+      local chosen=opts.selectChoice({"select_recipe",name,recipes[name],inv})
+      if chosen==nil then chosen=recipes[name][1] end
+      picked[name]=chosen
+      if chosen then
+        opts.selectChoice({"skip_inventory_check",name,chosen})
+        local slots={};for k in pairs(chosen) do if type(k)=="number" then slots[#slots+1]=k end end;table.sort(slots)
+        for _,k in ipairs(slots) do
+          local original=chosen[k]:match("^(.-),[%d%.]+$") or chosen[k]
+          local candidates=ore[original] or {original,wildcards={}}
+          local specific=opts.selectChoice({"select_oredict",original,candidates,chosen,k,inv}) or candidates[1]
+          todo[#todo+1]=specific
+        end
+      end
+    end
+  end
+  return picked
+end
 function M.plan(item,qty,opts)
+  opts=opts or {}
+  if opts.selectChoice then
+    local ok,err=pcall(choose,item,opts);if not ok then return nil,tostring(err) end
+  end
   local p={item=item,qty=qty,tasks={},missing={}}
   if item=="minecraft:torch" then
     local n=math.ceil(qty/4)

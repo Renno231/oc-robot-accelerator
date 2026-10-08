@@ -2,7 +2,8 @@
 -- options bound to each other by arrow keys; crafting recipes are drawn as
 -- a crafting table with an arrow to the product.
 local ui=require("mes_ui.core")
-local S={hints="arrows move · Enter edit cell · S save · ⌫ back"}
+local S={hints="arrows move · Enter edit cell · S save · ⌫ back · H help",
+  help={{"arrows","move between slots"},{"Enter","edit the slot (import only)"},{"S","save the recipe (import only)"},{"D","remove this recipe (when viewing)"}}}
 local function recipes() return require("recipes") end
 local GRID={1,2,3,10,11,12,19,20,21}
 
@@ -159,8 +160,12 @@ function S:save()
   else ui.fail(tostring(why)) end
 end
 function S:key(char,code)
-  if (char==83 or char==115) and not self.readonly then self:save();return true end
-  if (char==68 or char==100) and self.readonly then
+  local keys=ui.keys
+  if code==keys.s and not self.readonly then self:save();return true end
+  if code==keys.q and self.dirty and not self.readonly then
+    ui.confirm("Discard","Quit and discard your edits to this recipe?",ui.quit);return true
+  end
+  if code==keys.d and self.readonly then
     if self.d.source=="db" then ui.fail("recipes from the database can't be removed here");return true end
     ui.confirm("Remove recipe","Remove this "..(self.d.source or "").." recipe?",function()
       if ui.try(recipes().remove,self.item,self.index) then ui.ok("Removed");ui.pop() end end)

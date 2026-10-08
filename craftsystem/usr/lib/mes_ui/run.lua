@@ -1,7 +1,7 @@
 -- Run view: each stage's live state, the drones, and where things are if it
 -- fails. Reads mes.status only when a mes event for this run arrives.
 local ui=require("mes_ui.core")
-local S={hints="⌫ back (the run continues)"}
+local S={hints="⌫ back (the run continues) · R refresh · H help",help={{"⌫","back; the run continues"}}}
 local function mes() return require("mes") end
 local look={waiting={"◌","dim"},fetching={"⇣","accent"},crafting={"⚙","accent"},processing={"♨","warn"},storing={"⇡","accent"},done={"✓","good"},failed={"✗","bad"}}
 

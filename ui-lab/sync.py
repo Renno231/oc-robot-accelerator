@@ -17,16 +17,17 @@ from pathlib import Path
 # header, refreshed every second (raw: garbage not yet collected counts).
 LAUNCHER = """local args={...}
 local computer=require("computer");local event=require("event")
-local opts={tab=args[1]}
+local opts={tab=args[1]};local timer
 if args[2]=="mem" then
   local low=math.huge
   opts.status=function()
     local f=computer.freeMemory();low=math.min(low,f)
     return string.format("free %dk (low %dk) of %dk",f//1024,low//1024,computer.totalMemory()//1024)
   end
-  event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
+  timer=event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
 end
 require("mes_ui").run(opts)
+if timer then event.cancel(timer) end
 """
 
 lab = Path(__file__).resolve().parent
@@ -46,6 +47,12 @@ if not (disk / "init.lua").exists():
 shutil.rmtree(lib / "mes_ui", ignore_errors=True)
 shutil.copytree(root / "craftsystem" / "usr" / "lib" / "mes_ui", lib / "mes_ui")
 shutil.copy(root / "fixtures" / "qmenu.lua", disk / "lib" / "qmenu.lua")
+# The crafting system's own libraries run headless (management screens,
+# plans, kits, tools, stockkeeper): the real ones, except the MES library
+# itself, which the fakes below replace with the T11 contract fake.
+for f in (root / "craftsystem" / "usr" / "lib").glob("*.lua"):
+    if f.name != "mes.lua":
+        shutil.copy(f, lib / f.name)
 for f in (lab / "fakes").glob("*.lua"):
     shutil.copy(f, lib / f.name)
 (disk / "usr" / "bin").mkdir(parents=True, exist_ok=True)
