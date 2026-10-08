@@ -340,8 +340,16 @@ types (multi-input, e.g. copper + tin) take a load only when their inputs are em
 recipe. Output never gates admission; it is collected continuously and attributed to loads FIFO by
 item. Fuel, batch and timing come from the type; output is read when due, not blindly polled.
 
-**Hand-off.** An output whose consuming step already has its robot or machine goes there directly
-(furnace output to `cpu1` buffer); otherwise it goes to stock, reserved for its request.
+**Hand-off and intermediates.** An output whose consuming step already has its robot or machine
+(with room) goes there directly (furnace output to `cpu1` buffer). Otherwise it waits in an
+**intermediate storage**: a warehouse storage the user marks `intermediate`. Intermediate storages
+are not stock (hidden from the Stock tab, fetch, stockkeeper and planning); the MES records which
+request owns which items in them (several requests may share one) and returns leftovers to stock
+when a request ends, fails or is cancelled. Intermediates never go into ordinary stock. If no
+intermediate space is available, the request **stalls** rather than failing: other steps continue,
+the waiting step reports "intermediate space full", the MES pushes `("mes","stalled",request,
+reason)` and the UI alerts on every tab; it resumes by itself when space frees. Planning warns when a
+plan needs more intermediate space than exists.
 
 **Live state.** Every crafter and machine has a state (idle, busy with which request/step/loads,
 unknown). Unknown robots stay unavailable until confirmed idle.
