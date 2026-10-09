@@ -10,7 +10,7 @@ MOCKS = r'''
 os.sleep = function() end
 checkArg = function(_, value, expected) assert(type(value) == expected) end
 files, directories, listing, handles, messages = {}, {}, {}, {}, {}
-failOpen, failWrite, failClose = {}, {}, {}
+failOpen, failWrite, failClose, failRename = {}, {}, {}, {}
 print = function(...)
     local args = {...}
     for i, v in ipairs(args) do args[i] = tostring(v) end
@@ -21,6 +21,12 @@ function filesystem.concat(a, b) return a:gsub("/+$", "").."/"..b:gsub("^/+", ""
 function filesystem.exists(p) return files[p] ~= nil or directories[p] == true end
 function filesystem.isDirectory(p) return directories[p] == true end
 function filesystem.makeDirectory(p) directories[p] = true return true end
+function filesystem.rename(old, new)
+    if failRename[new] then return nil, 'injected rename failure' end
+    if files[old] == nil then return nil, 'missing rename source' end
+    files[new] = files[old]; files[old] = nil; return true
+end
+function filesystem.remove(path) files[path] = nil; return true end
 function filesystem.list(p)
     local i = 0
     return function() i = i + 1 return (listing[p] or {})[i] end
@@ -46,7 +52,8 @@ package.preload.serialization = function()
     }
 end
 function mockOpen(path, mode)
-    if failOpen[path] then return nil, "injected open failure" end
+    local durable = path:match('^(.*)%.tmp%.%d+$') or path
+    if failOpen[path] or failOpen[durable] then return nil, "injected open failure" end
     local writing = mode and mode:match("w")
     if not writing and files[path] == nil then return nil, "missing file" end
     if writing then files[path] = "" end
@@ -68,13 +75,13 @@ function mockOpen(path, mode)
         end
     end
     function h:write(data)
-        if failWrite[path] then return nil, "injected write failure" end
+        if failWrite[path] or failWrite[durable] then return nil, "injected write failure" end
         files[path] = files[path]..data
         return self
     end
     function h:close()
         self.closed = true
-        if failClose[path] then return nil, "injected close failure" end
+        if failClose[path] or failClose[durable] then return nil, "injected close failure" end
         return true
     end
     return h

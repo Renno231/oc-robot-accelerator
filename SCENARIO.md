@@ -100,13 +100,13 @@ An empty creative case is the one exception to the "no other computers" rule, an
 
 Schema 4 uses either `robot`, or `drones` with an optional `computer` (never a robot
 and computer together). A computer may have zero drones; without a computer,
-`drones` must contain 1–4 entries. Robot scenarios keep the schema-3
+`drones` must contain 1–16 entries (or may be empty when `robots` are present). Robot scenarios keep the schema-3
 hardware, program, defaults and execution semantics. Drone scenarios omit `program`:
 each drone boots its own EEPROM directly, without OpenOS or a disk.
 Drone/computer scenarios accept `baseline` (the default) and `coordinated`;
 `paced` is not accepted for these scenarios.
 
-`drones` contains 1–4 entries:
+`drones` contains 1–16 entries:
 
 ```json
 "drones": [{
@@ -160,7 +160,8 @@ Container expectations must reference a declared container. Listed expected slot
 match item ID and count exactly; count 0 means empty, with or without an item ID.
 A positive count requires an item ID. Unlisted slots are unconstrained.
 
-Drone expectation indices are **zero-based**; inventory slots are **one-based**.
+`expect.drones` accepts up to 16 rows. Drone expectation indices are **zero-based**
+and must reference a declared drone; inventory slots are **one-based**.
 `blockPosition` and `inventory` are optional checks. Drone scenarios may also use
 `expect.blocks`, but not robot-level `expect.position` or `expect.inventory`.
 Failures identify the container/drone and the failing slot or position.

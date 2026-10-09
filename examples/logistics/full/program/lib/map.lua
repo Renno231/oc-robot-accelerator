@@ -7,8 +7,18 @@ local clearModel
 local cachedX,cachedY,cachedZ,cachedOffset
 local clear={}
 local minX,minY,minZ,maxX,maxY,maxZ,sizeY,sizeZ=0,0,0,0,0,0,1,1
-local function edited() revision=revision+1;clearHalf=nil end
+local namesCache,storageNamesCache
+local function edited() revision=revision+1;clearHalf=nil;namesCache=nil;storageNamesCache=nil end
 function M.revision() return revision end
+-- SHARED/read-only name indexes, invalidated only by map edits.
+function M.names()
+  if not namesCache then namesCache={};for name in pairs(nodes) do namesCache[#namesCache+1]=name end;table.sort(namesCache) end
+  return namesCache
+end
+function M.storageNames()
+  if not storageNamesCache then storageNamesCache={};for name in pairs(storages) do storageNamesCache[#storageNamesCache+1]=name end;table.sort(storageNamesCache) end
+  return storageNamesCache
+end
 -- Sparse numeric keys, with strides fixed for this map revision. Unlike a
 -- global bit-pack this supports negative/world coordinates without aliases.
 function M.blockKey(x,y,z)
@@ -157,9 +167,10 @@ function M.name(storage,node,side)
   end
   assert(count<5,"node already has five storages")
   storages[storage]={node=node,side=side};nodes[node].faces[side]=true
+  edited()
   return M.storage(storage)
 end
-function M.unname(storage) local existed=storages[storage]~=nil;storages[storage]=nil;return existed end
+function M.unname(storage) local existed=storages[storage]~=nil;storages[storage]=nil;edited();return existed end
 function M.storage(storage) return storages[storage] and copy(storages[storage]) end
 function M.storages() return copy(storages) end
 function M.node(name) return nodes[name] and copy(nodes[name]) end

@@ -164,7 +164,7 @@ class MesFixtureTests(unittest.TestCase):
                     path = generator.build(Path(tmp), case, mode)
                     value = runner_scenario.load(path).normalized
                     self.assertEqual(67, len(value['containers']))
-                    self.assertEqual(2, len(value['drones']))
+                    self.assertEqual(6, len(value['drones']))
                     self.assertEqual(1, len(value['robots']))
                     self.assertTrue(value['execution']['infiniteEnergy'])
                     self.assertEqual(mode, value['execution']['mode'])

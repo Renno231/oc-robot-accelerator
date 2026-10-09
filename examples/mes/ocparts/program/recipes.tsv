@@ -1,0 +1,6 @@
+minecraft:iron_nugget	{qty=9,[1]='minecraft:iron_ingot'}
+minecraft:gold_nugget	{qty=9,[1]='minecraft:gold_ingot'}
+opencomputers:material:2	{qty=8,[1]='minecraft:gold_ingot',[2]='minecraft:clay_ball',[3]='minecraft:dye:2'}
+opencomputers:material:6	{qty=8,[1]='minecraft:iron_ingot',[2]='minecraft:iron_ingot',[3]='minecraft:iron_ingot',[4]='minecraft:gold_nugget',[5]='minecraft:paper',[6]='minecraft:gold_nugget',[8]='minecraft:redstone'}
+opencomputers:material:7	{qty=8,[1]='minecraft:iron_nugget',[2]='minecraft:iron_nugget',[3]='minecraft:iron_nugget',[4]='minecraft:redstone',[5]='opencomputers:material:6',[6]='minecraft:redstone',[7]='minecraft:iron_nugget',[8]='minecraft:iron_nugget',[9]='minecraft:iron_nugget'}
+opencomputers:component:6	{qty=1,[1]='opencomputers:material:7',[2]='minecraft:iron_nugget',[3]='opencomputers:material:7',[5]='opencomputers:material:4'}

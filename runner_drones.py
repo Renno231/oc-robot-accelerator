@@ -2,6 +2,8 @@
 import math
 from copy import deepcopy
 
+MAX_DRONES = 16
+
 
 def eeprom_inputs(root, drones, check):
     from pathlib import Path
@@ -61,7 +63,7 @@ def completed_result(value, scenario_id, count, computer_present=False, second_p
 def observation(record):
     from runner_observations import _position
     drones = record['drones']
-    if not isinstance(drones, list) or not (0 if 'computer' in record or 'robots' in record else 1) <= len(drones) <= 4:
+    if not isinstance(drones, list) or not (0 if 'computer' in record or 'robots' in record else 1) <= len(drones) <= MAX_DRONES:
         raise ValueError('invalid drone observation count')
     for i, d in enumerate(drones):
         if not isinstance(d, dict) or type(d.get('index')) is not int or d['index'] != i:
@@ -143,7 +145,7 @@ def normalize(value):
     drones = []
     if drone_mode:
         del result['robot']; del result['program']
-        for d in _array(value.get('drones', []), 4):
+        for d in _array(value.get('drones', []), MAX_DRONES):
             _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy', 'inventory'],
                     ['position', 'hardware', 'eeprom'])
             h = _object(d['hardware'], ['tier', 'cpu', 'memory', 'cards', 'upgrades'], ['tier', 'cpu', 'memory'])
@@ -167,7 +169,7 @@ def normalize(value):
                     raise ValueError('drone energy must be finite and positive')
                 entry['energy'] = energy
             drones.append(entry)
-        if not drones and 'computer' not in value and 'robots' not in value: raise ValueError('drones must contain 1..4 entries')
+        if not drones and 'computer' not in value and 'robots' not in value: raise ValueError('drones must contain 1..16 entries')
         result['drones'] = drones
     if 'robots' in value:
         robots = _array(value['robots'], 4)
@@ -234,7 +236,7 @@ def normalize(value):
     if drone_mode:
         result['expect'].pop('inventory', None)
         result['expect']['drones'] = []
-        for d in _array(extended.get('drones', []), 4):
+        for d in _array(extended.get('drones', []), MAX_DRONES):
             _object(d, ['index', 'blockPosition', 'inventory', 'minEnergy', 'running'], ['index'])
             entry = {'index': _integer(d['index'], 0, len(drones) - 1)}
             if 'blockPosition' in d: entry['blockPosition'] = _inside(d['blockPosition'], region)

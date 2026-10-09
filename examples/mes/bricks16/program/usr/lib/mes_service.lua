@@ -1,0 +1,143 @@
+-- Long-lived plumbing singleton (Lua's package.loaded owns its lifetime).
+-- Callbacks enqueue; only the guarded pump invokes update/advance or reconnect.
+local M={}
+local state=require('mes_state')
+local event=require('event')
+local computer=require('computer')
+local world=state.world()
+local queue,head={},1
+local installed,pumping=false,false
+local history,current,nextRun={}, {status='idle',stages={},active={}},0
+local wh,lg,client,prepareRobot
+local watched={}
+local function enqueue(id,what,data) queue[#queue+1]={id=id,what=what,data=data} end
+M.enqueue=enqueue
+function M.guarded() return pumping end
+local function onRobot(token,what,data)
+  local d=state.copy(data or {});d.token=token;enqueue(nil,what,d)
+end
+local function observeJobs()
+  for id in pairs(watched) do
+    local r=lg.status(id)
+    if r then
+      enqueue(nil,'job',{id=id,receipt=r})
+      local done=r.state=='done' or r.state=='failed' or r.state=='partial'
+      if done and wh.settled(id)==true then enqueue(nil,'settled',{id=id});watched[id]=nil end
+    else enqueue(nil,'job_missing',{id=id,reason='Missing logistics job '..tostring(id)}) end
+  end
+end
+local function dispatch(a,run)
+  local ok,ids,err,partial
+  if a.kind=='robot_inspect' then
+    ok,ids,err=pcall(client.inspect,a.token,a.address,nil,a.options or M.clientOptions)
+    if not ok or not ids then onRobot(a.token,'robot_status',{address=a.address,unknown=true,reason=not ok and tostring(ids) or tostring(err)}) end
+    return ok and ids
+  end
+  local options=run.opts.logistics
+  if a.kind=='robot_begin' then
+    ok,ids,err=pcall(client.begin,a.token,a.address,a.plan,a.jobId,run.opts.client)
+    enqueue(run.id,'action_submitted',{token=a.token,ids={},error=not ok and tostring(ids) or not ids and tostring(err) or nil})
+    return ok and ids,not ok and tostring(ids) or not ids and tostring(err) or nil
+  elseif a.kind=='fetchMany' then ok,ids,err,partial=pcall(wh.fetchMany,a.requests,a.endpoint,options)
+  elseif a.kind=='storeMany' then local o=state.copy(options or {});if not a.autoStore then o.requests=a.requests end;ok,ids,err,partial=pcall(wh.storeMany,a.endpoint,o)
+  elseif a.kind=='scan' then ok,ids,err,partial=pcall(wh.scan,a.storage)
+  elseif a.kind=='scanRole' then
+    ok,ids,err,partial=pcall(wh.scanRole,a.storage,a.slots)
+    if ok and ids then ids={ids} end;if ok and partial and type(partial)~='table' then partial={partial} end
+  elseif a.kind=='scanRoles' then ok,ids,err,partial=pcall(wh.scanRoles,a.requests)
+  else ok=false;ids='Unknown MES action '..tostring(a.kind) end
+  local submitted=ok and (ids or partial) or {}
+  if type(submitted)~='table' then submitted={} end
+  if ok and ids and a.kind=='scan' and #submitted==0 then ids=nil;err='Warehouse scan submitted no jobs' end
+  for _,id in ipairs(submitted) do watched[id]=true end
+  enqueue(run.id,'action_submitted',{token=a.token,ids=submitted,error=not ok and tostring(ids) or not ids and tostring(err) or nil})
+  return ok and ids,not ok and tostring(ids) or not ids and tostring(err) or nil
+end
+function M.pump()
+  if pumping or not installed then return end
+  pumping=true
+  local ok,err=xpcall(function()
+    while head<=#queue do
+      local f=queue[head];head=head+1
+      if f.what=='tick' then
+        -- The only permitted blocking call lives below client.tick: api.connect.
+        -- A nested signal callback may enqueue but cannot re-enter this pump.
+        client.tick(f.data.now)
+        f.data.now=computer.uptime();observeJobs()
+      elseif f.what=='observe_jobs' then observeJobs()
+      end
+      -- The public API admits one run at a time. Historical ledgers must not
+      -- make every service tick progressively more expensive.
+      if current.status=='running' and (not f.id or current.id==f.id) then state.update(current,f.what,f.data)
+      else state.updateWorld(world,f.what,f.data) end
+      -- Drain nested facts together before decisions, preserving first-known
+      -- failures and preventing any policy execution in transport callbacks.
+      if head>#queue then
+        state.advanceWorld(world,dispatch,M.clientOptions)
+        if head>#queue and current.status=='running' then state.update(current,'tick',{now=computer.uptime()});state.advance(current) end
+      end
+    end
+    queue={};head=1
+  end,debug.traceback)
+  pumping=false
+  if not ok then error(err,0) end
+end
+function M.start(opts,prepare)
+  opts=opts or {};if prepare then prepareRobot=prepare end
+  if installed then return true end
+  -- First imports occur here, never in a transient stage/client.
+  lg=require('logistics');require('map');wh=require('warehouse');client=require('craft_client')
+  M.clientOptions=state.copy(opts.client or {})
+  installed=true;pumping=true
+  local ok,rows=pcall(client.install,onRobot,M.clientOptions)
+  if ok then for _,row in ipairs(rows or {}) do world.robots[row.address]=world.robots[row.address] or {state='unknown'} end end
+  pumping=false
+  if not ok then installed=false;return nil,tostring(rows) end
+  local function signal() enqueue(nil,'observe_jobs',{});M.pump() end
+  event.listen('logistics',signal);event.listen('warehouse',signal)
+  M.timer=event.timer(opts.serviceSeconds or 0.1,function() enqueue(nil,'tick',{now=computer.uptime()});M.pump() end,math.huge)
+  M.pump();return true
+end
+function M.reconcile(cfg,opts)
+  local addresses={};for _,c in pairs(cfg.crafters or {}) do addresses[c.robot]=true end
+  enqueue(nil,'reconcile',{addresses=addresses,opts=opts.client});M.pump()
+end
+local function crafters(cfg)
+  local out=state.copy(cfg.crafters or {});local groups=wh.groups('crafter')
+  for name,c in pairs(out) do c.buffer=(groups[name] and groups[name].roles.buffer) or c.buffer end;return out
+end
+local function bufferIdentity(storage) local member=wh.members()[storage];return member and member.inventory or storage end
+function M.submit(plan,cfg,opts)
+  if current.status=='running' then return nil,'busy' end
+  nextRun=nextRun+1
+  local ports={dispatch=dispatch,emit=function(...) event.push('mes',...) end,contents=wh.contents,roleContents=wh.roleContents,roleFits=wh.roleFits,stackSize=wh.stackSize,
+    crafters=function() return crafters(cfg) end,groups=wh.groups,bufferIdentity=bufferIdentity,prepareRobot=prepareRobot}
+  local run=state.new(nextRun,plan,cfg,opts,world,ports,computer.uptime());history[nextRun]=run;current=run
+  enqueue(run.id,'advance',{});M.pump();return run.id
+end
+local internal={plan=true,cfg=true,opts=true,world=true,ports=true,now=true,actions=true,jobs=true,settled=true,robotFacts=true,sequence=true,groups=true,toolReservations=true,fuelAvailable=true,emptyBuffers=true,advancing=true,onStage=true,failureFacts=true}
+local function snapshot(run)
+  if not run then return end
+  local o={};for k,v in pairs(run) do if k~='stages' and not internal[k] then o[k]=state.copy(v) end end;o.stages={}
+  for i,s in ipairs(run.stages) do o.stages[i]=state.stageSnapshot(s) end;return o
+end
+function M.status(id) if id~=nil then return snapshot(history[id]) end;return snapshot(current) end
+function M.wait(id)
+  local run=history[id];if not run then return nil,'Unknown run' end
+  while run.status=='running' do event.pull(0.2) end
+  return snapshot(run)
+end
+function M.runs()
+  local o={};for id=nextRun,1,-1 do local r=history[id];o[#o+1]={id=id,item=r.item,qty=r.qty,status=r.status,stage=r.stage,active=state.copy(r.active),stages=#r.stages} end;return o
+end
+function M.resources(cfg)
+  local o={crafters={},machines={}}
+  for name,c in pairs(crafters(cfg)) do
+    local r=state.copy(world.robots[c.robot] or {state='unknown'});r.pending=nil;r.robot=c.robot;r.buffer=c.buffer
+    local b=world.buffers[bufferIdentity(c.buffer)];if b and b.state~='idle' then r.state=b.state;r.run=b.run;r.step=b.step;r.bufferOwner=b.owner end;o.crafters[name]=r
+  end
+  for name,g in pairs(wh.groups()) do if g.type~='crafter' then o.machines[name]=state.copy(world.machines[name] or {state='idle',type=g.type,loads={}}) end end;return o
+end
+function M.confirmIdle(address) enqueue(nil,'robot_status',{address=address,busy=false});M.pump() end
+function M.cancel(id,reason) if not history[id] then return nil,'Unknown run' end;enqueue(id,'cancel',{reason=reason});M.pump();return true end
+return M

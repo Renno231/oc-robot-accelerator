@@ -19,7 +19,35 @@ def valid():
                                    'inventory': [{'slot': 1, 'item': 'minecraft:iron_ingot', 'count': 64}]}]}}
 
 
+def fleet(count):
+    value = valid()
+    value['drones'] = [copy.deepcopy(value['drones'][0]) for _ in range(count)]
+    expected = value['expect']['drones'][0]
+    value['expect']['drones'] = [dict(copy.deepcopy(expected), index=i) for i in range(count)]
+    return value
+
+
 class DroneScenarioTests(unittest.TestCase):
+    def test_six_and_sixteen_drones_and_expected_rows(self):
+        for count in (6, 16):
+            with self.subTest(count=count):
+                normalized = scenario.normalize(fleet(count))
+                self.assertEqual(len(normalized['drones']), count)
+                self.assertEqual([d['index'] for d in normalized['expect']['drones']], list(range(count)))
+                self.assertEqual(scenario.normalize(normalized), normalized)
+
+    def test_seventeen_drones_or_expected_rows_rejected(self):
+        for normalized in (False, True):
+            for field in ('drones', 'expectedDrones'):
+                with self.subTest(normalized=normalized, field=field):
+                    value = fleet(16)
+                    if normalized:
+                        value = scenario.normalize(value)
+                    rows = value['drones'] if field == 'drones' else value['expect']['drones']
+                    rows.append(copy.deepcopy(rows[0]))
+                    with self.assertRaises(ValueError):
+                        scenario.normalize(value)
+
     def test_placed_blocks_default_to_baseline_without_changing_plain_robot_default(self):
         v=valid();v.pop('drones');v['robot']={'position':[0,65,0],'hardware':{'tier':3,'cpu':'cpu3','memory':['ram6'],'storage':['hdd3'],'bootDrive':0}}
         v['program']={'directory':'program'};v['expect']={};v.pop('execution',None);v['blocks']=[]
@@ -40,7 +68,7 @@ class DroneScenarioTests(unittest.TestCase):
             self.assertEqual(len(scenario.normalize(v)['drones']), 4)
 
     def test_rejections(self):
-        cases = [(['drones'], []), (['drones'], valid()['drones'] * 5),
+        cases = [(['drones'], []), (['drones'], valid()['drones'] * 17),
                  (['robot'], {}), (['program'], {'directory': 'program'}),
                  (['execution'], {'mode': 'paced'}),
                  (['drones', 0, 'hardware', 'tier'], 3), (['drones', 0, 'hardware', 'tier'], True),
@@ -158,6 +186,18 @@ class DroneScenarioTests(unittest.TestCase):
             record['drones'][0]['energy'] = True
             p.write_text(json.dumps(record) + '\n')
             with self.assertRaises(ValueError): runner_observations.summary(p)
+
+    def test_fleet_observation_bounds(self):
+        from runner_drones import observation
+        for count in (6, 16, 17):
+            record = {'drones': [{'index': i, 'position': [0.5, 65.0, 0.5],
+                                 'blockPosition': [0, 65, 0], 'energy': 5000.0}
+                                for i in range(count)]}
+            with self.subTest(count=count):
+                if count <= 16:
+                    observation(record)
+                else:
+                    with self.assertRaises(ValueError): observation(record)
 
 
 if __name__ == '__main__': unittest.main()

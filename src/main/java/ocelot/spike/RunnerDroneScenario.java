@@ -5,6 +5,7 @@ import java.util.*;
 
 /** Additional normalized v4 fields, isolated from the legacy robot contract. */
 final class RunnerDroneScenario {
+    private static final int MAX_DRONES = 16;
     final JsonArray drones, containers, expectedDrones, expectedContainers;
     final JsonObject computer,secondComputer;
     final JsonArray placedBlocks;
@@ -28,16 +29,16 @@ final class RunnerDroneScenario {
             (root.has("robots")?",robots":"")+(root.has("containerEdits")?",containerEdits":""));
         if(computer!=null && !drone) throw RunnerScenario.bad("computer requires drones array (may be empty)");
         placedBlocks=root.has("blocks")?RunnerScenario.array(root.get("blocks"),128):new JsonArray();
-        drones=drone?RunnerScenario.array(root.get("drones"),4):new JsonArray();
+        drones=drone?RunnerScenario.array(root.get("drones"),MAX_DRONES):new JsonArray();
         robots=root.has("robots")?RunnerScenario.array(root.get("robots"),4):new JsonArray();
         if(root.has("robots") && (!drone || robots.size()==0)) throw RunnerScenario.bad("robots require drone mode and count 1..4");
-        if(drone && drones.size()==0 && computer==null && robots.size()==0) throw RunnerScenario.bad("drones count 1..4");
+        if(drone && drones.size()==0 && computer==null && robots.size()==0) throw RunnerScenario.bad("drones count 1..16");
         containerEdits=root.has("containerEdits")?RunnerScenario.array(root.get("containerEdits"),64):new JsonArray();
         if(root.has("containerEdits") && !drone) throw RunnerScenario.bad("container edits require drone mode");
         containers=RunnerScenario.array(root.get("containers"),128);
         JsonObject expect=RunnerScenario.object(root.get("expect"),(drone?"blocks,containers,drones":"blocks,inventory,position,containers")+(root.has("robots")?",robots":""));
         expectedRobots=root.has("robots")?RunnerScenario.array(expect.get("robots"),4):new JsonArray();
-        expectedDrones=drone?RunnerScenario.array(expect.get("drones"),4):new JsonArray();
+        expectedDrones=drone?RunnerScenario.array(expect.get("drones"),MAX_DRONES):new JsonArray();
         expectedContainers=RunnerScenario.array(expect.get("containers"),128);
     }
     JsonObject common() {
