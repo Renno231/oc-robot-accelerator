@@ -8,6 +8,64 @@ import sys
 from build_machine_comparisons import prepare
 from compare_machine_jobs import read_job
 from supervisor import NO_WINDOW
+T11_TORCH_MES_TRIPS = 24  # Preserved native jobs65-88; see T13-t11-trip-split.json.
+
+
+def acceptance_error(row):
+    """Compare actual MES job trips with the identically split T11 baseline."""
+    if row['state'] != 'passed' or row.get('commandExit', 0) != 0:
+        return 'native scenario failed'
+    if row['case'] == 'torches16' and row['mode'] == 'coordinated':
+        trips = row.get('mesTrips')
+        if type(trips) is not int or trips < 0 or trips >= T11_TORCH_MES_TRIPS:
+            return 'torches16 requires measured MES-run trips below T11\'s 24'
+    if row['case'] == 'ocparts':
+        exit_evidence = row.get('submitterExit')
+        if not isinstance(exit_evidence, dict) or exit_evidence.get('returned') is not True or exit_evidence.get('statusAtReturn') != 'running':
+            return 'ocparts requires a foreground submitter that exited mid-run'
+        calls = row.get('componentCalls')
+        if not isinstance(calls, dict) or calls.get('scope') != 'controller' or type(calls.get('total')) is not int or calls['total'] <= 0:
+            return 'ocparts requires measured controller component calls'
+        intervals = row.get('robotIntervals')
+        if not isinstance(intervals, list) or len(intervals) < 4 or type(row.get('robotOverlap')) is not bool:
+            return 'ocparts requires four answered robot jobs and measured overlap'
+        payloads = row.get('craftPayloads')
+        if not isinstance(payloads, list) or not payloads:
+            return 'ocparts requires measured native craft payload sizes'
+        for payload in payloads:
+            size, limit = payload.get('packetBytes'), payload.get('packetLimit')
+            if type(size) is not int or type(limit) is not int or size <= 0 or limit <= 0 or size > limit:
+                return 'ocparts craft packet exceeds or lacks observed modem limit'
+    return None
+
+
+def summarize_job(state, command_exit, jobs_root, source, case, mode):
+    """Summarize an explicitly inspected job without submitting another run."""
+    row = {'case': case, 'mode': mode, 'jobId': state['jobId'],
+           'fixtureSource': str(source), 'jobsRoot': str(jobs_root),
+           'state': state['state'], 'wallSeconds': state.get('elapsedWallSeconds'),
+           'commandExit': command_exit}
+    try:
+        _, _, evidence = read_job(jobs_root, row['jobId'])
+        result = (evidence or {}).get('warehouse') or (evidence or {}).get('mesProgress') or {}
+        for target, key in [('droneTrips', 'trips'), ('mesTrips', 'mesTrips'),
+                            ('harnessTrips', 'harnessTrips'), ('mesTripWindow', 'mesTripWindow'),
+                            ('droneBusy', 'droneBusy'), ('submitterExit', 'submitterExit'),
+                            ('robotIntervals', 'robotIntervals'), ('robotOverlap', 'robotOverlap')]:
+            row[target] = result.get(key)
+        row['timing'] = result.get('timing') or (evidence or {}).get('mesFetchTimings')
+        row['craftPayloads'] = (evidence or {}).get('craftPayloads', [])
+        row['componentCalls'] = result.get('componentCalls') or (evidence or {}).get('componentCalls')
+        if case == 'torches16':
+            row['t11MesTrips'] = T11_TORCH_MES_TRIPS
+        row['mesStatus'] = result.get('status') or (result.get('mes') or {}).get('status')
+    except (ValueError, OSError, KeyError):
+        pass
+    error = acceptance_error(row)
+    row['accepted'] = error is None
+    if error:
+        row['acceptanceError'] = error
+    return row
 
 
 def communicate(args):
@@ -36,11 +94,11 @@ def run(args):
     for case, mode in cases:
         existing = next((r for r in rows if r['case'] == case and r['mode'] == mode), None)
         if existing:
-            if existing['state'] != 'passed':
+            if acceptance_error(existing) is not None:
                 raise RuntimeError('Failed attempt requires an explicit fresh retry root')
             continue
         communicate(args)
-        source = Path('examples/mes') / case
+        source = getattr(args, 'fixture_root', Path('examples/mes')) / case
         destination = args.root / 'fixtures' / case / mode
         path = destination / 'scenario.json'
         if not path.exists():
@@ -63,32 +121,23 @@ def run(args):
         state = json.loads(stdout.strip().splitlines()[-1])
         if 'jobId' not in state:
             raise RuntimeError('Runner admission failed before job creation: ' + json.dumps(state))
-        row = {'case': case, 'mode': mode, 'jobId': state['jobId'],
-               'jobsRoot': str(args.jobs_root),
-               'state': state['state'], 'wallSeconds': state['elapsedWallSeconds'],
-               'commandExit': process.returncode}
-        try:
-            _, _, evidence = read_job(args.jobs_root, row['jobId'])
-            result = evidence.get('warehouse', {})
-            row['droneTrips'] = result.get('trips')
-            row['mesStatus'] = result.get('status') or result.get('mes', {}).get('status')
-        except (ValueError, OSError, KeyError):
-            pass
+        row = summarize_job(state, process.returncode, args.jobs_root, source, case, mode)
         rows.append(row)
         record.write_text(json.dumps(rows, indent=2) + '\n')
         print(json.dumps(row), flush=True)
         communicate(args)
-        if row['state'] != 'passed':
+        if not row['accepted']:
             raise RuntimeError('MES acceptance failed: ' + str(row))
     return rows
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=Path('.cache/T11-mes'))
+    parser.add_argument('--root', type=Path, default=Path('.cache/T13-mes'))
     parser.add_argument('--installation', type=Path, default=Path('C:/or/drone-install-T11'))
     parser.add_argument('--jobs-root', type=Path, default=Path('C:/or/drone-jobs'))
-    parser.add_argument('--cases', nargs='+', default=['torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch'])
+    parser.add_argument('--fixture-root', type=Path, default=Path('examples/mes'))
+    parser.add_argument('--cases', nargs='+', default=['torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts'])
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--worker')
     parser.add_argument('--task')

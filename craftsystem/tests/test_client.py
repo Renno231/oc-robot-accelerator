@@ -1,207 +1,208 @@
-from test_network import NetworkFixture
+from test_transport import TransportFixture
 
 
-class ClientLifecycleTests(NetworkFixture):
-    def setUp(self):
-        super().setUp()
-        self.lua.execute("""
-            NOW, CLOCK_ID, CLOCK, STEPS, CONTINUE = 0, 0, {}, {}, true
-            require('computer').uptime=function() return NOW end
-            require('event').timer=function(seconds,cb)
-                CLOCK_ID=CLOCK_ID+1;CLOCK[CLOCK_ID]={due=NOW+seconds,cb=cb};return CLOCK_ID
+class ClientLifecycleTests(TransportFixture):
+    def test_foreground_wrong_owner_lost_rpc_never_accepts_job_publication(self):
+        self.lua.execute('''
+            A.duration=0.4;job(C,'robot-a')
+            untilDone(function() return A.executions==1 end)
+            local id
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' and m.args[2]=='craft' then id=m.args[4][2] end end
+            local other=peer('other');pairHost(other,A)
+            local send=A.modem.send
+            A.modem.send=function(to,port,wake,info,msg,...)
+                if to=='other' and msg=='rpc' then return true end
+                return send(to,port,wake,info,msg,...)
             end
-            require('event').cancel=function(id) CLOCK[id]=nil;return true end
-            require('event').pull=function()
-                local step=table.remove(STEPS,1)
-                if not step then error('test exhausted event steps') end
-                NOW=step[1]
-                local due={}
-                for id,timer in pairs(CLOCK) do if timer.due<=NOW then table.insert(due,id) end end
-                table.sort(due)
-                for _,id in ipairs(due) do local timer=CLOCK[id];if timer then CLOCK[id]=nil;timer.cb() end end
-                if step[2]=='announce' then deliver('DAN',nil,{serviceName='craftServer',status='Ready'},'discovery')
-                elseif step[2]=='ack' then
-                    local pid
-                    for _,msg in ipairs(WIRE) do if msg.packet.hdr.t=='CRQ' then pid=msg.packet.hdr.p end end
-                    deliver('CAC','cid',{ackPID=pid},'ack')
-                elseif step[2]=='working' then deliver('DAT','cid',{status='WORKING',message='progress'},'work'..NOW)
-                elseif step[2]=='complete' then deliver('DAT','cid',{status='COMPLETE'},'complete')
-                elseif step[2]=='failed' then deliver('DAT','cid',{status='FAILED',message='missing ingredient'},'failed')
-                elseif step[2]=='interrupt' then CONTINUE=false end
+            job(other,'robot-a',{jobId=id,jobTimeout=1})
+            untilDone(function() return C.result end)
+            assert(C.result.success and not other.result)
+            untilDone(function() return other.result end)
+            assert(not other.result.success and other.result.status=='unknown')
+            A.modem.send=send
+            query(other,'robot-a',id);untilDone(function() return other.queryResult end)
+            assert(other.queryResult.status=='unknown' and other.queryResult.message:find('different sender'))
+            assert(A.executions==1)
+        ''')
+
+    def test_foreground_lost_admission_uses_owner_scoped_status_without_replay(self):
+        self.lua.execute('''
+            local send=A.modem.send
+            A.modem.send=function(to,port,wake,info,msg,data)
+                if msg=='rpc' then
+                    local packet=A.require('serialization').unserialize(data)
+                    if packet.args[3] and packet.args[3][2]=='accepted' then return true end
+                end
+                return send(to,port,wake,info,msg,data)
             end
-        """)
-        self.module('craft_client', 'lib/craft_client.lua')
-        self.lua.execute("CLIENT=require('craft_client');PLAN={requestItem='t:target',requestQuantity=1}")
+            job(C,'robot-a');untilDone(function() return C.result end)
+            assert(C.result.success and A.executions==1)
+            local crafts,statuses=0,0
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' then
+                if m.args[2]=='craft' then crafts=crafts+1 end
+                if m.args[2]=='status' then statuses=statuses+1 end
+            end end
+            assert(crafts==1 and statuses>=1)
+        ''')
 
-    def run_client(self, steps, options=''):
-        return self.lua.execute("STEPS="+steps+";return CLIENT.run(PLAN,{network=NET,shouldContinue=function() return CONTINUE end,"+options+"})")
+    def test_unrelated_job_event_and_failed_send_are_ambiguous(self):
+        self.lua.execute('''
+            A.duration=1;job(C,'robot-a');untilDone(function() return A.executions==1 end)
+            local endpoint=A.require('api').endpoints.craftServer
+            A.require('pubsub').attach(endpoint):publish('job:wrong',{jobId='wrong',status='COMPLETE'})
+            advance(0.1);assert(not C.result)
+            untilDone(function() return C.result end);assert(C.result.success)
+            C.result=nil;local send=C.modem.send
+            C.modem.send=function(to,port,wake,info,msg,...)
+                if msg=='rpc' then error('rpc send failed') end
+                return send(to,port,wake,info,msg,...)
+            end
+            job(C,'robot-a',{jobTimeout=0.4})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.mayHaveExecuted and A.executions==1)
+        ''')
 
-    def test_long_job_renews_idle_timeout_and_cleans_up(self):
-        self.assertEqual(self.run_client("{{0,'announce'},{1,'ack'},{30,'working'},{65,'working'},{95,'complete'}}"), (True, 'Crafting complete.'))
-        self.assertEqual(self.lua.execute("return OPEN[5990]==nil,next(CLOCK)==nil,next(NET._activePromises)==nil"), (True, True, True))
+    def test_renewable_idle_identity_blueprint_and_subscribe_order(self):
+        self.lua.execute('''
+            A.duration=2;A.progressEvery=0.2
+            job(C,'robot-a',{idleTimeout=0.4},{requestItem='t:target',blueprint={huge='client only'}})
+            untilDone(function() return C.result end)
+            local sent=commands('client')
+            assert(sent[1].msg=='ps' and sent[1].args[1]=='sub')
+            assert(sent[2].msg=='rpc' and sent[2].args[2]=='craft')
+            local args=sent[2].args[4]
+            assert(args[1].blueprint==nil and args[3]==false)
+            assert(C.result.success and C.result.jobId==args[2] and C.result.serverAddress=='robot-a')
+            assert(sent[#sent].msg=='ps' and sent[#sent].args[1]=='unsub')
+            assert(countListeners(C,'modem_message')==1 and C.open[5990])
+        ''')
 
-    def test_idle_timeout_disconnects_job(self):
-        ok, message = self.run_client("{{0,'announce'},{1,'ack'},{80,'noop'}}")
-        self.assertFalse(ok)
-        self.assertIn('idle timeout', message)
-        self.assertEqual(self.lua.execute("return WIRE[#WIRE].packet.hdr.t"), 'DIS')
+    def test_idle_timeout_quarantines_late_output_without_closing_pool(self):
+        self.lua.execute('''
+            A.duration=2;A.progressEvery=1
+            local net=C.require('tnet');local base=net.connect
+            net.connect=function(...) C.conn=base(...);return C.conn end
+            job(C,'robot-a',{idleTimeout=0.2})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.mayHaveExecuted and C.conn.connected)
+            assert(C.result.message:find('idle timeout'))
+            advance(3);assert(C.result.status=='unknown' and A.executions==1 and A.cleanups==0)
+            query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
+            assert(C.queryResult.success)
+        ''')
 
-    def test_total_deadline_is_separate_from_progress(self):
-        ok, message = self.run_client("{{0,'announce'},{1,'ack'},{30,'working'},{65,'working'}}", 'jobTimeout=45')
-        self.assertFalse(ok)
-        self.assertIn('total timeout', message)
+    def test_absolute_deadline_not_renewed_by_progress(self):
+        self.lua.execute('''
+            A.duration=5;A.progressEvery=0.1;job(C,'robot-a',{idleTimeout=1,jobTimeout=0.4})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.message:find('total timeout') and NOW<1)
+        ''')
 
-    def test_interruption_disconnects_and_cleans_up(self):
-        ok, message = self.run_client("{{0,'announce'},{1,'ack'},{2,'interrupt'}}")
-        self.assertFalse(ok)
-        self.assertIn('cancelled', message)
-        self.assertEqual(self.lua.execute("return OPEN[5990]==nil,next(CLOCK)==nil"), (True, True))
-
-    def test_server_failure_is_not_success(self):
-        self.assertEqual(self.run_client("{{0,'announce'},{1,'ack'},{2,'failed'}}"), (False, 'missing ingredient'))
-
-    def test_detailed_result_distinguishes_verified_failure_from_unknown_timeout(self):
-        for outcome, expected in (('failed', 'failed'), ('noop', 'unknown')):
-            with self.subTest(outcome=outcome):
+    def test_cancellation_and_exception_unsubscribe_without_canceling_execution(self):
+        for throws in (False, True):
+            with self.subTest(throws=throws):
                 self.setUp()
-                time = 2 if outcome == 'failed' else 80
-                self.assertEqual(self.lua.execute("STEPS={{0,'announce'},{1,'ack'},{" + str(time) + ",'" + outcome + "'}};local r=CLIENT.runDetailed(PLAN,{network=NET});return r.status,r.success,r.mayHaveExecuted,OPEN[5990]==nil,next(CLOCK)==nil"), (expected, False, True, True, True))
-
-    def test_recovery_disconnect_exception_retains_unknown_and_reaches_cleanup(self):
-        self.assertEqual(self.lua.execute("""
-            local connect=NET.connect
-            NET.connect=function(self,...) local p=connect(self,...);p.disconnect=function() error('disconnect boom') end;return p end
-            STEPS={{0,'announce'},{1,'ack'}};local checks=0
-            local ok,r=pcall(CLIENT.runDetailed,PLAN,{network=NET,shouldContinue=function()
-                checks=checks+1;if checks==3 then error('continuation boom') end;return true
-            end})
-            return ok,r.status,r.mayHaveExecuted,r.cleanupError:find('disconnect boom')~=nil,
-                OPEN[5990]==nil,next(CLOCK)==nil,next(NET._activePromises)==nil
-        """), (True, 'unknown', True, True, True, True, True))
-
-    def test_compound_disconnect_or_active_check_fault_calls_failure_hook_after_cleanup(self):
-        for method in ('disconnect', 'isActive'):
-            with self.subTest(method=method):
-                self.setUp()
-                self.module('craft_plans', 'lib/craft_plans.lua')
-                self.lua.execute("package.preload.filesystem=function() return {} end;package.preload.serialization=function() return {} end")
-                self.lua.globals().METHOD = method
-                self.assertEqual(self.lua.execute("""
-                    PLAN={requestItem='t:target',requestQuantity=1,inventory_needed={['t:raw']=1},
-                        tasks={{item='t:target',recipe={'t:raw'},recipeOutput=1,qty_produced=1}}}
-                    local connect=NET.connect
-                    NET.connect=function(self,...) ACTIVE=connect(self,...);return ACTIVE end
-                    STEPS={{0,'announce'},{1,'ack'}};local checks,hooks=0,0
-                    local r=require('craft_plans').run(PLAN,{network=NET,shouldContinue=function()
-                        checks=checks+1
-                        if checks==3 then ACTIVE[METHOD]=function() error(METHOD..' boom') end;error('continuation boom') end
+                self.lua.globals().THROWS = throws
+                self.lua.execute('''
+                    A.duration=1
+                    local net=C.require('tnet');local base=net.connect
+                    net.connect=function(...) C.conn=base(...);return C.conn end
+                    job(C,'robot-a',{shouldContinue=function()
+                        if NOW>0.4 then if THROWS then error('continuation boom') else return false end end
                         return true
-                    end,onFailure=function(v)
-                        hooks=hooks+1;assert(v.status=='unknown' and v.mayHaveExecuted)
-                        assert(OPEN[5990]==nil and next(CLOCK)==nil and next(NET._activePromises)==nil)
                     end})
-                    return r.status,r.success,r.mayHaveExecuted,hooks,r.hookError==nil,r.cleanupError:find('boom')~=nil
-                """), ('unknown', False, True, 1, True, True))
+                    untilDone(function() return C.result end)
+                    assert(C.result.status=='unknown' and C.result.mayHaveExecuted and C.conn.connected)
+                    assert(C.result.message:find(THROWS and 'continuation boom' or 'cancelled'))
+                    local sent=commands('client');assert(sent[#sent].args[1]=='unsub')
+                    advance(2);assert(A.executions==1 and A.cleanups==0 and C.result.status=='unknown')
+                ''')
 
-    def test_pre_submission_timeout_is_not_an_unknown_execution(self):
-        self.assertEqual(self.lua.execute("STEPS={{20,'noop'}};local r=CLIENT.runDetailed(PLAN,{network=NET});return r.status,r.success,r.mayHaveExecuted,OPEN[5990]==nil"), ('failed', False, False, True))
-
-    def test_verified_completion_survives_cleanup_exception_in_detailed_result(self):
-        self.assertEqual(self.lua.execute("""
-            local shutdown=NET.shutdown;NET.shutdown=function(self) shutdown(self);error('cleanup boom') end
-            STEPS={{0,'announce'},{1,'ack'},{2,'complete'}}
-            local r=CLIENT.runDetailed(PLAN,{network=NET})
-            return r.status,r.success,r.cleanupError:find('cleanup boom')~=nil,OPEN[5990]==nil
-        """), ('complete', True, True, True))
-
-    def test_plan_api_real_network_hook_runs_after_cleanup_with_fixed_wire_batch(self):
-        self.module('craft_plans', 'lib/craft_plans.lua')
-        self.lua.execute("package.preload.filesystem=function() return {} end;package.preload.serialization=function() return {} end")
-        self.assertEqual(self.lua.execute("""
-            PLAN={requestItem='t:target',requestQuantity=4,inventory_needed={['t:raw']=4},
-                tasks={{item='t:target',recipe={'t:raw'},recipeOutput=1,qty_produced=4}}}
-            STEPS={{0,'announce'},{1,'ack'},{2,'complete'}}
-            local hooks=0
-            local r=require('craft_plans').run(PLAN,{network=NET,onSuccess=function(result)
-                hooks=hooks+1;assert(result.status=='complete' and OPEN[5990]==nil and next(CLOCK)==nil)
-            end})
-            local sent
-            for _,msg in ipairs(WIRE) do if msg.packet.hdr.t=='DAT' then sent=msg.packet.pld.plan end end
-            return r.status,hooks,sent.requestQuantity,sent.tasks[1].qty_produced,package.loaded.qmenu==nil
-        """), ('complete', 1, 4, 4, True))
-
-    def test_failed_initial_send_terminates(self):
-        self.lua.execute('SEND_FAIL=true')
-        ok, message = self.run_client("{{0,'announce'}}")
-        self.assertFalse(ok)
-        self.assertIn('initiate', message)
-
-    def test_execution_returns_job_identity_and_robot_address(self):
-        self.assertEqual(self.lua.execute("""
-            STEPS={{0,'announce'},{1,'ack'},{2,'complete'}}
-            local r=CLIENT.runDetailed(PLAN,{network=NET});local packet
-            for _,m in ipairs(WIRE) do if m.packet.hdr.t=='DAT' then packet=m.packet.pld end end
-            return r.status,r.serverAddress,r.jobId==packet.jobId,type(r.jobId)=='string',packet.retryOnly
-        """), ('complete', 'remote', True, True, False))
-
-    def query_fixture(self, status):
-        self.lua.globals().RECEIPT_STATUS = status
-        self.lua.execute("""
-            local pull=require('event').pull
-            require('event').pull=function()
-                if STEPS[1] and STEPS[1][2]=='receipt' then
-                    NOW=table.remove(STEPS,1)[1]
-                    deliver('DAT','cid',{status=RECEIPT_STATUS,jobId='prior',receipt=true,message='receipt'},'receipt')
-                else return pull() end
+    def test_completion_survives_unsubscribe_exception_and_run_reports_it(self):
+        self.lua.execute('''
+            local ps=C.require('pubsub');local base=ps.client
+            ps.client=function(conn)
+                local sub=base(conn);local unsub=sub.unsubscribe
+                sub.unsubscribe=function(self,topic) unsub(self,topic);error('unsub boom') end
+                return sub
             end
-            STEPS={{1,'ack'},{2,'receipt'}}
-        """)
+            job(C,'robot-a');untilDone(function() return C.result end)
+            assert(C.result.success and C.result.cleanupError:find('unsub boom'))
+            spawn(function() C.ok,C.message=C.require('craft_client').run({requestItem='t:target'},
+                {serverAddress='robot-a'});C.done=true end,C)
+            untilDone(function() return C.done end);assert(not C.ok and C.message:find('unsub boom'))
+        ''')
 
-    def test_query_contacts_original_robot_without_discovery_and_cleans_up(self):
-        for status, expected in (('COMPLETE', 'complete'), ('FAILED', 'failed'), ('RUNNING', 'running'), ('NOT_FOUND', 'not_found')):
-            with self.subTest(status=status):
-                self.setUp()
-                self.query_fixture(status)
-                self.assertEqual(self.lua.execute("""
-                    local r=CLIENT.query('remote','prior',{network=NET});local packet
-                    for _,m in ipairs(WIRE) do
-                        assert(m.packet.hdr.t~='DQY','query must not broadcast')
-                        if m.packet.hdr.t=='DAT' then packet=m.packet.pld end
-                    end
-                    return r.status,r.jobId,r.serverAddress,packet.command,packet.plan==nil,
-                        r.mayHaveExecuted,OPEN[5990]==nil,next(CLOCK)==nil
-                """), (expected, 'prior', 'remote', 'job_status', True, True, True, True))
+    def test_unpaired_and_handshake_failure_before_submission(self):
+        self.lua.execute('''
+            job(C,nil,{service='absent'})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='failed' and not C.result.mayHaveExecuted)
+            assert(countListeners(C,'modem_message')==0)
+            local h=C.require('hosts');h.addHost('missing','missing-cid','missing','secret',{service='craftServer'},true)
+            C.result=nil;job(C,'missing',{connectTimeout=0.2})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='failed' and not C.result.mayHaveExecuted and C.result.message:find('no response'))
+        ''')
 
-    def test_explicit_duplicate_submission_is_retry_only(self):
-        self.query_fixture('NOT_FOUND')
-        self.assertEqual(self.lua.execute("""
-            local r=CLIENT.runDetailed(PLAN,{network=NET,serverAddress='remote',jobId='prior'})
-            local request
-            for _,m in ipairs(WIRE) do if m.packet.hdr.t=='DAT' then request=m.packet.pld end end
-            return r.status,r.receiptStatus,request.retryOnly,WIRE[1].packet.pld.receiptControl
-        """), ('unknown', 'not_found', True, True))
+    def test_default_selection_uses_paired_robot_without_broadcast(self):
+        self.lua.execute('''
+            job(C,nil);untilDone(function() return C.result end)
+            assert(C.result.success and (C.result.serverAddress=='robot-a' or C.result.serverAddress=='robot-b'))
+            assert(countListeners(C,'modem_message')==1)
+        ''')
 
-    def test_query_transport_timeout_is_unknown_not_proof_of_no_execution(self):
-        self.assertEqual(self.lua.execute("""
-            STEPS={{20,'noop'}}
-            local r=CLIENT.query('remote','prior',{network=NET})
-            return r.status,r.mayHaveExecuted,OPEN[5990]==nil,next(CLOCK)==nil
-        """), ('unknown', True, True, True))
+    def test_explicit_retry_never_executes_missing_receipt(self):
+        self.lua.execute('''
+            query(C,'robot-a','gone');untilDone(function() return C.queryResult end)
+            assert(C.queryResult.status=='not_found' and C.queryResult.mayHaveExecuted and C.queryResult.queried)
+            job(C,'robot-a',{jobId='gone'});untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.receiptStatus=='not_found' and A.executions==0)
+            local sent=commands('client');local args=sent[3].args[4]
+            assert(args[2]=='gone' and args[3]==true)
+            local before=#TRACE;local r=C.require('craft_client').runDetailed({},{jobId='prior'})
+            assert(r.status=='unknown' and r.mayHaveExecuted and #TRACE==before)
+        ''')
 
-    def test_old_job_id_without_original_address_does_not_discover_another_robot(self):
-        self.assertEqual(self.lua.execute("""
-            local r=CLIENT.runDetailed(PLAN,{network=NET,jobId='prior'})
-            return r.status,r.mayHaveExecuted,#WIRE
-        """), ('unknown', True, 0))
+    def test_query_timeout_and_owner_denial_are_unknown(self):
+        self.lua.execute('''
+            job(C,'robot-a');untilDone(function() return C.result end)
+            local other=peer('other');query(other,'robot-a',C.result.jobId)
+            untilDone(function() return other.queryResult end)
+            assert(other.queryResult.status=='unknown' and not other.queryResult.success)
+            pairHost(other,A);other.queryResult=nil;query(other,'robot-a',C.result.jobId)
+            untilDone(function() return other.queryResult end)
+            assert(other.queryResult.status=='unknown' and other.queryResult.message:find('different sender'))
+            query(C,'missing',C.result.jobId,{connectTimeout=0.2});untilDone(function() return C.queryResult end)
+            assert(C.queryResult.status=='unknown' and C.queryResult.mayHaveExecuted)
+        ''')
 
-    def test_query_authorization_error_is_not_a_verified_job_failure(self):
-        self.query_fixture('FAILED')
-        self.lua.execute("""
-            require('event').pull=function()
-                local step=table.remove(STEPS,1);NOW=step[1]
-                if step[2]=='ack' then
-                    deliver('CAC','cid',{ackPID=WIRE[1].packet.hdr.p},'ack')
-                else deliver('DAT','cid',{status='FAILED',jobId='prior',message='different sender'},'denied') end
-            end
-        """)
-        self.assertEqual(self.lua.execute("local r=CLIENT.query('remote','prior',{network=NET});return r.status,r.success,OPEN[5990]==nil"), ('unknown', False, True))
+    def test_admission_failure_and_exception_safe_message_callback(self):
+        self.lua.execute('''
+            job(C,'robot-a',nil,{invalid=true});untilDone(function() return C.result end)
+            assert(C.result.status=='failed' and A.executions==0)
+            C.result=nil;job(C,'robot-a',{onMessage=function() error('observer boom') end})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.message:find('observer boom'))
+            advance(2);assert(A.executions==1)
+        ''')
+
+    def test_plan_success_hook_runs_with_subscription_cleaned_and_pool_live(self):
+        self.lua.globals().CRAFT_PLANS_SOURCE = (self.root_path() / 'usr/lib/craft_plans.lua').read_text()
+        self.lua.execute('''
+            local net=C.require('tnet');local base=net.connect
+            net.connect=function(...) C.conn=base(...);return C.conn end
+            spawn(function()
+                C.result=C.require('craft_plans').run({requestItem='t:target',requestQuantity=1,
+                    inventory_needed={['t:raw']=1},tasks={{item='t:target',recipe={'t:raw'},recipeOutput=1,qty_produced=1}}},
+                    {serverAddress='robot-a',onSuccess=function()
+                        local sent=commands('client');assert(sent[#sent].args[1]=='unsub' and C.conn.connected);C.hooked=true
+                    end})
+            end,C)
+            untilDone(function() return C.result end);assert(C.result.success and C.hooked)
+        ''')
+
+    @staticmethod
+    def root_path():
+        from test_support import ROOT
+        return ROOT

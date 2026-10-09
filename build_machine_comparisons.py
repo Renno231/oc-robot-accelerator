@@ -18,6 +18,8 @@ def prepare(source,destination,mode,observe=True):
         entry=program/value['computer']['program'].get('entry','main.lua')
         entry.rename(program/'native-main.lua')
         entry.write_text(Path(__file__).with_name('machine_evidence.lua').read_text())
+        shutil.copyfile(Path(__file__).with_name('machine_component_counter.lua'),
+                        program/'component-counter.lua')
     path.write_text(json.dumps(value,indent=2)+'\n')
     return path
 

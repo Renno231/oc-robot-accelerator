@@ -1,6 +1,8 @@
 local fs=require('filesystem');local computer=require('computer');local event=require('event')
 local serialization=require('serialization');local component=require('component')
 assert(loadfile('/home/program/install.lua'))()
+local hosts=require('hosts');local fixtureWake='T13Fixture-controller'
+assert(hosts.addHost(component.modem.address,computer.address(),'controller',fixtureWake,{}))
 for _,name in ipairs({'map','logistics','warehouse'}) do
   assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua'))
 end
@@ -10,7 +12,20 @@ local lg=require('logistics');local wh=require('warehouse');local mes=require('m
 local case=assert(loadfile('/home/program/case.lua'))().name
 local start=computer.uptime();local totals={trips=0,moved=0,jobs=0};local jobs={}
 local function save(path,value)
-  local f=assert(io.open(path,'w'));f:write(serialization.serialize(value,false));f:close()
+  local data=serialization.serialize(value,false)
+  local f=assert(io.open(path,'w'));assert(f:write(data),'evidence write failed: '..path)
+  if f.flush then assert(f:flush(),'evidence flush failed: '..path) end
+  local closed,err=f:close();assert(closed~=false and not err,err or ('evidence close failed: '..path))
+end
+local componentCounter=package.loaded.runner_component_calls
+local function startComponentCalls()
+  return componentCounter and componentCounter.snapshot()
+end
+local function finishComponentCalls(result,before)
+  if before then
+    result.componentCalls=componentCounter.delta(before,componentCounter.snapshot())
+    save('/home/component-calls.lua',result.componentCalls)
+  end
 end
 local function wait(fn,seconds)
   local untilTime=computer.uptime()+seconds
@@ -29,20 +44,71 @@ event.listen('logistics',function(_,id)
   local s=assert(lg.status(id));jobs[id]=s
   totals.trips=totals.trips+(s.trips or 0);totals.moved=totals.moved+(s.moved or 0);totals.jobs=totals.jobs+1
 end)
+local function latestJobId()
+  local rows=lg.jobs(true,1,1);return rows[1] and rows[1].id or 0
+end
+local function finishTripAccounting(result)
+  -- Warehouse settlement can precede this fixture's completion callback.
+  -- Drain it before serializing counters (T11 omitted its final empty-check).
+  local last=latestJobId()
+  wait(function() for id=1,last do if not jobs[id] then return false end end;return true end,60)
+  local total,mesTrips=0,0
+  local window=result.mesTripWindow
+  for id,s in pairs(jobs) do
+    total=total+(s.trips or 0)
+    if window and id>=window.first and id<=window.last then mesTrips=mesTrips+(s.trips or 0) end
+  end
+  assert(total==totals.trips,'trip observer accounting mismatch')
+  result.trips=total;result.mesTrips=mesTrips;result.harnessTrips=total-mesTrips
+  local busy={}
+  for _,d in ipairs(lg.drones()) do busy[d.name]={seconds=0,mesSeconds=0,trips=0,mesTrips=0} end
+  for id,s in pairs(jobs) do for _,t in ipairs(s.tripTimings or {}) do
+    local b=busy[t.drone]
+    if b and t.startedAt and t.finishedAt and not t.uncertain then
+      local seconds=t.finishedAt-t.startedAt;b.seconds=b.seconds+seconds;b.trips=b.trips+1
+      if window and id>=window.first and id<=window.last then
+        b.mesSeconds=b.mesSeconds+seconds;b.mesTrips=b.mesTrips+1
+      end
+    end
+  end end
+  result.droneBusy=busy
+end
+local function mesTiming(outcome)
+  local timing={droneCount=#lg.drones(),cpus={},fetches={},arrivalBasis='controller-observed job completion (delivery plus return), warehouse settled before mes.wait'}
+  for i,s in ipairs(outcome.stages) do
+    if s.kind=='robot' then
+      timing.cpus[#timing.cpus+1]={stage=i,crafter=s.crafter,assigned=s.assigned or s.started,
+        released=s.released,craftStarted=s.craftStarted,craftFinished=s.craftFinished}
+    end
+    for _,move in ipairs(s.physicalJobs or s.itemsMoved or {}) do
+      if move.kind=='fetch' and move.job then
+        local j=assert(jobs[move.job],'fetch observer missing')
+        timing.fetches[#timing.fetches+1]={stage=i,item=move.item,storage=move.storage,job=move.job,
+          queuedAt=j.queuedAt,dispatchedAt=j.dispatchedAt,arrivedAt=j.finishedAt}
+      end
+    end
+  end
+  return timing
+end
 local address,distances
 distances={};component.modem.open(27105)
-event.listen('modem_message',function(_,_,sender,port,distance,token,robot)
-  if port==27105 and token=='mes_robot_ready' then address=robot end
+event.listen('modem_message',function(_,_,sender,port,distance,token,robot,cpu,cid,wake)
+  if port==27105 and token=='mes_robot_ready' then
+    assert(robot==sender and type(cid)=='string' and type(wake)=='string')
+    assert(hosts.addHost(robot,cid,cpu,wake,{service='craftServer'},true))
+    address=robot
+  end
   if port==27103 and token=='lgx_hello' then distances[sender]=distance end
 end)
 local setup=assert(loadfile('/home/program/setup.lua'))()
-wait(function() component.modem.broadcast(27105,'mes_robot_query');return address~=nil end,60)
+wait(function() component.modem.broadcast(27105,'mes_robot_query',computer.address(),fixtureWake);return address~=nil end,60)
 save('/etc/mes.cfg',{crafters={cpu1={robot=address}},machineTypes={furnace={inputs={'input'},output='output',
-  fuel={role='fuel',item='minecraft:coal',per=8},batch=64,seconds=10}}})
-wait(function() return #lg.pending()==2 end,60)
+  roles={'input','fuel','output'},roleSlots={input={1},fuel={1},output={1}},
+  fuel={role='fuel',item='minecraft:coal',per=8},batch=(case=='torches16' and 1 or 64),seconds=10,blocking=false}}})
+wait(function() return #lg.pending()==6 end,60)
 local pending=lg.pending();table.sort(pending,function(a,b) return (distances[a] or math.huge)<(distances[b] or math.huge) end)
 for i,id in ipairs(pending) do assert(lg.register(id,'d'..i,setup.homes[i])) end
-wait(function() local ds=lg.drones();return #ds==2 and ds[1].state=='idle' and ds[2].state=='idle' end,60)
+wait(function() local ds=lg.drones();if #ds~=6 then return false end;for _,d in ipairs(ds) do if d.state~='idle' then return false end end;return true end,60)
 local function scan(storages)
   for _,id in ipairs(wh.scan(storages)) do assert(done(id).state=='done') end
 end
@@ -80,38 +146,65 @@ else
   local target=case=='torches16' and 'minecraft:torch' or 'minecraft:brick_block'
   local plan,why=mes.plan(target,16);assert(plan,why)
   result.rawTaskOrder={};for _,t in ipairs(plan.tasks) do result.rawTaskOrder[#result.rawTaskOrder+1]=t.item end
-  if case=='torches16' then
-    -- Independent dependency branches may be interleaved without changing arithmetic.
-    local byItem={};for _,t in ipairs(plan.tasks) do byItem[t.item]=t end
-    plan.tasks={assert(byItem['minecraft:planks']),assert(byItem['minecraft:stick']),assert(byItem['minecraft:coal:1']),assert(byItem['minecraft:torch'])}
+  if case=='specific-group' then
+    for i,stage in ipairs(plan.stages) do
+      if stage.kind=='machine' then assert(mes.choose(plan,i,'furnaceA')) end
+    end
   end
   result.taskOrder={};for _,t in ipairs(plan.tasks) do result.taskOrder[#result.taskOrder+1]=t.item end
   save('/home/mes.plan',plan)
   if case=='shortfall' then
     save('/home/warehouse-remove-items',{count=16});assert(event.pull(10,'warehouse_items_removed'),'native removal missing')
   end
-  local opts={crafter='cpu1',pollSeconds=0.2,onStage=function(stage,index) print('MES stage',index,stage.kind,stage.status) end}
+  event.listen('mes',function(_,kind,runId,index,state)
+    if kind=='stage' then print('MES stage',runId,index,state) end
+  end)
+  local opts={crafter='cpu1',pollSeconds=0.2}
   if case=='specific-group' then opts.machines={furnace='furnaceA'} end
-  local outcome=assert(mes.run('/home/mes.plan',opts));result.status=outcome.status;result.stages=outcome.stages;result.error=outcome.error
+  result.mesTripWindow={first=latestJobId()+1}
+  local componentBefore=startComponentCalls()
+  local runId=assert(mes.run('/home/mes.plan',opts));result.runId=runId
+  local outcome=assert(mes.wait(runId));finishComponentCalls(result,componentBefore)
+  result.mesTripWindow.last=latestJobId();save('/home/mes-execution.lua',outcome)
+  finishTripAccounting(result);result.timing=mesTiming(outcome);save('/home/mes-fetch-timings.lua',result.timing)
+  result.status=outcome.status;result.stages=outcome.stages;result.error=outcome.reason or outcome.error
   if case=='shortfall' then
-    assert(outcome.status=='failed' and #outcome.stages==1 and outcome.stages[1].kind=='machine')
-    assert(outcome.stages[1].remaining and next(outcome.stages[1].remaining),'failure location report missing')
+    assert(outcome.status=='failed')
+    local failedMachine
+    for _,s in ipairs(outcome.stages) do
+      if s.kind=='machine' and (s.state=='failed' or s.status=='failed') then failedMachine=s end
+      if s.kind=='robot' then assert(not s.receipt and not s.craftStarted,'robot executed after shortfall') end
+    end
+    assert(failedMachine,'machine failure missing')
+    assert((failedMachine.remaining and next(failedMachine.remaining)) or (outcome.where and next(outcome.where)),'failure location report missing')
     assert(count('minecraft:brick_block')==0,'crafted beyond available inputs')
   else
     assert(outcome.status=='complete',outcome.error)
-    local expectedKinds=case=='torches16' and {'robot','machine','robot'} or {'machine','robot'}
-    assert(#outcome.stages==#expectedKinds)
-    for i,kind in ipairs(expectedKinds) do
-      local stage=outcome.stages[i];assert(stage.kind==kind and stage.status=='complete')
-      if kind=='robot' then assert(stage.receipt and stage.receipt.status=='complete','robot receipt missing') end
+    local machine;local robotCount=0
+    for _,stage in ipairs(outcome.stages) do
+      assert(stage.state=='done' or stage.status=='complete')
+      if stage.kind=='robot' then
+        robotCount=robotCount+1;assert(stage.receipt and stage.receipt.status=='complete','robot receipt missing')
+      elseif stage.kind=='machine' then assert(not machine,'unexpected extra machine stage');machine=stage end
     end
-    local machine=outcome.stages[case=='torches16' and 2 or 1]
+    assert(machine and robotCount>0,'robot/machine work missing')
     local loads={};for _,move in ipairs(machine.itemsMoved) do
       if move.kind=='fetch' and (move.item=='minecraft:clay_ball' or move.item=='minecraft:log') then
         loads[move.storage]=(loads[move.storage] or 0)+(move.moved or 0)
       end
     end
     result.loads=loads
+    if case=='torches16' then
+      result.topups={}
+      for _,group in ipairs({'furnaceA','furnaceB'}) do
+        local rows={};for _,load in ipairs(machine.loadLedger or {}) do
+          if load.group==group then rows[#rows+1]=load end
+        end
+        assert(#rows==2 and rows[1].items==1 and rows[2].items==1,'torch load ledger missing')
+        assert(rows[2].delivered<rows[1].collected,'torch second load gated on prior output collection')
+        result.topups[group]=rows
+      end
+    end
     if case=='specific-group' then
       assert(#machine.groups==1 and machine.groups[1]=='furnaceA' and loads['furnA.in']==64 and not loads['furnB.in'])
     else
@@ -155,6 +248,18 @@ if case=='shortfall' then
 end
 result.afterScan={logs=count('minecraft:log'),coal=count('minecraft:coal'),planks=count('minecraft:planks'),sticks=count('minecraft:stick'),
                   torch=count('minecraft:torch'),clay=count('minecraft:clay_ball'),brick=count('minecraft:brick'),brick_block=count('minecraft:brick_block')}
-result.jobs=jobs;result.trips=totals.trips;result.itemsMoved=totals.moved;result.gameSeconds=computer.uptime()-start
+-- Detailed MES receipts have separate durable files; avoid duplicating them
+-- in one large serialized result on the T3 controller.
+result.jobs={};for id,job in pairs(jobs) do
+  result.jobs[id]={state=job.state,trips=job.trips,moved=job.moved,requested=job.requested,shortfalls=job.shortfalls}
+end
+local summaries={};for i,stage in ipairs(result.stages or {}) do
+  summaries[i]={kind=stage.kind,state=stage.state,crafter=stage.crafter,done=stage.done,total=stage.total,
+    assigned=stage.assigned,released=stage.released,craftStarted=stage.craftStarted,craftFinished=stage.craftFinished}
+end
+result.stages=summaries;result.timing=nil
+result.executionLedger='/home/mes-execution.lua';result.timingFile='/home/mes-fetch-timings.lua'
+result.trips=totals.trips;result.itemsMoved=totals.moved;result.gameSeconds=computer.uptime()-start
+finishTripAccounting(result)
 save('/home/warehouse-results.lua',result);save('/home/mes-results.lua',result)
 print('MES verified',case,result.status,result.gameSeconds,result.trips)

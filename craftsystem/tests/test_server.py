@@ -1,140 +1,104 @@
-from test_support import LuaCase, ROOT
+from test_transport import TransportFixture
 
 
-class ServerTests(LuaCase):
-    def setUp(self):
-        super().setUp()
-        self.lua.execute("""
-            LISTENERS,SENT={},{};EXECUTIONS,CLEANUPS=0,0
-            NET={INTERNAL_EVENT_NAMES={CONNECTION_REQUEST='request',DISCOVERY_ANNOUNCE='discovery'},
-                HDR_KEYS={TYP='t'},PACKET_TYPES={DATA='DAT',DISC_QRY='DQY'},
-                listen=function(self,n,cb) LISTENERS[n]=cb end,openPort=function() return true end,
-                startListener=function() return true end,shutdown=function() end}
-            package.preload.gatenet=function() return {new=function() return NET end} end
-            package.preload.component=function() return {modem={address='server'}} end
-            package.preload.sides=function() return {front=3} end
-            package.preload.shell=function() return {parse=function() return {},{} end} end
-            package.preload.serialization=function() return {serialize=function() return '' end} end
-            package.preload.event=function() return {listen=function() end,ignore=function() end} end
-            EX={validatePlan=function(p) return p~=nil and not INVALID,'invalid plan' end,
-                executePlan=function(p,opts)
-                    EXECUTIONS=EXECUTIONS+1
-                    if DURING_EXECUTION then DURING_EXECUTION() end
-                    if EXECUTION_THROW then error('execution exception') end
-                    opts.onProgress('testing')
-                    return EXECUTION_OK,'execution result'
-                end,
-                dumpInventory=function() CLEANUPS=CLEANUPS+1;return not CLEANUP_FAIL,'storage blocked' end}
-            package.preload.craft_executor=function() return EX end
-            os.sleep=function() error('test server initialized') end
-        """)
-        self.lua.globals().SERVER_SOURCE = (ROOT / 'usr/bin/cproc.lua').read_text()
-        self.lua.execute("local ok,err=pcall(assert(load(SERVER_SOURCE)));assert(not ok and err:find('test server initialized'))")
-        self.lua.execute("""
-            P={getConnectionID=function() return 'cid' end,isActive=function() return true end,
-                sendData=function(self,d) table.insert(SENT,d);return self end,
-                next=function(self,cb) REQUEST=cb;return self end,catch=function(self) return self end,
-                finally=function(self) return self end,disconnect=function(self) return self end,
-                timeout=function(self) return self end,clearTimeout=function(self) return self end}
-            function request(payload)
-                LISTENERS.request('client',5990,{},function(accept) assert(accept);return P end)
-                REQUEST(P,{hdr={t='DAT'},pld=payload or {command='craft',plan={requestItem='t:target'}}})
-                local terminals=0;for _,s in ipairs(SENT) do if s.status=='COMPLETE' or s.status=='FAILED' then terminals=terminals+1 end end
-                return SENT[#SENT].status,terminals
+class ServerTests(TransportFixture):
+    def test_malformed_and_unknown_rpc_do_not_execute(self):
+        self.lua.execute('''
+            spawn(function()
+                local p=C.require('api').connect('craftServer',5990,'robot-a','wake-robot-a',1)
+                local ok,kind,r=p.craft('invalid','bad',false)
+                assert(ok and kind=='failed' and r.status=='FAILED')
+                local known=p.nonsense();assert(not known)
+                C.finished=true
+            end,C)
+            untilDone(function() return C.finished end);assert(A.executions==0 and A.cleanups==0)
+        ''')
+
+    def test_success_immediate_accept_progress_terminal_receipts(self):
+        self.lua.execute('''
+            job(C,'robot-a');untilDone(function() return C.result end)
+            local msgs=commands('robot-a');local accepted,working,terminal
+            for _,m in ipairs(msgs) do
+                if m.msg=='rpc' then accepted=m.args[3]
+                elseif m.msg=='ps' and m.args[3].status=='WORKING' then working=m.args[3]
+                elseif m.msg=='ps' and m.args[3].status=='COMPLETE' then terminal=m.args[3] end
             end
-        """)
+            assert(accepted[1] and accepted[2]=='accepted' and accepted[3].receipt)
+            assert(working and terminal.receipt and terminal.jobId==C.result.jobId)
+            assert(A.executions==1 and A.cleanups==0)
+            query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
+            assert(C.queryResult.status=='complete')
+        ''')
 
-    def test_startup_failure_still_closes_port_and_listener(self):
-        self.assertEqual(self.lua.execute("""
-            PORT_OPEN,INTERRUPTED_PRESENT,SHUTDOWNS=false,false,0
-            require('event').listen=function() INTERRUPTED_PRESENT=true end
-            require('event').ignore=function() INTERRUPTED_PRESENT=false end
-            NET.openPort=function() PORT_OPEN=true;return true end
-            NET.startListener=function() return false end
-            NET.shutdown=function() PORT_OPEN=false;SHUTDOWNS=SHUTDOWNS+1 end
-            local ok=pcall(assert(load(SERVER_SOURCE)))
-            return ok,PORT_OPEN,INTERRUPTED_PRESENT,SHUTDOWNS
-        """), (False, False, False, 1))
+    def test_failed_execution_cleanup_exceptions_terminal(self):
+        for flag in ('success=false', 'executionThrow=true', 'success=false;A.dumpFail=true', 'success=false;A.dumpThrow=true'):
+            with self.subTest(flag=flag):
+                self.setUp()
+                self.lua.execute('A.' + flag)
+                self.lua.execute('''
+                    job(C,'robot-a');untilDone(function() return C.result end)
+                    assert(C.result.status=='failed' and A.cleanups==1)
+                    query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
+                    assert(C.queryResult.status=='failed')
+                ''')
 
-    def test_false_execution_result_is_failed_not_complete(self):
-        self.lua.execute('EXECUTION_OK=false')
-        self.assertEqual(self.lua.execute('return request()'), ('FAILED', 1))
-        self.assertEqual(self.lua.execute('return CLEANUPS'), 1)
+    def test_busy_admission_and_live_query_without_stealing_subscription(self):
+        self.lua.execute('''
+            A.duration=2;job(C,'robot-a');untilDone(function() return A.executions==1 end)
+            local second=peer('second');pairHost(second,A);job(second,'robot-a')
+            untilDone(function() return second.result end)
+            assert(second.result.status=='failed' and second.result.message:find('busy') and A.executions==1)
+            local id
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' and m.args[2]=='craft' then id=m.args[4][2] end end
+            query(C,'robot-a',id);untilDone(function() return C.queryResult end)
+            assert(C.queryResult.status=='running')
+            untilDone(function() return C.result end);assert(C.result.success)
+        ''')
 
-    def test_exception_is_failed(self):
-        self.lua.execute('EXECUTION_THROW=true')
-        self.assertEqual(self.lua.execute('return request()'), ('FAILED', 1))
+    def test_duplicate_changed_request_missing_retry(self):
+        self.lua.execute('''
+            job(C,'robot-a');untilDone(function() return C.result end)
+            local id=C.result.jobId;C.result=nil
+            job(C,'robot-a',{jobId=id});untilDone(function() return C.result end)
+            assert(C.result.success and A.executions==1)
+            C.result=nil;job(C,'robot-a',{jobId=id},{requestItem='other'})
+            untilDone(function() return C.result end)
+            assert(C.result.status=='failed' and C.result.message:find('different') and A.executions==1)
+            C.result=nil;job(C,'robot-a',{jobId='lost'});untilDone(function() return C.result end)
+            assert(C.result.status=='unknown' and C.result.receiptStatus=='not_found' and A.executions==1)
+        ''')
 
-    def test_verified_success_reports_complete_once(self):
-        self.lua.execute('EXECUTION_OK=true')
-        self.assertEqual(self.lua.execute('return request()'), ('COMPLETE', 1))
-        self.assertEqual(self.lua.execute('return CLEANUPS'), 0)
-
-    def test_invalid_plan_rejected_before_execution_or_dump(self):
-        self.lua.execute('INVALID=true')
-        self.assertEqual(self.lua.execute('return request()'), ('FAILED', 1))
-        self.assertEqual(self.lua.execute('return EXECUTIONS,CLEANUPS'), (0, 0))
-
-    def test_cleanup_error_does_not_turn_failure_into_success(self):
-        self.lua.execute('EXECUTION_OK=false;CLEANUP_FAIL=true')
-        self.assertEqual(self.lua.execute('return request()'), ('FAILED', 1))
-        self.assertIn('cleanup failed', self.lua.execute('return SENT[#SENT].message'))
-
-    def test_busy_robot_rejects_another_connection(self):
-        self.lua.execute("""
-            EXECUTION_OK=true
-            DURING_EXECUTION=function()
-                LISTENERS.request('second',5990,{},function(accept) SECOND_ACCEPTED=accept end)
+    def test_terminal_receipt_precedes_lost_pubsub_event(self):
+        self.lua.execute('''
+            local send=A.modem.send
+            A.modem.send=function(to,port,wake,info,msg,data)
+                if msg=='ps' and A.require('serialization').unserialize(data).args[3].status=='COMPLETE' then
+                    error('terminal event lost')
+                end
+                return send(to,port,wake,info,msg,data)
             end
-        """)
-        self.assertEqual(self.lua.execute('request();return SECOND_ACCEPTED'), False)
+            job(C,'robot-a',{idleTimeout=0.4});untilDone(function() return C.result end)
+            assert(C.result.status=='unknown')
+            query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
+            assert(C.queryResult.status=='complete' and A.executions==1)
+        ''')
 
-    def test_duplicate_job_returns_receipt_without_second_execution(self):
-        self.assertEqual(self.lua.execute("""
-            EXECUTION_OK=true
-            local payload={command='craft',jobId='job1',plan={requestItem='t:target'}}
-            request(payload);request(payload)
-            return SENT[#SENT].status,SENT[#SENT].jobId,EXECUTIONS,CLEANUPS
-        """), ('COMPLETE', 'job1', 1, 0))
+    def test_server_startup_failure_cleans_owned_network(self):
+        self.lua.execute('''
+            local p=peer('bad');local net=p.require('tnet')
+            net.listen=function() return false,'listen failed' end
+            local ok,err=pcall(assert(load(CPROC_SOURCE,'cproc','t',p.env)))
+            assert(not ok and err:find('listen failed'))
+            assert(countListeners(p,'interrupted')==0 and countListeners(p,'modem_message')==0)
+        ''')
 
-    def test_changed_request_same_id_is_rejected(self):
-        self.assertEqual(self.lua.execute("""
-            EXECUTION_OK=true
-            request({command='craft',jobId='same',plan={requestItem='t:target'}})
-            request({command='craft',jobId='same',plan={requestItem='t:other'}})
-            return SENT[#SENT].status,SENT[#SENT].message:find('different')~=nil,EXECUTIONS
-        """), ('FAILED', True, 1))
-
-    def test_status_query_and_duplicate_are_available_while_busy(self):
-        self.assertEqual(self.lua.execute("""
-            EXECUTION_OK=true
-            DURING_EXECUTION=function()
-                LISTENERS.request('client',5990,{pld={receiptControl=true}},function(accept) assert(accept);return P end)
-                REQUEST(P,{hdr={t='DAT'},pld={command='job_status',jobId='active'}})
-                RUNNING_STATUS=SENT[#SENT].status
-                REQUEST(P,{hdr={t='DAT'},pld={command='craft',jobId='active',plan={requestItem='t:target'},retryOnly=true}})
-                DUPLICATE_STATUS=SENT[#SENT].status
-            end
-            request({command='craft',jobId='active',plan={requestItem='t:target'}})
-            return RUNNING_STATUS,DUPLICATE_STATUS,EXECUTIONS,SENT[#SENT].status
-        """), ('RUNNING', 'RUNNING', 1, 'COMPLETE'))
-
-    def test_receipt_exists_before_final_reply_send_fault(self):
-        self.assertEqual(self.lua.execute("""
-            EXECUTION_OK=true
-            local send=P.sendData
-            P.sendData=function(self,data) if data.status=='COMPLETE' then error('reply lost') end;return send(self,data) end
-            local ok=pcall(request,{command='craft',jobId='lost',plan={requestItem='t:target'}})
-            P.sendData=send
-            request({command='job_status',jobId='lost'})
-            return ok,SENT[#SENT].status,EXECUTIONS
-        """), (False, 'COMPLETE', 1))
-
-    def test_missing_retry_is_not_new_work_and_control_cannot_submit_new_job(self):
-        self.assertEqual(self.lua.execute("""
-            request({command='craft',jobId='gone',plan={},retryOnly=true})
-            local absent=SENT[#SENT].status
-            LISTENERS.request('client',5990,{pld={receiptControl=true}},function(accept) assert(accept);return P end)
-            REQUEST(P,{hdr={t='DAT'},pld={command='craft',jobId='new',plan={requestItem='t:target'}}})
-            return absent,SENT[#SENT].status,EXECUTIONS,CLEANUPS
-        """), ('NOT_FOUND', 'FAILED', 0, 0))
+    def test_midjob_peer_close_reconnects_without_canceling_or_reexecution(self):
+        self.lua.execute('''
+            local net=C.require('tnet');local base=net.connect
+            net.connect=function(...) C.conn=base(...);return C.conn end
+            A.duration=2;job(C,'robot-a');untilDone(function() return A.executions==1 end)
+            C.conn:close();untilDone(function() return C.result end)
+            assert(C.result.success and A.executions==1 and A.cleanups==0)
+            query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
+            assert(C.queryResult.success)
+        ''')

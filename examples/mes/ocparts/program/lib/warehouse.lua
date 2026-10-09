@@ -1,0 +1,1038 @@
+local map=require("map")
+local logistics=require("logistics")
+local event=require("event")
+local serialization=require("serialization")
+local computer=require("computer")
+local M={}
+local function copy(t) return serialization.unserialize(serialization.serialize(t)) end
+local function read(path,default)
+  local f=io.open(path,"r");if not f then return default end
+  local t=serialization.unserialize(f:read("*a"));f:close();assert(type(t)=="table","invalid "..path);return t
+end
+local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
+local db={}
+-- Reservations belong to warehouse-submitted jobs, not the logistics router.
+-- Inventory aliases share a key, so two faces cannot reserve the same stock.
+local inFlight={}
+local pendingCatalogue={}
+-- Volatile, exact-sided observations. Physical identities are ONLY for
+-- invalidation; they never authorize reuse of another face's slot indices.
+local roleCache,pendingReads,pendingMutations,mutationCounts={},{},{},{}
+local identityIndex=nil
+local identityGeneration,mutationEpochs=0,{}
+local function metadataChanged()
+  roleCache={};identityIndex=nil;identityGeneration=identityGeneration+1;mutationEpochs={}
+end
+local limits=read("/etc/warehouse.stacks",{})
+local limitsDirty=false
+local function limitKey(i) return i.name..":"..tostring(i.damage or 0) end
+local function learn(i,maximum)
+  if i and type(maximum)=="number" and maximum>0 then
+    local k=limitKey(i)
+    if limits[k]~=maximum then limits[k]=maximum;limitsDirty=true end
+  end
+end
+local function saveLimits()
+  if not limitsDirty then return end
+  local f=assert(io.open("/etc/warehouse.stacks","w"));f:write(serialization.serialize(limits));f:close();limitsDirty=false
+end
+local rows,keys,staging=0,{},nil
+local keySet={}
+local function track(key) if not keySet[key] then keySet[key]=true;keys[#keys+1]=key end end
+-- Append one inventory record, not the entire catalogue, on an observation.
+-- Replay streams the journal; memory remains proportional to current inventory types.
+do local f=io.open("/etc/warehouse.db","r");if f then
+  for line in f:lines() do local r=assert(serialization.unserialize(line),"invalid warehouse journal");db[r.key]=r.value;rows=rows+1 end
+  f:close()
+end end
+for _,e in pairs(db) do for _,v in pairs(e.items or {}) do learn(v.item,v.maxSize) end end
+local function saveConfig()
+  local f=assert(io.open("/etc/warehouse.cfg","w"));f:write(serialization.serialize(cfg));f:close()
+end
+local revision,totalsCache=0,nil
+local function changed() revision=revision+1;totalsCache=nil;event.push("warehouse","changed") end
+local mapRevision=map.revision and map.revision() or 0
+-- Eligibility depends on named map faces as well as warehouse observations.
+-- Only compare a scalar on redraw; rebuild the shared totals on demand.
+local function syncMapRevision()
+  local current=map.revision and map.revision() or 0
+  if current~=mapRevision then mapRevision=current;metadataChanged();changed() end
+end
+function M.revision() syncMapRevision();return revision end
+local function saveInventory(key)
+  local line=serialization.serialize({key=key,value=db[key]},false).."\n"
+  local f=assert(io.open("/etc/warehouse.db","a"));f:write(line);f:close();rows=rows+1
+  if staging then staging.file:write(line);staging.rows=staging.rows+1 end
+end
+local function compact()
+  if staging then staging.file:close();staging=nil end
+  local tmp="/etc/warehouse.db.new";local f=assert(io.open(tmp,"w"))
+  rows=0;for key,value in pairs(db) do f:write(serialization.serialize({key=key,value=value},false),"\n");rows=rows+1 end
+  f:close();assert(os.rename(tmp,"/etc/warehouse.db"))
+end
+-- Event-driven incremental compaction: copy at most one inventory per finished
+-- job. New observations go to both files while copying; a rename commits the
+-- complete snapshot. A reboot during copying still replays the intact old log.
+-- Journal/replay work is O(inventories * bounded endpoints per job), not uptime.
+local function maintain()
+  if not staging and rows>math.max(8,2*#keys) then
+    staging={file=assert(io.open("/etc/warehouse.db.new","w")),cursor=1,rows=0}
+  end
+  if not staging then return end
+  local key=keys[staging.cursor]
+  if key and db[key] then
+    staging.file:write(serialization.serialize({key=key,value=db[key]},false),"\n");staging.rows=staging.rows+1
+  end
+  staging.cursor=staging.cursor+1
+  if staging.cursor>#keys then
+    staging.file:close();assert(os.rename("/etc/warehouse.db.new","/etc/warehouse.db"));rows=staging.rows;staging=nil
+  end
+end
+local function item(i)
+  assert(type(i)=="table" and type(i.name)=="string" and (i.label==nil or type(i.label)=="string"),"item required")
+  local damage=i.damage or 0;assert(type(damage)=="number" and damage>=0 and damage%1==0,"invalid damage")
+  return {name=i.name,damage=damage,label=i.label}
+end
+local function matches(a,b) return a.name==b.name and a.damage==(b.damage or 0) and (not b.label or a.label==b.label) end
+local function itemKey(i) return serialization.serialize({i.name,i.damage or 0,i.label},false) end
+local function inventory(storage) local s=cfg.members[storage];return s and (s.inventory or storage) end
+local offsets={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}}
+local function endpoint(value)
+  if type(value)=="string" then return map.storage(value) end
+  if type(value)=="table" then return value.storage and map.storage(value.storage) or value end
+end
+local function faceIdentities(e)
+  local ids={"face:"..e.node..":"..e.side}
+  local p=map.node and map.node(e.node);local d=offsets[e.side+1]
+  if p and d and type(p.x)=="number" and type(p.y)=="number" and type(p.z)=="number" then
+    ids[#ids+1]=string.format("xyz:%.17g:%.17g:%.17g",p.x+d[1],p.y+d[2],p.z+d[3])
+  end
+  return ids
+end
+local function metadata()
+  if identityIndex then return identityIndex end
+  local index={faces={},clusters={}};local parent={}
+  local function root(key)
+    if not parent[key] then parent[key]=key end
+    if parent[key]~=key then parent[key]=root(parent[key]) end
+    return parent[key]
+  end
+  -- One descriptor per member on an edit, never N descriptors per endpoint.
+  for storage,settings in pairs(cfg.members) do
+    local e=map.storage(storage)
+    if e then
+      local faces=index.faces[e.node] or {};index.faces[e.node]=faces
+      local ids=faces[e.side] or faceIdentities(e);faces[e.side]=ids
+      ids[#ids+1]="alias:"..(settings.inventory or storage)
+      local first=root(ids[1])
+      for k=2,#ids do local other=root(ids[k]);if other~=first then parent[other]=first end end
+    end
+  end
+  local groups={}
+  for key in pairs(parent) do
+    local first=root(key);local group=groups[first] or {};groups[first]=group
+    group[#group+1]=key;index.clusters[key]=group
+  end
+  identityIndex=index;return index
+end
+local function identities(value)
+  local e=endpoint(value);if not e or not e.node or e.side==nil then return end
+  local index=metadata();local faces=index.faces[e.node]
+  return faces and faces[e.side] or faceIdentities(e),e
+end
+local function invalidate(ids)
+  if not ids then return end
+  local affected={};for _,key in ipairs(ids) do affected[key]=true end
+  for node,faces in pairs(roleCache) do for side,view in pairs(faces) do
+    for _,key in ipairs(view.ids) do if affected[key] then faces[side]=nil;break end end
+  end;if not next(faces) then roleCache[node]=nil end end
+end
+local function mutationKeys(endpoints)
+  local keys,expanded={},{};local index=metadata()
+  for _,e in ipairs(endpoints) do
+    local ids=identities(e)
+    for _,key in ipairs(ids or {}) do
+      keys[key]=true
+      local cluster=index.clusters[key]
+      if cluster and not expanded[cluster] then
+        expanded[cluster]=true
+        for _,joined in ipairs(cluster) do keys[joined]=true end
+      end
+    end
+  end
+  local ids={};for key in pairs(keys) do ids[#ids+1]=key end;invalidate(ids)
+  return keys
+end
+local function beginMutation(id,endpoints)
+  syncMapRevision()
+  local keys=mutationKeys(endpoints)
+  if pendingMutations[id] then return end
+  pendingMutations[id]=keys
+  pendingCatalogue[id]=true
+  for key in pairs(keys) do
+    mutationCounts[key]=(mutationCounts[key] or 0)+1
+    mutationEpochs[key]=(mutationEpochs[key] or 0)+1
+  end
+end
+local mutationHook=type(logistics.onMutation)=="function"
+if mutationHook then logistics.onMutation("warehouse.role-cache",beginMutation) end
+local function invalidateRead(e)
+  local cached=roleCache[e.node] and roleCache[e.node][e.side]
+  if not cached then return end
+  if e.slots then for _,slot in ipairs(e.slots) do cached.listing[slot]=nil end
+  else roleCache[e.node][e.side]=nil end
+end
+local function readProvenance(endpoints)
+  local reads={}
+  for _,e in ipairs(endpoints) do
+    local r={node=e.node,side=e.side,generation=identityGeneration,epochs={},blocked=false}
+    if e.slots then r.slots={};for k,v in ipairs(e.slots) do r.slots[k]=v end end
+    for _,key in ipairs(identities(e) or {}) do
+      r.epochs[key]=mutationEpochs[key] or 0
+      if mutationCounts[key] then r.blocked=true end
+    end
+    reads[#reads+1]=r;invalidateRead(r)
+  end
+  return reads
+end
+local function beginRead(id,endpoints)
+  syncMapRevision()
+  pendingReads[id]=readProvenance(endpoints);pendingCatalogue[id]=true
+end
+local readHook=type(logistics.onRead)=="function"
+if readHook then logistics.onRead("warehouse.role-cache",beginRead) end
+local function readCurrent(reads,e)
+  for _,r in ipairs(reads or {}) do
+    local same=r.node==e.node and r.side==e.side and (r.slots==nil)==(e.slots==nil)
+    if same and r.slots then
+      same=#r.slots==#e.slots
+      for k,v in ipairs(r.slots) do if v~=e.slots[k] then same=false;break end end
+    end
+    if same then
+      if r.blocked or r.generation~=identityGeneration then return false end
+      for key,epoch in pairs(r.epochs) do
+        if mutationCounts[key] or (mutationEpochs[key] or 0)~=epoch then return false end
+      end
+      return true
+    end
+  end
+  -- Legacy/fake completion fixtures have no read submission hook. Actual
+  -- routers require captured provenance, including direct external read jobs.
+  return reads==nil and not readHook and not mutationHook
+end
+local function grouped(storage)
+  local key=inventory(storage) or storage
+  for _,g in pairs(cfg.groups) do for _,s in pairs(g.roles) do
+    if (inventory(s) or s)==key then return true end
+  end end
+end
+local function rebuildKeys()
+  keys={};keySet={}
+  for storage in pairs(cfg.members) do track(inventory(storage)) end
+  for key in pairs(db) do track(key) end
+  table.sort(keys)
+end
+rebuildKeys()
+local function entries()
+  local out={}
+  for s,settings in pairs(cfg.members) do if not grouped(s) and map.storage(s) then
+    local key=inventory(s);out[key]=out[key] or {};out[key][#out[key]+1]={storage=s,settings=settings,entry=db[key],key=key}
+  end end
+  for _,list in pairs(out) do table.sort(list,function(a,b) return a.storage<b.storage end) end
+  return out
+end
+local function prune()
+  local used={};for s in pairs(cfg.members) do used[inventory(s)]=true end
+  for key in pairs(db) do if not used[key] and not map.storage(key) then db[key]=nil end end
+  compact();rebuildKeys()
+end
+function M.add(storage,settings)
+  assert(map.storage(storage),"unknown storage");settings=copy(settings or {})
+  for k in pairs(settings) do assert(k=="filter" or k=="priority" or k=="inventory","unsupported setting "..k) end
+  assert(settings.priority==nil or (type(settings.priority)=="number" and math.abs(settings.priority)<math.huge),"invalid priority")
+  assert(settings.inventory==nil or (type(settings.inventory)=="string" and settings.inventory~=""),"invalid inventory")
+  if settings.filter then assert(type(settings.filter)=="table","filter list required");for i,v in ipairs(settings.filter) do settings.filter[i]=item(v) end end
+  cfg.members[storage]=settings;metadataChanged();saveConfig();prune();changed();return true
+end
+function M.remove(storage) local existed=cfg.members[storage]~=nil;cfg.members[storage]=nil;metadataChanged();saveConfig();prune();changed();return existed end
+function M.members() return copy(cfg.members) end
+function M.group(name,kind,roles)
+  assert(type(name)=="string" and name~="" and type(kind)=="string" and type(roles)=="table" and next(roles),"group name, type and roles required")
+  for role,s in pairs(roles) do assert(type(role)=="string" and map.storage(s),"invalid group role/storage") end
+  cfg.groups[name]={type=kind,roles=copy(roles)};saveConfig();changed();return true
+end
+function M.ungroup(name) local existed=cfg.groups[name]~=nil;cfg.groups[name]=nil;saveConfig();changed();return existed end
+function M.groups(kind) local out={};for n,g in pairs(cfg.groups) do if not kind or g.type==kind then out[n]=copy(g) end end;return out end
+local function quantity(e,i)
+  local n=0;for _,v in pairs(e and e.items or {}) do if matches(v.item,i) then n=n+v.count end end;return n
+end
+local function reserved(key,i,direction)
+  local count=0
+  for _,job in pairs(inFlight) do for _,r in ipairs(job) do
+    if r.key==key and r.direction==direction and matches(r.item,i) then count=count+r.count end
+  end end
+  return count
+end
+local function incomingCapacity(key,i,maximum,planned)
+  local same,other=0,{}
+  local function include(r)
+    if r.key==key and r.direction=='put' then
+      if matches(r.item,i) then same=same+r.count
+      else local k=planned and itemKey(r.item) or limitKey(r.item);other[k]=other[k] or {item=r.item,count=0,maximum=r.maximum};other[k].count=other[k].count+r.count end
+    end
+  end
+  for _,job in pairs(inFlight) do for _,r in ipairs(job) do include(r) end end
+  for _,r in ipairs(planned or {}) do include(r) end
+  local used=same
+  for _,r in pairs(other) do
+    local room=0;for _,v in pairs(db[key] and db[key].items or {}) do if matches(v.item,r.item) then room=room+v.room end end
+    used=used+math.ceil(math.max(0,r.count-room)/r.maximum)*maximum
+  end
+  return used
+end
+local function submit(steps,opts,reservations)
+  syncMapRevision()
+  local reads,movements={},{}
+  for _,step in ipairs(steps) do
+    if step.read then
+      local e=endpoint(step.read)
+      if e then
+        local r={node=e.node,side=e.side,slots=type(step.read)=="table" and step.read.slots or nil}
+        if r.slots then local slots={};for k,v in ipairs(r.slots) do slots[k]=v end;r.slots=slots end
+        reads[#reads+1]=r
+      end
+    elseif step.take or step.put then movements[#movements+1]=step.take or step.put end
+  end
+  -- Refused submissions and synchronously failed jobs may have no result legs.
+  for _,e in ipairs(reads) do invalidateRead(e) end
+  if not mutationHook then mutationKeys(movements) end
+  local provenance=not readHook and readProvenance(reads) or nil
+  local id,err=logistics.job(steps,opts)
+  local s=id and logistics.status(id)
+  if id and s and s.state~='done' and s.state~='failed' and s.state~='partial' then
+    inFlight[id]=reservations;pendingCatalogue[id]=true
+    if not readHook then pendingReads[id]=provenance end
+    if not mutationHook and #movements>0 then beginMutation(id,movements) end
+  end
+  return id,err
+end
+-- A logistics terminal state can precede delivery of its completion event.
+-- Callers requiring a catalogue barrier wait until that event is incorporated.
+function M.settled(id) return not pendingCatalogue[id] end
+function M.find(i)
+  i=item(i);local out={}
+  for _,list in pairs(entries()) do local c=quantity(list[1].entry,i);if c>0 then out[#out+1]={storage=list[1].storage,count=c} end end
+  table.sort(out,function(a,b) return a.storage<b.storage end);return out
+end
+function M.count(i) local n=0;for _,v in ipairs(M.find(i)) do n=n+v.count end;return n end
+-- SHARED/read-only: aggregate physical stock inventories once per change.
+function M.totals()
+  syncMapRevision()
+  if totalsCache then return totalsCache end
+  local out,byItem={},{}
+  for _,faces in pairs(entries()) do
+    for _,v in pairs(faces[1].entry and faces[1].entry.items or {}) do if v.count>0 then
+      local i=v.item
+      byItem[i.name]=byItem[i.name] or {};local damages=byItem[i.name]
+      damages[i.damage or 0]=damages[i.damage or 0] or {};local labels=damages[i.damage or 0]
+      local label=i.label or false;local total=labels[label]
+      if not total then
+        total={item=item(i),count=0,storages=0};labels[label]=total;out[#out+1]=total
+      end
+      total.count=total.count+v.count;total.storages=total.storages+1
+    end end
+  end
+  table.sort(out,function(a,b)
+    if a.item.name~=b.item.name then return a.item.name<b.item.name end
+    if a.item.damage~=b.item.damage then return a.item.damage<b.item.damage end
+    return (a.item.label or "")<(b.item.label or "")
+  end)
+  totalsCache=out;return out
+end
+function M.inflight()
+  local out={}
+  for id,job in pairs(inFlight) do for _,r in ipairs(job) do
+    out[#out+1]={job=id,item=item(r.item),count=r.count,storage=r.storage,
+      kind=r.direction=='take' and 'fetch' or 'store'}
+  end end
+  table.sort(out,function(a,b) if a.job~=b.job then return a.job<b.job end;return a.storage<b.storage end)
+  return out
+end
+function M.contents(storage) local key=inventory(storage) or storage;return db[key] and copy(db[key]) or nil end
+function M.stackSize(i) return limits[limitKey(item(i))] end
+local function roleSlots(slots,size)
+  assert(type(slots)=="table" and next(slots),"nonempty slots required")
+  if size~=nil then assert(type(size)=="number" and size>=0 and size<math.huge and size%1==0,"invalid inventory size") end
+  local n=0
+  for k in pairs(slots) do
+    assert(type(k)=="number" and k>0 and k%1==0,"dense slots required");n=n+1
+  end
+  local out,seen={},{}
+  for k=1,n do
+    local slot=slots[k]
+    assert(type(slot)=="number" and slot>0 and slot<math.huge and slot%1==0 and not seen[slot],"invalid/duplicate slot")
+    assert(not size or slot<=size,"slot outside inventory")
+    out[k]=slot;seen[slot]=true
+  end
+  return out
+end
+-- Face-relative role view: copy only declared indices, never a full listing.
+-- Invalid declarations raise, like other warehouse configuration APIs.
+function M.roleContents(storage,slots,listing,size)
+  assert(type(storage)=="string" and map.storage(storage),"unknown storage")
+  local declared=roleSlots(slots,size)
+  assert(size~=nil and type(listing)=="table","listing and inventory size required")
+  local e={items={},slots=#declared,freeSlots=#declared,listing={}}
+  for _,slot in ipairs(declared) do
+    local stack=listing[slot]
+    if stack then
+      local i=item(stack)
+      assert(type(stack.size)=="number" and stack.size>0 and stack.size%1==0,"invalid stack count")
+      assert(type(stack.maxSize)=="number" and stack.maxSize>0 and stack.maxSize<math.huge and stack.maxSize%1==0 and stack.size<=stack.maxSize,"invalid stack limit")
+      local k=itemKey(i);local v=e.items[k] or {item=i,count=0,maxSize=stack.maxSize,stacks=0,room=0}
+      v.count=v.count+stack.size;v.stacks=v.stacks+1;v.room=v.room+stack.maxSize-stack.size;e.items[k]=v
+      e.freeSlots=e.freeSlots-1
+      e.listing[slot]={name=i.name,damage=i.damage,label=i.label,size=stack.size,maxSize=stack.maxSize}
+    end
+  end
+  return e
+end
+function M.cachedRoleContents(storage,slots)
+  syncMapRevision()
+  local ok,view,err=pcall(function()
+    assert(type(storage)=="string" and map.storage(storage),"unknown storage")
+    local e=map.storage(storage)
+    local cached=roleCache[e.node] and roleCache[e.node][e.side]
+    local declared=roleSlots(slots,cached and cached.size)
+    if not cached then return nil,"role slots have no authoritative observation" end
+    for _,key in ipairs(cached.ids) do
+      if mutationCounts[key] then return nil,"inventory mutation pending; rescan role" end
+    end
+    for _,slot in ipairs(declared) do
+      if cached.listing[slot]==nil then return nil,"role slot "..slot.." has no authoritative observation" end
+    end
+    return M.roleContents(storage,declared,cached.listing,cached.size)
+  end)
+  if not ok then return nil,view end
+  return view,err
+end
+local function observeRole(e,step)
+  invalidateRead(e)
+  if type(step.listing)~="table" or type(step.size)~="number" or step.size<0 or step.size%1~=0 or step.size==math.huge then return end
+  local ids=identities(e);if not ids then return end
+  local faces=roleCache[e.node] or {};roleCache[e.node]=faces
+  local cached=faces[e.side] or {listing={}};faces[e.side]=cached
+  cached.ids=ids;cached.size=step.size
+  -- Discard observations outside the latest reported face size.
+  for slot in pairs(cached.listing) do if slot>step.size then cached.listing[slot]=nil end end
+  local function slot(slot)
+    if type(slot)~="number" or slot<1 or slot>step.size or slot%1~=0 then return end
+    local stack=step.listing[slot]
+    if not stack then cached.listing[slot]=false;return end -- verified empty
+    local ok,i=pcall(item,stack)
+    if ok and type(stack.size)=="number" and stack.size>0 and stack.size%1==0
+      and type(stack.maxSize)=="number" and stack.maxSize>0 and stack.maxSize<math.huge
+      and stack.maxSize%1==0 and stack.size<=stack.maxSize then
+      cached.listing[slot]={name=i.name,damage=i.damage,label=i.label,size=stack.size,maxSize=stack.maxSize}
+    else cached.listing[slot]=nil end
+  end
+  if e.slots then for _,index in ipairs(e.slots) do slot(index) end
+  else cached.listing={};for index=1,step.size do slot(index) end end
+end
+local function roleRoom(contents,i)
+  assert(type(contents)=="table" and type(contents.items)=="table" and type(contents.freeSlots)=="number" and contents.freeSlots>=0,"role contents required")
+  local maximum=limits[limitKey(i)];local room=0
+  for _,v in pairs(contents.items) do if matches(v.item,i) then
+    maximum=maximum or v.maxSize;room=room+v.room
+  end end
+  return maximum,room
+end
+-- Capacity belongs solely to this view, not to an inventory alias/catalogue.
+function M.roleCapacity(contents,i)
+  local maximum,room=roleRoom(contents,item(i))
+  if not maximum then return nil,"unknown stack limit; scan item first" end
+  return contents.freeSlots*maximum+room
+end
+-- Joint admission: empty role slots cannot be reused by distinct item types.
+function M.roleFits(contents,quantities)
+  assert(type(quantities)=="table","item quantities required")
+  local needed=0
+  for id,count in pairs(quantities) do
+    assert(type(id)=="string" and id~="","item identity required")
+    assert(type(count)=="number" and count>0 and count<math.huge and count%1==0,"positive count required")
+    local name,damage=id:match("^(.*):(%d+)$")
+    local maximum,room=roleRoom(contents,{name=name or id,damage=tonumber(damage) or 0})
+    if not maximum then return nil,"unknown stack limit for "..id.."; scan item first" end
+    needed=needed+math.ceil(math.max(0,count-room)/maximum)
+  end
+  assert(type(contents)=="table" and type(contents.freeSlots)=="number","role contents required")
+  return needed<=contents.freeSlots
+end
+local function observe(storage,step)
+  local key=inventory(storage) or storage;if not key or not step.listing or not step.size then return end
+  local e={items={},slots=step.size,freeSlots=step.size,time=computer.uptime(),verified=true}
+  for _,stack in pairs(step.listing) do
+    local i=item(stack);local k=itemKey(i);local v=e.items[k] or {item=i,count=0,maxSize=stack.maxSize,stacks=0,room=0}
+    v.count=v.count+stack.size;v.stacks=v.stacks+1;v.room=v.room+stack.maxSize-stack.size;e.items[k]=v;e.freeSlots=e.freeSlots-1
+  end
+  -- Retain a seen item's real stack limit even when its last stack disappears.
+  for k,v in pairs(db[key] and db[key].items or {}) do if not e.items[k] then
+    e.items[k]={item=v.item,count=0,maxSize=v.maxSize,stacks=0,room=0}
+  end end
+  track(key)
+  db[key]=e;saveInventory(key);return true
+end
+local endpointStorages
+local function at(endpoint)
+  if not endpoint then return end
+  for s,e in pairs(endpointStorages) do if e.node==endpoint.node and e.side==endpoint.side then return s end end
+end
+local function readStorage(storage)
+  return submit({{read=storage}},{drones=1,retries=0},{})
+end
+function M.scanRole(storage,slots)
+  local ok,id,err=pcall(function()
+    assert(type(storage)=="string" and map.storage(storage),"unknown storage")
+    return submit({{read={storage=storage,slots=roleSlots(slots)}}},{drones=1,retries=0},{})
+  end)
+  if not ok then return nil,id end
+  return id,err
+end
+-- Pack role reads by declared slots, never by guessed physical inventories.
+-- Three slots per job bounds ordinary result packets; the agent's packet-size
+-- refusal still applies to exceptionally large labels, even for one slot.
+function M.scanRoles(requests)
+  local ok,batches=pcall(function()
+    assert(type(requests)=="table","role requests required")
+    local n=0;for k in pairs(requests) do
+      assert(type(k)=="number" and k>0 and k%1==0,"dense role requests required");n=n+1
+    end
+    local out,steps,used={},{},0
+    for k=1,n do
+      local r=requests[k]
+      assert(type(r)=="table" and type(r.storage)=="string" and map.storage(r.storage),"unknown role storage")
+      local key=r.key or r.storage;assert(type(key)=="string" and key~="","role key required")
+      local declared=roleSlots(r.slots);local first=1
+      while first<=#declared do
+        local chunk={};local count=math.min(3-used,#declared-first+1)
+        for j=1,count do chunk[j]=declared[first+j-1] end
+        steps[#steps+1]={roleKey=key,read={storage=r.storage,slots=chunk}}
+        used=used+count;first=first+count
+        if used==3 then out[#out+1]=steps;steps={};used=0 end
+      end
+    end
+    if used>0 then out[#out+1]=steps end
+    return out
+  end)
+  if not ok then return nil,batches end
+  local ids={}
+  for _,steps in ipairs(batches) do
+    local ok,id,err=pcall(submit,steps,{drones=1,retries=0},{})
+    if not ok then return nil,id,ids end
+    if not id then return nil,err,ids end
+    ids[#ids+1]=id
+  end
+  return ids
+end
+-- Explicit scans are independent one-face read jobs: even a completely full
+-- chest fits the existing result packet bound, unlike a 64-face result.
+function M.scan(storages)
+  local list={}
+  if type(storages)=="string" then storages={storages} end
+  if storages then for _,s in ipairs(storages) do assert(map.storage(s),"unknown storage");list[#list+1]=s end
+  else for _,faces in pairs(entries()) do list[#list+1]=faces[1].storage end end
+  table.sort(list);compact();local ids,seen={},{}
+  for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
+  return ids
+end
+local function adjust(storage,i,delta,maximum,touched)
+  if not storage or delta==0 then return end
+  local key=inventory(storage) or storage;local e=db[key];touched[key]=storage
+  if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  local function change(k,v,n)
+    v.maxSize=maximum or v.maxSize
+    if not v.maxSize then
+      -- An interrupted job may expose counts but no stack limit. Never invent
+      -- a 64-stack capacity: an explicit read is required for this inventory.
+      e.capacityUnknown=true;v.count=math.max(0,v.count+n);e.items[k]=v;return
+    end
+    if n>0 then
+      local new=math.ceil(math.max(0,n-v.room)/v.maxSize);v.stacks=v.stacks+new
+      if e.freeSlots then e.freeSlots=math.max(0,e.freeSlots-new) end
+    end
+    v.count=math.max(0,v.count+n);v.room=math.max(0,v.stacks*v.maxSize-v.count)
+    if v.count==0 then if e.slots then e.freeSlots=math.min(e.slots,e.freeSlots+v.stacks) end;v.stacks=0;v.room=0 end
+    e.items[k]=v
+  end
+  if delta<0 then
+    local remaining=-delta
+    for k,v in pairs(e.items) do if matches(v.item,i) then local n=math.min(remaining,v.count);change(k,v,-n);remaining=remaining-n end end
+  else
+    local k=itemKey(i);local v=e.items[k]
+    if not v then for other,value in pairs(e.items) do if matches(value.item,i) then k,v=other,value;break end end end
+    change(k,v or {item=item(i),count=0,maxSize=maximum,stacks=0,room=0},delta)
+  end
+  e.estimated=true
+end
+local function short(storage,i,returned,touched)
+  if not storage then return end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  local n=quantity(e,i);adjust(storage,i,-n,nil,touched)
+  if returned>0 then adjust(storage,i,returned,nil,touched) end
+  touched[key]=storage
+end
+local function full(storage,i,touched)
+  if not storage then return end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  e.full=e.full or {};e.full[itemKey(i)]=true;e.freeSlots=0
+  for _,v in pairs(e.items) do if matches(v.item,i) then v.room=0 end end
+  e.estimated=true;touched[key]=storage
+end
+local function finished(_,id)
+  local s=logistics.status(id);if not s then return end
+  syncMapRevision()
+  -- Missing/failed read legs must not leave previous fuel observations valid.
+  local reads=pendingReads[id]
+  for _,e in ipairs(reads or {}) do invalidateRead(e) end
+  pendingReads[id]=nil
+  endpointStorages=map.storages()
+  local touched={};local observed=false
+  learn(s.item,s.maxSize)
+  if s.steps then
+    -- Agent ledger subtracts returns AND overflow from take.moved, so use
+    -- taken-returned for the source, not moved. Puts report actual deliveries.
+    for _,step in ipairs(s.steps) do
+      learn(step.item,step.maxSize)
+      for _,stack in pairs(step.listing or {}) do learn(stack,stack.maxSize) end
+      if step.read then
+        if readCurrent(reads,step.read) then
+          observeRole(step.read,step)
+          local storage=at(step.read);if storage and not step.read.slots then observed=observe(storage,step) or observed end
+        else invalidateRead(step.read) end
+      elseif step.take then
+        mutationKeys({step.take})
+        local storage=at(step.take);adjust(storage,step.item,-(step.taken or 0)+(step.returned or 0),step.maxSize,touched)
+        -- A full-face short reports observed remaining stock, not necessarily
+        -- zero (e.g. unmergeable NBT variants filled the drone's cargo slots).
+        if step.short and not step.take.slots then short(storage,step.item,step.found or 0,touched) end
+        adjust(at(s.overflowEndpoint),step.item,step.overflow or 0,step.maxSize,touched)
+      elseif step.put then
+        mutationKeys({step.put})
+        adjust(at(step.put),step.item,step.moved or 0,step.maxSize,touched)
+        if (step.refused or 0)>0 and not step.put.slots then full(at(step.put),step.item,touched) end
+      end
+    end
+  elseif s.item then
+    if s.from then mutationKeys({s.from}) end;if s.to then mutationKeys({s.to}) end
+    adjust(at(s.from),s.item,-(s.taken or 0)+(s.returned or 0),s.maxSize,touched)
+    if s.short and s.from and not s.from.slots then short(at(s.from),s.item,s.found or 0,touched) end
+    adjust(at(s.to),s.item,s.moved or 0,s.maxSize,touched)
+    adjust(at(s.overflowEndpoint),s.item,s.overflow or 0,s.maxSize,touched)
+    if (s.refused or 0)>0 and s.to and not s.to.slots then full(at(s.to),s.item,touched) end
+  end
+  if s.overflowEndpoint then mutationKeys({s.overflowEndpoint}) end
+  local mutation=pendingMutations[id]
+  if mutation then
+    local ids={};for key in pairs(mutation) do ids[#ids+1]=key end;invalidate(ids)
+    for key in pairs(mutation) do
+      mutationEpochs[key]=(mutationEpochs[key] or 0)+1
+      local count=mutationCounts[key]-1;mutationCounts[key]=count>0 and count or nil
+    end
+    pendingMutations[id]=nil
+  end
+  for key in pairs(touched) do if db[key] then saveInventory(key) end end
+  -- Release only after the final ledger has been incorporated in the catalogue.
+  inFlight[id]=nil
+  pendingCatalogue[id]=nil
+  maintain()
+  local learned=limitsDirty;saveLimits()
+  if observed or next(touched) or learned then changed() end
+  endpointStorages=nil
+end
+event.listen("logistics",finished)
+local function positive(n) assert(type(n)=="number" and n>0 and n<math.huge and n%1==0,"positive count required") end
+local function node(endpoint)
+  if type(endpoint)=="string" then return assert(map.place(endpoint),"unknown endpoint") end
+  return endpoint.storage and assert(map.place(endpoint.storage)) or endpoint.node
+end
+local function distance(a,b)
+  local ok,path=pcall(logistics.plan,a,b);if not ok then return math.huge end
+  local d=0;for k=2,#path do local p,q=path[k-1],path[k];d=d+math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2) end;return d
+end
+function M.fetch(i,n,to,opts)
+  i=item(i);positive(n);local candidates,total={},0
+  for _,faces in pairs(entries()) do
+    local count=math.max(0,quantity(faces[1].entry,i)-reserved(faces[1].key,i,'take'))
+    if count>0 then candidates[#candidates+1]={faces=faces,count=count};total=total+count end
+  end
+  if total<n then return nil,"requested "..n..", available "..total end
+  table.sort(candidates,function(a,b) return a.count>b.count end)
+  local steps,reservations,remaining,cursor={},{},n,1;total=0;local target=node(to)
+  while remaining>0 and cursor<=#candidates do
+    -- Route all equal-count inventories at the cut-off, preserving the
+    -- distance tie-break, but never route lower-count unused inventories.
+    local batch={};local count=candidates[cursor].count
+    repeat
+      local c=candidates[cursor];local best,dist=nil,math.huge
+      for _,face in ipairs(c.faces) do local d=distance(face.storage,target)
+        if d<dist or (d==dist and best and face.storage<best) then best,dist=face.storage,d end
+      end
+      if best then batch[#batch+1]={storage=best,distance=dist,count=count};total=total+count end
+      cursor=cursor+1
+    until cursor>#candidates or candidates[cursor].count~=count
+    table.sort(batch,function(a,b) if a.distance~=b.distance then return a.distance<b.distance end;return a.storage<b.storage end)
+    for _,c in ipairs(batch) do if remaining==0 then break end;local take=math.min(remaining,c.count)
+      steps[#steps+1]={take=c.storage,item=i,count=take};remaining=remaining-take
+      reservations[#reservations+1]={key=inventory(c.storage),storage=c.storage,item=i,count=take,direction='take'}
+    end
+  end
+  if remaining>0 then return nil,"requested "..n..", available "..total end
+  steps[#steps+1]={put=to,item=i,rest=true};return submit(steps,opts,reservations)
+end
+local function accepts(settings,i)
+  if not settings.filter then return nil end
+  for _,v in ipairs(settings.filter) do if matches(i,v) then return true end end;return false
+end
+function M.store(i,n,from,opts)
+  i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum=limits[limitKey(i)]
+  if not maximum then return nil,"requested "..n..", capacity 0, unknown stack size for "..i.name..":"..i.damage.."; reading the source teaches it" end
+  for _,faces in pairs(entries()) do
+    local uncertain
+    for _,face in ipairs(faces) do
+      local e=face.entry;local accept=accepts(face.settings,i)
+      if accept~=false and e and not e.capacityUnknown and maximum then
+        local held=quantity(e,i);local room=0;for _,v in pairs(e.items) do if matches(v.item,i) then room=room+v.room end end
+        local occupied=0;for _,v in pairs(e.items) do occupied=occupied+v.count end
+        local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
+        local capacity=e.full and e.full[itemKey(i)] and 0 or math.max(0,e.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum))
+        if tier and capacity>0 then
+          candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity}
+        end
+      elseif accept~=false and (not e or e.capacityUnknown or not maximum) then uncertain=true end
+    end
+    if uncertain then unknown=unknown+1 end
+  end
+  table.sort(candidates,function(a,b) if a.tier~=b.tier then return a.tier<b.tier end;if a.priority~=b.priority then return a.priority>b.priority end;return a.storage<b.storage end)
+  -- Interleave takes and puts, allowing a large request to split naturally.
+  local steps,reservations,remaining,used={},{},n,{};local source=node(from)
+  for _,c in ipairs(candidates) do if remaining==0 then break end
+    if not used[c.key] and distance(source,c.storage)<math.huge then
+      used[c.key]=true;total=total+c.capacity;local amount=math.min(remaining,c.capacity)
+      steps[#steps+1]={take=from,item=i,count=amount};steps[#steps+1]={put=c.storage,item=i,count=amount};remaining=remaining-amount
+      reservations[#reservations+1]={key=c.key,storage=c.storage,item=i,count=amount,direction='put',maximum=maximum}
+    end
+  end
+  if remaining>0 then return nil,"requested "..n..", capacity "..total..", unknown inventories "..unknown end
+  return submit(steps,opts,reservations)
+end
+-- Packed APIs keep one tracked job per confirmed cargo-sized tour. Planning
+-- uses ordinary stock estimates for fetches, but collection requires a fresh
+-- authoritative exact source view (including declared empty slots).
+local function manyRequests(requests)
+  assert(type(requests)=="table","requests required")
+  local n=0;for k in pairs(requests) do
+    assert(type(k)=="number" and k>0 and k%1==0,"dense requests required");n=n+1
+  end
+  local out={}
+  for k=1,n do
+    local r=requests[k];assert(type(r)=="table","item request required")
+    positive(r.count);out[k]={item=item(r.item),count=r.count,to=r.to}
+  end
+  return out
+end
+local function cargoSlots()
+  local minimum
+  for _,d in ipairs(logistics.drones and logistics.drones() or {}) do
+    local n=d.cargoSlots
+    if type(n)=="number" and n>0 and n<math.huge and n%1==0 then minimum=math.min(minimum or n,n) end
+  end
+  assert(minimum,"unknown fleet cargo slots; wait for a confirmed drone")
+  return minimum
+end
+local function overlap(a,b)
+  return a.name==b.name and (a.damage or 0)==(b.damage or 0)
+    and (not a.label or not b.label or a.label==b.label)
+end
+local function manyReserved(key,i,direction,planned)
+  local count=0
+  local function include(r)
+    if r.key==key and r.direction==direction and overlap(r.item,i) then count=count+r.count end
+  end
+  for _,job in pairs(inFlight) do for _,r in ipairs(job) do include(r) end end
+  for _,r in ipairs(planned) do include(r) end
+  return count
+end
+local function sameInventory(a,b)
+  local index=metadata();local seen={}
+  for _,key in ipairs(identities(a) or {}) do seen[key]=true;local c=index.clusters[key];if c then seen[c]=true end end
+  for _,key in ipairs(identities(b) or {}) do if seen[key] or seen[index.clusters[key]] then return true end end
+  return false
+end
+local function sourceReservation(storage,i,count)
+  return {key=inventory(storage) or storage,storage=storage,item=i,count=count,direction='take'}
+end
+local function manyEndpoint(value)
+  local e=endpoint(value)
+  assert(e and type(e.node)=="string" and type(e.side)=="number" and e.side>=0 and e.side<=5 and e.side%1==0,"unknown/invalid endpoint")
+  assert(not map.node or map.node(e.node),"unknown endpoint node")
+  if type(value)=="string" then return value end
+  local out={node=e.node,side=e.side}
+  if value.storage then out={storage=value.storage} end
+  if value.slots then
+    local cached=roleCache[e.node] and roleCache[e.node][e.side]
+    out.slots=roleSlots(value.slots,cached and cached.size)
+  end
+  return out
+end
+local function observedSource(storage,i,reservedCount)
+  local e=endpoint(storage);local cached=roleCache[e.node] and roleCache[e.node][e.side]
+  if not cached then return end
+  for _,key in ipairs(cached.ids) do if mutationCounts[key] then return end end
+  local rows={}
+  for slot=1,cached.size do
+    local stack=cached.listing[slot];if stack==nil then return end
+    if stack and matches(stack,i) then
+      local skipped=math.min(reservedCount,stack.size);reservedCount=reservedCount-skipped
+      if stack.size>skipped then rows[#rows+1]={slot=slot,count=stack.size-skipped,maxSize=stack.maxSize,
+        stackKey="stack:"..e.node..":"..e.side..":"..slot} end
+    end
+  end
+  return rows
+end
+local function addPieces(pieces,requestIndex,i,count,maximum,stacks,from,to,take,put)
+  -- Separate observed stacks/source allocations are not assumed NBT-mergeable.
+  local units=math.max(math.ceil(count/maximum),math.min(count,stacks or 1))
+  while count>0 do
+    local n=math.min(maximum,math.ceil(count/units))
+    pieces[#pieces+1]={requestIndex=requestIndex,item=i,count=n,maximum=maximum,
+      from=from,to=to,take=take,put=put}
+    count=count-n;units=units-1
+  end
+end
+local function packedJobs(requests,pieces,missing,slots,opts)
+  -- Router identity limits must be consistent across every leg in a job.
+  local maxima={}
+  for _,p in ipairs(pieces) do local key=itemKey(p.item);maxima[key]=math.min(maxima[key] or p.maximum,p.maximum) end
+  local normalized={}
+  for _,p in ipairs(pieces) do
+    local maximum=maxima[itemKey(p.item)];local count=p.count
+    while count>0 do
+      local part={};for key,value in pairs(p) do part[key]=value end
+      part.maximum=maximum;part.count=math.min(count,maximum)
+      normalized[#normalized+1]=part;count=count-part.count
+    end
+  end
+  pieces=normalized
+  local out={};local cursor=1
+  while cursor<=#pieces do
+    local job={steps={},reservations={},expected={}};local indexes={}
+    local last=cursor-1;local occupied,held=0,{}
+    for k=cursor,#pieces do
+      local p=pieces[k];local key=p.stackKey or p
+      local before=held[key] or 0
+      local extra=math.ceil((before+p.count)/p.maximum)-math.ceil(before/p.maximum)
+      if occupied+extra>slots then break end
+      held[key]=before+p.count;occupied=occupied+extra;last=k
+    end
+    assert(last>=cursor,"allocation exceeds confirmed cargo slots")
+    local function expect(index,count)
+      local row=indexes[index]
+      if not row then
+        row=#job.expected+1;indexes[index]=row
+        job.expected[row]={item=item(requests[index].item),count=0,requestIndex=index}
+      end
+      job.expected[row].count=job.expected[row].count+count;return row
+    end
+    if #out==0 then for index=1,#requests do local count=missing[index] or 0;if count>0 then expect(index,count) end end end
+    for k=cursor,last do local p=pieces[k];local index=expect(p.requestIndex,p.count)
+      job.steps[#job.steps+1]={take=p.from,item=item(p.item),count=p.count,maxSize=p.maximum,expectedIndex=index}
+      if p.take then local r=copy(p.take);r.count=p.count;job.reservations[#job.reservations+1]=r end
+      if p.put then local r=copy(p.put);r.count=p.count;job.reservations[#job.reservations+1]=r end
+    end
+    -- Visit sources before delivery. Only fragments proven to be from the
+    -- same exact observed stack may share a cargo slot across requests.
+    for k=cursor,last do local p=pieces[k]
+      job.steps[#job.steps+1]={put=p.to,item=item(p.item),count=p.count,maxSize=p.maximum,
+        expectedIndex=indexes[p.requestIndex]}
+    end
+    job.opts=copy(opts or {});job.opts.requests=nil
+    job.opts.drones=1;job.opts.split=false;job.opts.expectedItems=job.expected
+    out[#out+1]=job;cursor=last+1
+  end
+  return out
+end
+local function submitPacked(jobs)
+  local ids={}
+  for _,job in ipairs(jobs) do
+    local ok,id,err=pcall(submit,job.steps,job.opts,job.reservations)
+    if not ok then return nil,id,ids end
+    if not id then return nil,err,ids end
+    ids[#ids+1]=id
+  end
+  return ids
+end
+function M.fetchMany(requests,to,opts)
+  local ok,jobs=pcall(function()
+    syncMapRevision();requests=manyRequests(requests)
+    assert(opts==nil or type(opts)=="table","options required")
+    for _,r in ipairs(requests) do
+      local destination=r.to;if destination==nil then destination=to end
+      r.to=manyEndpoint(destination);r.target=node(r.to)
+    end
+    local slots=cargoSlots();local stock=entries()
+    local pieces,planned,missing={},{},{}
+    for index,r in ipairs(requests) do
+      local i,remaining=r.item,r.count;local maximum=limits[limitKey(r.item)]
+      local candidates={}
+      for _,faces in pairs(stock) do
+        local e=faces[1].entry;local held=quantity(e,i)
+        local available=math.max(0,held-manyReserved(faces[1].key,i,'take',planned))
+        if available>0 then
+          local best,dist,bestObserved
+          for _,face in ipairs(faces) do
+            if not sameInventory(face.storage,r.to) then
+              local d=distance(face.storage,r.target)
+              local ep=endpoint(face.storage)
+              local observed=roleCache[ep.node] and roleCache[ep.node][ep.side]~=nil or false
+              if d<math.huge and (not dist or d<dist or (d==dist and
+                ((observed and not bestObserved) or (observed==bestObserved and face.storage<best)))) then
+                best,dist,bestObserved=face.storage,d,observed
+              end
+            end
+          end
+          if best then
+            local stacks=0
+            for _,v in pairs(e.items) do if matches(v.item,i) then
+              local limit=v.maxSize or maximum
+              assert(limit,"unknown stack limit for "..limitKey(i).."; scan item first")
+              stacks=stacks+(v.stacks or math.ceil(v.count/limit))
+              maximum=math.min(maximum or limit,limit)
+            end end
+            candidates[#candidates+1]={storage=best,key=faces[1].key,count=available,stacks=stacks,distance=dist,
+              rows=observedSource(best,i,manyReserved(faces[1].key,i,'take',planned))}
+          end
+        end
+      end
+      table.sort(candidates,function(a,b)
+        if a.count~=b.count then return a.count>b.count end
+        if a.distance~=b.distance then return a.distance<b.distance end
+        return a.storage<b.storage
+      end)
+      for _,c in ipairs(candidates) do if remaining==0 then break end
+        local n=math.min(remaining,c.count);local reservation=sourceReservation(c.storage,i,n)
+        planned[#planned+1]=reservation
+        if c.rows then
+          local left=n
+          for _,row in ipairs(c.rows) do if left==0 then break end
+            local amount=math.min(left,row.count);local first=#pieces+1
+            addPieces(pieces,index,i,amount,math.min(maximum,row.maxSize),1,
+              {storage=c.storage,slots={row.slot}},r.to,reservation)
+            for k=first,#pieces do pieces[k].stackKey=row.stackKey end
+            left=left-amount
+          end
+          assert(left==0,"observed source disagrees with stock catalogue; rescan source")
+        else addPieces(pieces,index,i,n,maximum,c.stacks,c.storage,r.to,reservation) end
+        remaining=remaining-n
+      end
+      missing[index]=remaining
+    end
+    assert(#pieces>0 or #requests==0,"requested items unavailable")
+    return packedJobs(requests,pieces,missing,slots,opts)
+  end)
+  if not ok then return nil,jobs,{} end
+  return submitPacked(jobs)
+end
+function M.storeMany(from,opts)
+  local ok,jobs=pcall(function()
+    syncMapRevision();assert(opts==nil or type(opts)=="table","options required")
+    from=manyEndpoint(from);local e=endpoint(from);assert(e,"unknown source")
+    local storage=type(from)=="string" and from or from.storage
+    if not storage then
+      for name,face in pairs(map.storages()) do if face.node==e.node and face.side==e.side then storage=name;break end end
+    end
+    assert(storage,"named source required")
+    local declared=type(from)=="table" and from.slots
+    if not declared then
+      local cached=roleCache[e.node] and roleCache[e.node][e.side]
+      assert(cached,"source has no authoritative observation; scan source first")
+      declared={};for slot=1,cached.size do declared[slot]=slot end
+    end
+    local view,err=M.cachedRoleContents(storage,declared);assert(view,err)
+    local slots=cargoSlots();local requests
+    if opts and opts.requests~=nil then
+      requests=manyRequests(opts.requests)
+      for _,r in ipairs(requests) do assert(r.to==nil,"store whitelist cannot override destination") end
+    else
+      requests={};for _,v in pairs(view.items) do if v.count>0 then requests[#requests+1]={item=item(v.item),count=v.count} end end
+      table.sort(requests,function(a,b)
+        if a.item.name~=b.item.name then return a.item.name<b.item.name end
+        if a.item.damage~=b.item.damage then return a.item.damage<b.item.damage end
+        return (a.item.label or "")<(b.item.label or "")
+      end)
+    end
+    local stock=entries();local pieces,planned,missing={},{},{}
+    local source=node(from);local sourceKey=inventory(storage) or storage
+    for index,r in ipairs(requests) do
+      local i=r.item;local maximum=limits[limitKey(i)]
+      local observed=quantity(view,i);local stackRows={};local stackSlots={}
+      for slot,stack in pairs(view.listing) do if matches(stack,i) then
+        maximum=math.min(maximum or stack.maxSize,stack.maxSize)
+        stackRows[slot]=stack;stackSlots[#stackSlots+1]=slot
+      end end
+      local available=math.max(0,observed-manyReserved(sourceKey,i,'take',planned))
+      local remaining=math.min(r.count,available);missing[index]=r.count-remaining
+      if remaining>0 then
+        assert(maximum,"unknown stack limit for "..limitKey(i).."; scan item first")
+        local candidates={}
+        for _,faces in pairs(stock) do for _,face in ipairs(faces) do
+          local entry=face.entry;local accept=accepts(face.settings,i)
+          if accept~=false and entry and not entry.capacityUnknown and not sameInventory(face.storage,from) then
+            local held=quantity(entry,i);local room,occupied=0,0
+            for _,v in pairs(entry.items) do occupied=occupied+v.count;if matches(v.item,i) then room=room+v.room end end
+            local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
+            local capacity=entry.full and entry.full[itemKey(i)] and 0 or math.max(0,
+              entry.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum,planned))
+            if tier and capacity>0 and distance(source,face.storage)<math.huge then
+              candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,
+                priority=face.settings.priority or 0,capacity=capacity}
+            end
+          end
+        end end
+        table.sort(candidates,function(a,b)
+          if a.tier~=b.tier then return a.tier<b.tier end
+          if a.priority~=b.priority then return a.priority>b.priority end
+          return a.storage<b.storage
+        end)
+        table.sort(stackSlots);local cursor=1
+        local skipped=manyReserved(sourceKey,i,'take',planned);local offset=0
+        while cursor<=#stackSlots and skipped>=stackRows[stackSlots[cursor]].size do
+          skipped=skipped-stackRows[stackSlots[cursor]].size;cursor=cursor+1
+        end
+        offset=skipped
+        local used={}
+        for _,c in ipairs(candidates) do if remaining==0 then break end
+          if not used[c.key] then
+            used[c.key]=true;local amount=math.min(remaining,c.capacity)
+            while amount>0 do
+              local slot=stackSlots[cursor];local stack=assert(stackRows[slot],"source slot allocation exhausted")
+              local n=math.min(amount,stack.size-offset,maximum)
+              local take=sourceReservation(storage,i,n)
+              local put={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
+              planned[#planned+1]=take;planned[#planned+1]=put
+              addPieces(pieces,index,i,n,maximum,1,{storage=storage,slots={slot}},c.storage,take,put)
+              pieces[#pieces].stackKey="stack:"..e.node..":"..e.side..":"..slot
+              amount=amount-n;remaining=remaining-n;offset=offset+n
+              if offset>=stack.size then cursor=cursor+1;offset=0 end
+            end
+          end
+        end
+        assert(remaining==0,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i))
+      end
+    end
+    assert(#pieces>0 or #requests==0,"requested source items unavailable")
+    return packedJobs(requests,pieces,missing,slots,opts)
+  end)
+  if not ok then return nil,jobs,{} end
+  return submitPacked(jobs)
+end
+return M

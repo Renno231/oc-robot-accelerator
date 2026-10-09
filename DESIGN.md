@@ -31,6 +31,40 @@ attempt have been removed.
   process calls `event.pull`; they must be short and never block. Natively
   confirmed (T3).
 
+### MES service and transport ownership
+
+- MES is one installed, long-running service, guarded by `package.loaded`.
+  Installation initializes mapping, logistics and warehouse, shared listeners
+  and polling timers, and one API proxy plus pubsub client per paired robot.
+  The service owns these resources across foreground commands and UI lifetimes.
+- Manufacturing uses plain state machines: `update(run, what, data)` records a
+  fact, then `advance(run)` starts every ready action. Decisions stay in this
+  state machine; transport callbacks and polling only enqueue facts.
+- `advance` never blocks and is never re-entered. One guarded `pump()` drains
+  the fact queue; nested callbacks during connection setup only add to it.
+  Robots use public `proxy:async(cb)` calls, drone actions are non-blocking, and
+  the service tick supplies machine observations. Each outstanding RPC has a
+  service-owned deadline because API async timeout is silent. A missed reply
+  means unknown until an async status query reconciles it, never assumed idle
+  or successful.
+- The only blocking network call is public `api.connect`, during installation
+  or service-owned reconnection. Reconnection restores subscriptions and queries
+  status; it never blindly repeats a craft request. The service uses the frozen
+  public networking libraries.
+- There are no OpenOS threads or process-internal registration pinning in the
+  controller. The planner's plain coroutines retain their existing behavior.
+  Foreground `mes.wait(runId)` may pull events; closing that caller does not stop
+  the service or its run. Per-job cleanup removes only that job's subscription.
+- Apply job-topic progress and terminal receipts only after admission or an
+  owner-scoped status RPC confirms that the job belongs to this controller.
+  If the admission reply is lost, retain the candidate receipt and reconcile
+  through status; a shared pubsub topic is not ownership proof.
+- Native evidence writes full execution and timing ledgers to separate files.
+  Serialize compact frontend summaries that reference those files so T3 memory
+  is not spent duplicating receipts in one aggregate string. Public MES status
+  and receipt shapes remain complete. The OpenComputers sandbox does not expose
+  `collectgarbage`; keep instrumentation bounded using ordinary supported APIs.
+
 ### Map access geometry
 
 A drone accesses storage through absolute sides. Source-confirmed at the pinned

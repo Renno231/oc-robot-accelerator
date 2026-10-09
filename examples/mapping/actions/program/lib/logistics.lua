@@ -3,6 +3,15 @@ local event=require("event")
 local serialization=require("serialization")
 local map=require("map")
 local M={}
+-- Item identity must not depend on hash-table serialization order or copies.
+local function itemKey(item)
+  local parts={}
+  for _,field in ipairs({"name","damage","label"}) do
+    local value=type(item[field])..":"..tostring(item[field])
+    parts[#parts+1]=#value..":"..value
+  end
+  return table.concat(parts)
+end
 local function read(path,default)
   local f=io.open(path,"r");if not f then return default end
   local data=serialization.unserialize(f:read("*a"));f:close();assert(type(data)=="table","invalid "..path);return data
@@ -19,6 +28,34 @@ local registry=read("/etc/logistics.drones",{})
 local savedRoutes=read("/etc/logistics.routes",{})
 local fleet,addresses,announcing,jobs,queue,finished={},{},{},{},{},{}
 local nextJob,nextTrip=0,0
+local clockOK,clock=pcall(require,"computer")
+local function uptime() if clockOK and type(clock.uptime)=="function" then return clock.uptime() end end
+local mutationObservers,readObservers={},{}
+-- Synchronous invalidation hook: consumers must not trust a cached physical
+-- observation once a mutation has been queued, including direct router jobs.
+function M.onMutation(key,callback)
+  assert(type(key)=="string" and key~="","observer key required")
+  assert(callback==nil or type(callback)=="function","observer function required")
+  mutationObservers[key]=callback;return true
+end
+function M.onRead(key,callback)
+  assert(type(key)=="string" and key~="","observer key required")
+  assert(callback==nil or type(callback)=="function","observer function required")
+  readObservers[key]=callback;return true
+end
+local function observeSubmission(job,endpoints,observers)
+  if #endpoints==0 or not next(observers) then return end
+  for _,callback in pairs(observers) do
+    local snapshot=serialization.unserialize(serialization.serialize(endpoints))
+    local ok,err=pcall(callback,job.id,snapshot)
+    if not ok then event.push("logistics_observer_error",job.id,tostring(err)) end
+  end
+end
+local function mutation(job,endpoints)
+  if #endpoints==0 then return end
+  if job.opts.overflow then endpoints[#endpoints+1]=job.opts.overflow end
+  observeSubmission(job,endpoints,mutationObservers)
+end
 local function persist()
   local f=assert(io.open("/etc/logistics.drones","w"));f:write(serialization.serialize(registry));f:close()
 end
@@ -31,9 +68,33 @@ local function send(d,...)
   d.sent=(d.sent or 0)+1;modem.send(d.address,port,d.token,...)
 end
 local function wakeScheduler() event.push("logistics_work") end
+local function perItems(job)
+  if not job.opts.expectedItems then return nil end
+  local out={}
+  for i,r in ipairs(job.opts.expectedItems) do
+    out[i]={item=r.item,requestIndex=r.requestIndex or i,requested=r.count,moved=0,taken=0,returned=0,overflow=0}
+  end
+  for _,s in ipairs(job.steps or {}) do
+    local r=out[s.expectedIndex]
+    if r then
+      if s.put then r.moved=r.moved+(s.moved or 0) end
+      if s.take then
+        r.taken=r.taken+(s.taken or s.moved or 0)
+        r.returned=r.returned+(s.returned or 0);r.overflow=r.overflow+(s.overflow or 0)
+      end
+    end
+  end
+  for _,r in ipairs(out) do r.shortfall=math.max(0,r.requested-r.moved) end
+  return out
+end
 local function finish(job,state,reason)
   if job.finished then return end
-  job.state=state;job.reason=reason or job.reason;job.finished=true
+  if state=="done" then
+    for _,r in ipairs(perItems(job) or {}) do
+      if r.shortfall>0 then state=job.moved>0 and "partial" or "failed";reason=reason or "per-item shortfall";break end
+    end
+  end
+  job.state=state;job.reason=reason or job.reason;job.finished=true;job.finishedAt=uptime()
   finished[#finished+1]=job.id
   if #finished>32 then jobs[table.remove(finished,1)]=nil end
   for i,id in ipairs(queue) do if id==job.id then table.remove(queue,i);break end end
@@ -109,20 +170,26 @@ local function scheduleJob(job)
           return {action=job.action,reserve=reserve,routes=routes}
         end
         if job.steps then
-          local steps={};local carried,total={},0;local reservations={}
+          local steps={};local carried,total={},0;local reservations={};local limits={}
           for _,assigned in pairs(job.active) do
             for i,count in pairs(assigned.steps or {}) do reservations[i]=(reservations[i] or 0)+count end
+          end
+          for _,s in ipairs(job.steps) do
+            if s.item then
+              local key=itemKey(s.item)
+              limits[key]=math.min(limits[key] or math.huge,s.maxSize or 64)
+            end
           end
           for i,s in ipairs(job.steps) do
             local step=serialization.unserialize(serialization.serialize(s))
             if step.take then
               step.count=step.all and (step.complete and 0 or capacity) or math.max(0,step.count-step.moved-(reservations[i] or 0))
-              local key=serialization.serialize(step.item,false);carried[key]=(carried[key] or 0)+step.count
+              local key=itemKey(step.item);carried[key]=(carried[key] or 0)+step.count
             elseif step.put and not step.rest then step.count=math.max(0,step.count-step.moved-(reservations[i] or 0)) end
             if step.put then
-              local key=serialization.serialize(step.item,false);carried[key]=math.max(0,(carried[key] or 0)-(step.rest and math.huge or step.count))
+              local key=itemKey(step.item);carried[key]=math.max(0,(carried[key] or 0)-(step.rest and math.huge or step.count))
             end
-            local occupied=0;for _,count in pairs(carried) do occupied=occupied+math.ceil(count/64) end
+            local occupied=0;for key,count in pairs(carried) do occupied=occupied+math.ceil(count/limits[key]) end
             total=math.max(total,occupied*64)
             steps[i]=step
           end
@@ -130,14 +197,15 @@ local function scheduleJob(job)
           carried={};local allocation={};local useful=false
           for i,s in ipairs(steps) do
             if s.take then
-              local key=serialization.serialize(s.item,false);local used=0
-              for _,count in pairs(carried) do used=used+math.ceil(count/64) end
+              local key=itemKey(s.item);local used=0
+              for k,count in pairs(carried) do used=used+math.ceil(count/limits[k]) end
               local held=carried[key] or 0
-              local room=(d.cargoSlots-used)*64+(math.ceil(held/64)*64-held)
+              local limit=limits[key]
+              local room=(d.cargoSlots-used)*limit+(math.ceil(held/limit)*limit-held)
               s.count=math.min(s.count,room);carried[key]=held+s.count;allocation[i]=s.count
               useful=useful or s.count>0
             elseif s.put then
-              local key=serialization.serialize(s.item,false);local held=carried[key] or 0
+              local key=itemKey(s.item);local held=carried[key] or 0
               local count=math.min(held,s.rest and math.huge or s.count)
               if not s.rest then s.count=count;allocation[i]=count end
               carried[key]=held-count;useful=useful or count>0
@@ -158,7 +226,11 @@ local function scheduleJob(job)
       local allocation=task.allocation;task.allocation=nil
       local encoded,data=pcall(function() local s=serialization.serialize(task,false);assert(#s<7000,"trip packet too large");return s end)
       if not encoded then job.blocked=true;job.reason=tostring(data);if n==0 then finish(job,job.moved>0 and "partial" or "failed") end;return end
-      nextTrip=nextTrip+1;job.active[nextTrip]={drone=d.name,amount=amount,steps=allocation};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
+      nextTrip=nextTrip+1
+      local timing={trip=nextTrip,drone=d.name,startedAt=uptime()}
+      job.tripTimings=job.tripTimings or {};job.tripTimings[#job.tripTimings+1]=timing
+      job.active[nextTrip]={drone=d.name,amount=amount,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
+      job.dispatchedAt=job.dispatchedAt or uptime()
       send(d,"trip",nextTrip,data);n=n+1;reserved=reserved+amount
     end
   end
@@ -176,6 +248,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     if d.trip or d.lost or not d.node then
       local job=jobs[d.job];local a=job and job.active[d.trip]
       if a then
+        if a.timing then a.timing.finishedAt=uptime();a.timing.uncertain=true end
         local progress=a.progress or {};job.active[d.trip]=nil
         job.trips=job.trips+1
         if job.steps then
@@ -279,7 +352,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         send(d,"navigation",id,serialization.serialize({route=alternative and points(alternative),reason=job.reason},false))
         return
       end
-      job.active[id]=nil
+      if assigned.timing then assigned.timing.finishedAt=uptime() end;job.active[id]=nil
       if job.action then
         job.trips=job.trips+1;job.scan=result.scan;job.test=job.test or result.test
         job.remaining=0;d.state=(result.away or (result.held or 0)>0) and "held" or "idle"
@@ -381,33 +454,59 @@ function M.drones()
 end
 local function options(opts)
   opts=opts or {}
-  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait","unsupported option "..k) end
+  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait" or k=="expectedItems","unsupported option "..k) end
   for _,k in ipairs({"retries","drones"}) do if opts[k]~=nil then assert(type(opts[k])=="number" and opts[k]%1==0 and opts[k]>=(k=="drones" and 1 or 0),"invalid "..k) end end
   assert(opts.split==nil or type(opts.split)=="boolean","invalid split")
   if opts.wait then assert(type(opts.wait)=="table" and type(opts.wait.timeout)=="number" and opts.wait.timeout>=0 and opts.wait.timeout<math.huge,"invalid wait timeout") end
-  return serialization.unserialize(serialization.serialize(opts))
+  local out=serialization.unserialize(serialization.serialize(opts))
+  if out.expectedItems then
+    local a=out.expectedItems;assert(type(a)=="table" and #a>0,"expected items required")
+    local n=0;for k in pairs(a) do assert(type(k)=="number" and k%1==0 and k>=1 and k<=#a,"dense expected items required");n=n+1 end
+    assert(n==#a,"dense expected items required")
+    for _,r in ipairs(a) do
+      assert(type(r)=="table" and type(r.item)=="table" and type(r.item.name)=="string" and r.item.name~="","expected item required")
+      r.item.damage=r.item.damage or 0
+      assert(type(r.item.damage)=="number" and r.item.damage>=0 and r.item.damage<math.huge and r.item.damage%1==0 and (r.item.label==nil or type(r.item.label)=="string"),"invalid expected item")
+      assert(type(r.count)=="number" and r.count>0 and r.count<math.huge and r.count%1==0,"positive expected count required")
+      assert(r.requestIndex==nil or (type(r.requestIndex)=="number" and r.requestIndex>0 and r.requestIndex<math.huge and r.requestIndex%1==0),"invalid request index")
+    end
+  end
+  return out
 end
 function M.transfer(item,count,from,to,opts)
   assert(type(item)=="table" and type(item.name)=="string" and (item.damage==nil or (type(item.damage)=="number" and item.damage>=0 and item.damage%1==0)) and (item.label==nil or type(item.label)=="string"),"item required")
   assert(type(count)=="number" and count>0 and count<math.huge and count%1==0,"positive count required")
   opts=options(opts)
   local job={item=serialization.unserialize(serialization.serialize(item)),requested=count,moved=0,remaining=count,state="queued",held={},opts=serialization.unserialize(serialization.serialize(opts)),active={},trips=0,shortfalls=0,taken=0,returned=0,overflow=0}
-  nextJob=nextJob+1;job.id=nextJob;jobs[nextJob]=job
+  nextJob=nextJob+1;job.id=nextJob;job.queuedAt=uptime();jobs[nextJob]=job
   local ok,err=pcall(function() job.from=endpoint(from);job.to=endpoint(to);if opts.overflow then job.opts.overflow=endpoint(opts.overflow) end end)
-  if not ok then finish(job,"failed",tostring(err)) else queue[#queue+1]=job.id;wakeScheduler() end
+  if not ok then finish(job,"failed",tostring(err)) else
+    mutation(job,{job.from,job.to});queue[#queue+1]=job.id;wakeScheduler()
+  end
   return job.id
 end
 function M.status(id)
   local job=jobs[id];if not job then return nil end
-  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","steps","blockedReports","scan","test","item","from","to","refused"}) do out[key]=job[key] end
+  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","steps","blockedReports","scan","test","item","from","to","refused","queuedAt","dispatchedAt","finishedAt","tripTimings"}) do out[key]=job[key] end
+  out.perItem=perItems(job)
+  if out.perItem then
+    out.requested=0;for _,r in ipairs(out.perItem) do out.requested=out.requested+r.requested end
+    out.remaining=math.max(0,out.requested-out.moved)
+  end
   out.overflowEndpoint=job.opts.overflow
   out.short=job.short;out.found=job.found
   return serialization.unserialize(serialization.serialize(out))
 end
 -- Public enumeration: callers need not guess ids or access scheduler tables.
-function M.jobs(summary)
+function M.jobs(summary,first,count)
   assert(summary==nil or type(summary)=="boolean","summary must be boolean")
-  local out={};for id,job in pairs(jobs) do
+  assert(first==nil or (type(first)=="number" and first>=1 and first<math.huge and first%1==0),"positive first required")
+  assert(count==nil or (type(count)=="number" and count>=0 and count<math.huge and count%1==0),"nonnegative count required")
+  local ids={};for id in pairs(jobs) do ids[#ids+1]=id end
+  table.sort(ids,function(a,b) return a>b end)
+  local total=#ids;first=first or 1;count=count or total
+  local out={};for index=first,math.min(total,first+count-1) do
+    local id=ids[index];local job=jobs[id]
     local s
     if summary then
       -- Lists/status bars need identities and counters, not a copy of every
@@ -417,16 +516,17 @@ function M.jobs(summary)
         i=i or step.item;from=from or step.take or step.read or step.go
         to=step.put or step.go or to
       end
-      s=serialization.unserialize(serialization.serialize({state=job.state,requested=job.requested,moved=job.moved,item=i,from=from,to=to,reason=job.reason}))
+      s=serialization.unserialize(serialization.serialize({state=job.state,requested=job.requested,moved=job.moved,item=i,from=from,to=to,reason=job.reason,
+        queuedAt=job.queuedAt,dispatchedAt=job.dispatchedAt,finishedAt=job.finishedAt}))
     else s=M.status(id) end
     s.id=id;out[#out+1]=s
   end
-  table.sort(out,function(a,b) return a.id>b.id end);return out
+  return out,total
 end
 local function action(kind,a,b)
   nextJob=nextJob+1;local id=nextJob
   local job={id=id,state="queued",requested=0,moved=0,remaining=1,held={},active={},trips=0,shortfalls=0,taken=0,returned=0,overflow=0,opts={drones=1}}
-  jobs[id]=job
+  job.queuedAt=uptime();jobs[id]=job
   if not map.node(a) or (kind=="test" and (a==b or not map.node(b))) then finish(job,"failed","unknown/same action node")
   else
     job.action=kind=="scan" and {kind=kind,node=a} or {kind=kind,a=a,b=b}
@@ -440,7 +540,7 @@ function M.job(steps,opts)
   assert(type(steps)=="table" and #steps>0,"steps required")
   nextJob=nextJob+1;local id=nextJob
   local job={id=id,state="queued",requested=0,moved=0,remaining=0,steps={},held={},active={},trips=0,shortfalls=0,opts=options(opts)}
-  jobs[id]=job
+  job.queuedAt=uptime();jobs[id]=job
   local ok,err=pcall(function()
     if job.opts.overflow then job.opts.overflow=endpoint(job.opts.overflow) end
     for i,s in ipairs(steps) do
@@ -452,6 +552,12 @@ function M.job(steps,opts)
         assert(type(step.item)=="table" and type(step.item.name)=="string","step item required")
         step.item.damage=step.item.damage or 0
         assert(type(step.item.damage)=="number" and step.item.damage>=0 and step.item.damage%1==0 and (step.item.label==nil or type(step.item.label)=="string"),"invalid step item")
+        assert(step.maxSize==nil or (type(step.maxSize)=="number" and step.maxSize>0 and step.maxSize<math.huge and step.maxSize%1==0),"invalid step stack limit")
+        if job.opts.expectedItems then
+          assert(type(step.expectedIndex)=="number" and step.expectedIndex%1==0 and job.opts.expectedItems[step.expectedIndex],"expected index required")
+          local expected=job.opts.expectedItems[step.expectedIndex].item
+          assert(expected.name==step.item.name and expected.damage==step.item.damage and (expected.label==nil or expected.label==step.item.label),"expected item mismatch")
+        else assert(step.expectedIndex==nil,"unexpected expected index") end
         step[step.take and "take" or "put"]=endpoint(step.take or step.put)
         if step.count=="all" then step.count=nil;step.all=true end
         assert((step.all==nil or step.all==true) and (step.rest==nil or step.rest==true),"invalid all/rest")
@@ -466,7 +572,15 @@ function M.job(steps,opts)
     end
     job.openEnded=job.openEnded or job.requested==0
   end)
-  if not ok then finish(job,"failed",tostring(err)) else queue[#queue+1]=id;wakeScheduler() end
+  if not ok then finish(job,"failed",tostring(err)) else
+    local endpoints,reads={},{}
+    for _,step in ipairs(job.steps) do
+      if step.take or step.put then endpoints[#endpoints+1]=step.take or step.put end
+      if step.read then reads[#reads+1]=step.read end
+    end
+    mutation(job,endpoints);observeSubmission(job,reads,readObservers)
+    queue[#queue+1]=id;wakeScheduler()
+  end
   return id
 end
 function M.route(name,steps)

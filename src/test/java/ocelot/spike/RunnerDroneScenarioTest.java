@@ -20,6 +20,34 @@ public class RunnerDroneScenarioTest {
         try {RunnerScenario.parse(value.toString());fail("accepted invalid v4");}
         catch(IllegalArgumentException expected) { }
     }
+    private JsonObject fleet(int count) throws Exception {
+        JsonObject value=fixture();
+        JsonElement drone=value.getAsJsonArray("drones").get(0);
+        JsonElement expected=value.getAsJsonObject("expect").getAsJsonArray("drones").get(0);
+        JsonArray drones=new JsonArray(), expectations=new JsonArray();
+        for(int i=0;i<count;i++) {
+            drones.add(new JsonParser().parse(drone.toString()));
+            JsonObject row=new JsonParser().parse(expected.toString()).getAsJsonObject();
+            row.addProperty("index",i);expectations.add(row);
+        }
+        value.add("drones",drones);value.getAsJsonObject("expect").add("drones",expectations);
+        return value;
+    }
+    @Test public void sixAndSixteenDronesWithExpectedRowsAccepted() throws Exception {
+        for(int count:new int[]{6,16}) {
+            RunnerScenario spec=RunnerScenario.parse(fleet(count).toString());
+            assertEquals(count,spec.v4.drones.size());assertEquals(count,spec.v4.expectedDrones.size());
+            for(int i=0;i<count;i++) assertEquals(i,spec.v4.expectedDrones.get(i).getAsJsonObject().get("index").getAsInt());
+        }
+    }
+    @Test public void seventeenDronesOrExpectedRowsRejected() throws Exception {
+        JsonObject value=fleet(16);
+        value.getAsJsonArray("drones").add(new JsonParser().parse(value.getAsJsonArray("drones").get(0).toString()));
+        rejects(value);
+        value=fleet(16);
+        JsonArray expected=value.getAsJsonObject("expect").getAsJsonArray("drones");
+        expected.add(new JsonParser().parse(expected.get(0).toString()));rejects(value);
+    }
     @Test public void nativeDroneContract() throws Exception {
         RunnerScenario spec=RunnerScenario.parse(fixture().toString());assertEquals(1,spec.v4.drones.size());assertNull(spec.hardware);assertEquals("baseline",spec.mode);
     }

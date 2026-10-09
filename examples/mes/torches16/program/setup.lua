@@ -22,6 +22,10 @@ for _,v in ipairs({{'A',7},{'B',9}}) do
 end
 map.name('cpu1.buf','8:65:2',2)
 wh.group('cpu1','crafter',{buffer='cpu1.buf'})
+local homes={}
+for z=2,7 do
+  local h='-2:65:'..z;map.add(h,-2,65,z,{charger=true});homes[#homes+1]=h
+end
 local nodes=map.nodes()
 for a,p in pairs(nodes) do for b,q in pairs(nodes) do
   if a<b and math.abs(p.x-q.x)+math.abs(p.y-q.y)+math.abs(p.z-q.z)==1 then map.link(a,b) end
@@ -36,4 +40,4 @@ for _,v in ipairs({{'minecraft:planks','s3_0_N'},{'minecraft:stick','s4_0_N'},
   if v[2]=='s5_0_N' then filter={{name='minecraft:torch',damage=0},{name='minecraft:brick_block',damage=0}} end
   wh.add(v[2],{filter=filter,priority=10})
 end
-return {homes={H,H2}}
+return {homes=homes}

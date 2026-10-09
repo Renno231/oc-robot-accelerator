@@ -143,6 +143,102 @@
           "inventoryupgrade"
         ]
       }
+    },
+    {
+      "position": [
+        -2,
+        65,
+        3
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
+    },
+    {
+      "position": [
+        -2,
+        65,
+        4
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
+    },
+    {
+      "position": [
+        -2,
+        65,
+        6
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
+    },
+    {
+      "position": [
+        -2,
+        65,
+        7
+      ],
+      "energy": 4000,
+      "eeprom": "loader.lua",
+      "eepromData": "",
+      "hardware": {
+        "tier": 2,
+        "cpu": "cpu1",
+        "memory": [
+          "ram1"
+        ],
+        "cards": [
+          "wlancard2"
+        ],
+        "upgrades": [
+          "inventorycontrollerupgrade",
+          "inventoryupgrade"
+        ]
+      }
     }
   ],
   "blocks": [
@@ -196,15 +292,6 @@
       "position": [
         -2,
         64,
-        3
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -2,
-        64,
         5
       ],
       "block": "opencomputers:charger",
@@ -234,24 +321,6 @@
         -3,
         64,
         5
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -2,
-        64,
-        4
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -2,
-        64,
-        6
       ],
       "block": "opencomputers:capacitor",
       "energy": 1600
@@ -431,15 +500,6 @@
       "position": [
         -2,
         64,
-        7
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -2,
-        64,
         8
       ],
       "block": "opencomputers:capacitor",
@@ -469,6 +529,50 @@
         9
       ],
       "block": "minecraft:furnace"
+    },
+    {
+      "position": [
+        -2,
+        64,
+        3
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
+    },
+    {
+      "position": [
+        -2,
+        64,
+        4
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
+    },
+    {
+      "position": [
+        -2,
+        64,
+        6
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
+    },
+    {
+      "position": [
+        -2,
+        64,
+        7
+      ],
+      "block": "opencomputers:charger",
+      "properties": {
+        "facing": "north"
+      }
     }
   ],
   "containers": [
@@ -1594,6 +1698,90 @@
       },
       {
         "index": 1,
+        "inventory": [
+          {
+            "slot": 1,
+            "count": 0
+          },
+          {
+            "slot": 2,
+            "count": 0
+          },
+          {
+            "slot": 3,
+            "count": 0
+          },
+          {
+            "slot": 4,
+            "count": 0
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "inventory": [
+          {
+            "slot": 1,
+            "count": 0
+          },
+          {
+            "slot": 2,
+            "count": 0
+          },
+          {
+            "slot": 3,
+            "count": 0
+          },
+          {
+            "slot": 4,
+            "count": 0
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "inventory": [
+          {
+            "slot": 1,
+            "count": 0
+          },
+          {
+            "slot": 2,
+            "count": 0
+          },
+          {
+            "slot": 3,
+            "count": 0
+          },
+          {
+            "slot": 4,
+            "count": 0
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "inventory": [
+          {
+            "slot": 1,
+            "count": 0
+          },
+          {
+            "slot": 2,
+            "count": 0
+          },
+          {
+            "slot": 3,
+            "count": 0
+          },
+          {
+            "slot": 4,
+            "count": 0
+          }
+        ]
+      },
+      {
+        "index": 5,
         "inventory": [
           {
             "slot": 1,

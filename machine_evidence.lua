@@ -5,6 +5,7 @@ local serialization=require('serialization')
 local boots={}
 local archivedJobs={}
 local tripMetrics={}
+local craftPayloads={}
 event.listen('modem_message',function(_,_,sender,port,_,_,kind,id,text)
   if port==27103 and kind=='report' and type(text)=='string' then
     local result=serialization.unserialize(text)
@@ -13,8 +14,54 @@ event.listen('modem_message',function(_,_,sender,port,_,_,kind,id,text)
 end)
 local originalRequire=require
 local instrumented=false
+local transportInstrumented=false
 require=function(name)
   local value=originalRequire(name)
+  if name=='tnet' and not transportInstrumented then
+    transportInstrumented=true
+    local connect=value.connect
+    value.connect=function(...)
+      local conn=connect(...)
+      local send=conn.send
+      local modem,observed=conn.modem,nil
+      conn.modem=setmetatable({send=function(...)
+        if observed then
+          local wire=table.pack(...);local bytes=2*(wire.n-2)
+          for i=3,wire.n do
+            assert(type(wire[i])=='string','unexpected craft packet part')
+            bytes=bytes+#wire[i]
+          end
+          observed.packetBytes=math.max(observed.packetBytes,bytes)
+          observed.fragments=observed.fragments+1
+          observed.physicalPackets[#observed.physicalPackets+1]={bytes=bytes,ninfo=wire[4]}
+        end
+        return modem.send(...)
+      end},{__index=modem})
+      conn.send=function(self,message,...)
+        local args=table.pack(...)
+        local previous=observed;observed=nil
+        local request=message=='craft' and args[1] or nil
+        if message=='rpc' and args[1]=='rpc_call' and args[2]=='craft' and type(args[4])=='table' then
+          request={plan=args[4][1],jobId=args[4][2]}
+        end
+        if type(request)=='table' and type(request.plan)=='table' then
+          local payload=serialization.serialize({msg=message,args=args})
+          local info=computer.getDeviceInfo()[self.modem.address]
+          local limit=assert(info and tonumber(info.capacity),'missing observed modem packet limit')
+          -- Measure actual physical frames, including the library's fragments.
+          observed={jobId=request.jobId,address=self.address,
+            payloadBytes=#payload,planBytes=#serialization.serialize(request.plan),
+            packetBytes=0,packetLimit=limit,parts=4,fragments=0,physicalPackets={}}
+          craftPayloads[#craftPayloads+1]=observed
+        end
+        local result=table.pack(pcall(send,self,message,table.unpack(args,1,args.n)))
+        observed=previous
+        if not result[1] then error(result[2],0) end
+        return table.unpack(result,2,result.n)
+      end
+      return conn
+    end
+  end
   if name=='logistics' and not instrumented then
     instrumented=true
     local cancel=value.cancel
@@ -28,6 +75,8 @@ require=function(name)
   return value
 end
 local starts=io.open('/home/program-starts','r')
+local componentCounter=assert(loadfile('/home/program/component-counter.lua'))()
+package.loaded.runner_component_calls=componentCounter
 local count=starts and tonumber(starts:read('*a')) or 0
 if starts then starts:close() end
 starts=assert(io.open('/home/program-starts','w'));starts:write(tostring(count+1));starts:close()
@@ -65,13 +114,27 @@ local function json(out,v)
   out:write('}')
 end
 local ok,err=xpcall(assert(loadfile('/home/program/native-main.lua')),debug.traceback)
+if not ok then print('Native entry failed:',err) end
 local data={jobs=archivedJobs,fleet={},files={},boots=boots,returned=ok,programStarts=count+1,reloadPending=reloadPending}
+data.craftPayloads=craftPayloads
 data.flightMetrics=tripMetrics
+local componentCalls=io.open('/home/component-calls.lua','r')
+if componentCalls then
+  data.componentCalls=serialization.unserialize(componentCalls:read('*a'));componentCalls:close()
+end
 local planning=io.open('/home/planning-metrics.lua','r')
 if planning then data.planning=serialization.unserialize(planning:read('*a'));planning:close() end
 local lg=package.loaded.logistics
 local warehouse=io.open('/home/warehouse-results.lua','r')
 if warehouse then data.warehouse=assert(serialization.unserialize(warehouse:read('*a')));warehouse:close() end
+-- Preserve the terminal MES ledger even when a later native acceptance oracle
+-- fails before warehouse-results is written.
+local mesExecution=io.open('/home/mes-execution.lua','r')
+if mesExecution then data.mesExecution=assert(serialization.unserialize(mesExecution:read('*a')));mesExecution:close() end
+local mesProgress=io.open('/home/mes-progress.lua','r')
+if mesProgress then data.mesProgress=assert(serialization.unserialize(mesProgress:read('*a')));mesProgress:close() end
+local mesFetchTimings=io.open('/home/mes-fetch-timings.lua','r')
+if mesFetchTimings then data.mesFetchTimings=assert(serialization.unserialize(mesFetchTimings:read('*a')));mesFetchTimings:close() end
 local memory=io.open('/home/warehouse-memory.lua','r')
 if memory then data.warehouseMemory=assert(serialization.unserialize(memory:read('*a')));memory:close() end
 local performance=io.open('/home/warehouse-performance.lua','r')
