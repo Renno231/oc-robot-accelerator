@@ -477,19 +477,13 @@ function M.graph(plan, cfg, opts)
       if mt.fuel then
         local neededFuel = 0
         for i, name in ipairs(names) do
-          local group = assert(groups[name], 'Unknown machine group ' .. tostring(name))
+          assert(groups[name], 'Unknown machine group ' .. tostring(name))
           local n = share(ops, #names, i)
           local budget = fuelBudgets[name]
           if not budget then
-            local held = 0
-            local view = wh.cachedRoleContents
-              and wh.cachedRoleContents(group.roles[mt.fuel.role], mt.roleSlots[mt.fuel.role])
-            for _, v in pairs((view or {}).items or {}) do
-              if identity.stackName(v.item) == identity.canonical(mt.fuel.item) then
-                held = held + v.count
-              end
-            end
-            budget = { inputs = 0, credited = held }
+            -- The same ledger execution uses: fuel the MES delivered, inputs it admitted.
+            local fuel = service.fuel(name)
+            budget = { inputs = fuel.admitted, credited = fuel.credit }
             fuelBudgets[name] = budget
           end
           local total = math.ceil((budget.inputs + n * per) / mt.fuel.per)

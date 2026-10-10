@@ -376,46 +376,6 @@ local function roleSlots(slots,size)
   end
   return out
 end
--- Face-relative role view: copy only declared indices, never a full listing.
--- Invalid declarations raise, like other warehouse configuration APIs.
-function M.roleContents(storage,slots,listing,size)
-  assert(type(storage)=="string" and map.storage(storage),"unknown storage")
-  local declared=roleSlots(slots,size)
-  assert(size~=nil and type(listing)=="table","listing and inventory size required")
-  local e={items={},slots=#declared,freeSlots=#declared,listing={}}
-  for _,slot in ipairs(declared) do
-    local stack=listing[slot]
-    if stack then
-      local i=item(stack)
-      assert(type(stack.size)=="number" and stack.size>0 and stack.size%1==0,"invalid stack count")
-      assert(type(stack.maxSize)=="number" and stack.maxSize>0 and stack.maxSize<math.huge and stack.maxSize%1==0 and stack.size<=stack.maxSize,"invalid stack limit")
-      local k=itemKey(i);local v=e.items[k] or {item=i,count=0,maxSize=stack.maxSize,stacks=0,room=0}
-      v.count=v.count+stack.size;v.stacks=v.stacks+1;v.room=v.room+stack.maxSize-stack.size;e.items[k]=v
-      e.freeSlots=e.freeSlots-1
-      e.listing[slot]={name=i.name,damage=i.damage,label=i.label,size=stack.size,maxSize=stack.maxSize}
-    end
-  end
-  return e
-end
-function M.cachedRoleContents(storage,slots)
-  syncMapRevision()
-  local ok,view,err=pcall(function()
-    assert(type(storage)=="string" and map.storage(storage),"unknown storage")
-    local e=map.storage(storage)
-    local cached=roleCache[e.node] and roleCache[e.node][e.side]
-    local declared=roleSlots(slots,cached and cached.size)
-    if not cached then return nil,"role slots have no authoritative observation" end
-    for _,key in ipairs(cached.ids) do
-      if mutationCounts[key] then return nil,"inventory mutation pending; rescan role" end
-    end
-    for _,slot in ipairs(declared) do
-      if cached.listing[slot]==nil then return nil,"role slot "..slot.." has no authoritative observation" end
-    end
-    return M.roleContents(storage,declared,cached.listing,cached.size)
-  end)
-  if not ok then return nil,view end
-  return view,err
-end
 local function observeRole(e,step)
   invalidateRead(e)
   if type(step.listing)~="table" or type(step.size)~="number" or step.size<0 or step.size%1~=0 or step.size==math.huge then return end
@@ -439,35 +399,6 @@ local function observeRole(e,step)
   if e.slots then for _,index in ipairs(e.slots) do slot(index) end
   else cached.listing={};for index=1,step.size do slot(index) end end
 end
-local function roleRoom(contents,i)
-  assert(type(contents)=="table" and type(contents.items)=="table" and type(contents.freeSlots)=="number" and contents.freeSlots>=0,"role contents required")
-  local maximum=limits[limitKey(i)];local room=0
-  for _,v in pairs(contents.items) do if matches(v.item,i) then
-    maximum=maximum or v.maxSize;room=room+v.room
-  end end
-  return maximum,room
-end
--- Capacity belongs solely to this view, not to an inventory alias/catalogue.
-function M.roleCapacity(contents,i)
-  local maximum,room=roleRoom(contents,item(i))
-  if not maximum then return nil,"unknown stack limit; scan item first" end
-  return contents.freeSlots*maximum+room
-end
--- Joint admission: empty role slots cannot be reused by distinct item types.
-function M.roleFits(contents,quantities)
-  assert(type(quantities)=="table","item quantities required")
-  local needed=0
-  for id,count in pairs(quantities) do
-    assert(type(id)=="string" and id~="","item identity required")
-    assert(type(count)=="number" and count>0 and count<math.huge and count%1==0,"positive count required")
-    local name,damage=id:match("^(.*):(%d+)$")
-    local maximum,room=roleRoom(contents,{name=name or id,damage=tonumber(damage) or 0})
-    if not maximum then return nil,"unknown stack limit for "..id.."; scan item first" end
-    needed=needed+math.ceil(math.max(0,count-room)/maximum)
-  end
-  assert(type(contents)=="table" and type(contents.freeSlots)=="number","role contents required")
-  return needed<=contents.freeSlots
-end
 local function observe(storage,step)
   local key=inventory(storage) or storage;if not key or not step.listing or not step.size then return end
   local e={items={},slots=step.size,freeSlots=step.size,time=computer.uptime(),verified=true}
@@ -489,50 +420,6 @@ local function at(endpoint)
 end
 local function readStorage(storage)
   return submit({{read=storage}},{drones=1,retries=0},{})
-end
-function M.scanRole(storage,slots)
-  local ok,id,err=pcall(function()
-    assert(type(storage)=="string" and map.storage(storage),"unknown storage")
-    return submit({{read={storage=storage,slots=roleSlots(slots)}}},{drones=1,retries=0},{})
-  end)
-  if not ok then return nil,id end
-  return id,err
-end
--- Pack role reads by declared slots, never by guessed physical inventories.
--- Three slots per job bounds ordinary result packets; the agent's packet-size
--- refusal still applies to exceptionally large labels, even for one slot.
-function M.scanRoles(requests)
-  local ok,batches=pcall(function()
-    assert(type(requests)=="table","role requests required")
-    local n=0;for k in pairs(requests) do
-      assert(type(k)=="number" and k>0 and k%1==0,"dense role requests required");n=n+1
-    end
-    local out,steps,used={},{},0
-    for k=1,n do
-      local r=requests[k]
-      assert(type(r)=="table" and type(r.storage)=="string" and map.storage(r.storage),"unknown role storage")
-      local key=r.key or r.storage;assert(type(key)=="string" and key~="","role key required")
-      local declared=roleSlots(r.slots);local first=1
-      while first<=#declared do
-        local chunk={};local count=math.min(3-used,#declared-first+1)
-        for j=1,count do chunk[j]=declared[first+j-1] end
-        steps[#steps+1]={roleKey=key,read={storage=r.storage,slots=chunk}}
-        used=used+count;first=first+count
-        if used==3 then out[#out+1]=steps;steps={};used=0 end
-      end
-    end
-    if used>0 then out[#out+1]=steps end
-    return out
-  end)
-  if not ok then return nil,batches end
-  local ids={}
-  for _,steps in ipairs(batches) do
-    local ok,id,err=pcall(submit,steps,{drones=1,retries=0},{})
-    if not ok then return nil,id,ids end
-    if not id then return nil,err,ids end
-    ids[#ids+1]=id
-  end
-  return ids
 end
 -- Explicit scans are independent one-face read jobs: even a completely full
 -- chest fits the existing result packet bound, unlike a 64-face result.
@@ -965,80 +852,6 @@ local function storeTargets(stock,i,from,source,maximum,planned)
     return a.storage<b.storage
   end)
   return candidates
-end
-function M.storeMany(from,opts)
-  local ok,jobs=pcall(function()
-    syncMapRevision();assert(opts==nil or type(opts)=="table","options required")
-    from=manyEndpoint(from);local e=endpoint(from);assert(e,"unknown source")
-    local storage=type(from)=="string" and from or from.storage
-    if not storage then
-      for name,face in pairs(map.storages()) do if face.node==e.node and face.side==e.side then storage=name;break end end
-    end
-    assert(storage,"named source required")
-    local declared=type(from)=="table" and from.slots
-    if not declared then
-      local cached=roleCache[e.node] and roleCache[e.node][e.side]
-      assert(cached,"source has no authoritative observation; scan source first")
-      declared={};for slot=1,cached.size do declared[slot]=slot end
-    end
-    local view,err=M.cachedRoleContents(storage,declared);assert(view,err)
-    local slots=cargoSlots();local requests
-    if opts and opts.requests~=nil then
-      requests=manyRequests(opts.requests)
-      for _,r in ipairs(requests) do assert(r.to==nil,"store whitelist cannot override destination") end
-    else
-      requests={};for _,v in pairs(view.items) do if v.count>0 then requests[#requests+1]={item=item(v.item),count=v.count} end end
-      table.sort(requests,function(a,b)
-        if a.item.name~=b.item.name then return a.item.name<b.item.name end
-        if a.item.damage~=b.item.damage then return a.item.damage<b.item.damage end
-        return (a.item.label or "")<(b.item.label or "")
-      end)
-    end
-    local stock=entries();local pieces,planned,missing={},{},{}
-    local source=node(from);local sourceKey=inventory(storage) or storage
-    for index,r in ipairs(requests) do
-      local i=r.item;local maximum=limits[limitKey(i)]
-      local observed=quantity(view,i);local stackRows={};local stackSlots={}
-      for slot,stack in pairs(view.listing) do if matches(stack,i) then
-        maximum=math.min(maximum or stack.maxSize,stack.maxSize)
-        stackRows[slot]=stack;stackSlots[#stackSlots+1]=slot
-      end end
-      local available=math.max(0,observed-manyReserved(sourceKey,i,'take',planned))
-      local remaining=math.min(r.count,available);missing[index]=r.count-remaining
-      if remaining>0 then
-        assert(maximum,"unknown stack limit for "..limitKey(i).."; scan item first")
-        local candidates=storeTargets(stock,i,from,source,maximum,planned)
-        table.sort(stackSlots);local cursor=1
-        local skipped=manyReserved(sourceKey,i,'take',planned);local offset=0
-        while cursor<=#stackSlots and skipped>=stackRows[stackSlots[cursor]].size do
-          skipped=skipped-stackRows[stackSlots[cursor]].size;cursor=cursor+1
-        end
-        offset=skipped
-        local used={}
-        for _,c in ipairs(candidates) do if remaining==0 then break end
-          if not used[c.key] then
-            used[c.key]=true;local amount=math.min(remaining,c.capacity)
-            while amount>0 do
-              local slot=stackSlots[cursor];local stack=assert(stackRows[slot],"source slot allocation exhausted")
-              local n=math.min(amount,stack.size-offset,maximum)
-              local take=sourceReservation(storage,i,n)
-              local put={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
-              planned[#planned+1]=take;planned[#planned+1]=put
-              addPieces(pieces,index,i,n,maximum,1,{storage=storage,slots={slot}},c.storage,take,put)
-              pieces[#pieces].stackKey="stack:"..e.node..":"..e.side..":"..slot
-              amount=amount-n;remaining=remaining-n;offset=offset+n
-              if offset>=stack.size then cursor=cursor+1;offset=0 end
-            end
-          end
-        end
-        assert(remaining==0,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i))
-      end
-    end
-    assert(#pieces>0 or #requests==0,"requested source items unavailable")
-    return packedJobs(requests,pieces,missing,slots,opts)
-  end)
-  if not ok then return nil,jobs,{} end
-  return submitPacked(jobs)
 end
 -- Take up to the expected count of each item from a machine role or robot buffer
 -- (a storage name, or {storage,slots}) and put it in stock, without looking

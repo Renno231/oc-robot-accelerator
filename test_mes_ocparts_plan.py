@@ -38,7 +38,8 @@ class OcpartsMesPlanTests(unittest.TestCase):
           package.preload.event=function() return {push=function() end} end
           -- This integration exercises the real compiler/planner/graph only;
           -- transport installation has its own actual-OpenOS/native gates.
-          package.preload.mes_service=function() return {start=function() return true end,claims=function() return {} end} end
+          package.preload.mes_service=function() return {start=function() return true end,claims=function() return {} end,
+            fuel=function() return {credit=0,admitted=0} end} end
           GROUPS={cpu1={type='crafter',roles={buffer='buf1'}},cpu2={type='crafter',roles={buffer='buf2'}},
             furnaceA={type='furnace',roles={input='ai',output='ao',fuel='af'}},
             furnaceB={type='furnace',roles={input='bi',output='bo',fuel='bf'}}}

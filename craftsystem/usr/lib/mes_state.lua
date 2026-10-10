@@ -335,8 +335,8 @@ local function outcome(run, a)
   end
   return receipts, problem
 end
-local function beginMany(run, stage, kind, requests, endpoint, autoStore)
-  local bundle = { records = {}, physical = {}, kind = kind, endpoint = endpoint, autoStore = autoStore }
+local function beginMany(run, stage, kind, requests, endpoint)
+  local bundle = { records = {}, physical = {}, kind = kind, endpoint = endpoint }
   local payload = {}
   for _, r in ipairs(requests) do
     if r.count > 0 then
@@ -364,7 +364,7 @@ local function beginMany(run, stage, kind, requests, endpoint, autoStore)
     bundle.action = { kind = kind .. 'Many', token = 'empty:' .. run.id, submitted = true, ids = {} }
   else
     bundle.action =
-      action(run, kind .. 'Many', { requests = payload, endpoint = endpoint, autoStore = autoStore })
+      action(run, kind .. 'Many', { requests = payload, endpoint = endpoint })
   end
   bundle.stage = stage
   bundle.run = run
@@ -430,7 +430,7 @@ local function finishMany(run, bundle)
         if
           r.item == name
           and requested > 0
-          and (bundle.autoStore or row.requestIndex == nil or row.requestIndex == index)
+          and (row.requestIndex == nil or row.requestIndex == index)
         then
           local assigned = math.min(requested, r.quantity - (r.accounted or 0))
           if assigned > 0 then

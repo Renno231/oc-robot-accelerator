@@ -61,12 +61,6 @@ local function dispatch(a, run)
     return ok and ids, not ok and tostring(ids) or not ids and tostring(err) or nil
   elseif a.kind == 'fetchMany' then
     ok, ids, err, partial = pcall(wh.fetchMany, a.requests, a.endpoint, options)
-  elseif a.kind == 'storeMany' then
-    local o = state.copy(options or {})
-    if not a.autoStore then
-      o.requests = a.requests
-    end
-    ok, ids, err, partial = pcall(wh.storeMany, a.endpoint, o)
   elseif a.kind == 'collectMany' then
     ok, ids, err, partial = pcall(wh.collect, a.endpoint, a.requests, options)
   elseif a.kind == 'scan' then
@@ -254,7 +248,7 @@ end
 local public = {}
 for _, k in ipairs({
   'id', 'item', 'qty', 'status', 'stage', 'active', 'started', 'finished', 'trips',
-  'reason', 'error', 'where', 'scans', 'stopping', 'uncertain', 'callbackError',
+  'reason', 'error', 'where', 'stopping', 'uncertain', 'callbackError',
 }) do
   public[k] = true
 end
@@ -338,6 +332,11 @@ function M.resources(cfg)
     end
   end
   return o
+end
+-- Fuel the MES has delivered to a machine and the inputs admitted against it.
+function M.fuel(name)
+  local m = world.machines[name]
+  return state.copy(m and m.fuel or { credit = 0, admitted = 0 })
 end
 function M.confirmIdle(address)
   enqueue(nil, 'robot_status', { address = address, busy = false })
