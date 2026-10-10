@@ -78,7 +78,10 @@ function S:draw()
   ui.title("Fleet",#(self.drones or {}).." drones · "..ch.." chargers"..(new and " · "..new.." new" or ""))
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
-function S:signal(name) if name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce" then self:refresh() end end
+function S:signal(name,drone,status)
+  if name=="logistics_released" then self:released(drone,status)
+  elseif name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce" then self:refresh() end
+end
 
 local show=ui.show
 local function value(v)
@@ -89,6 +92,20 @@ end
 local function fields(t,skip)
   local lines={};for _,k in ipairs(sorted(t)) do if not (skip and skip[k]) then lines[#lines+1]=ui.fit(k,14)..value(t[k]) end end
   return lines
+end
+
+-- A release finished: the listing is what the drone still holds (the
+-- scheduler returns it to stock), or the report timed out.
+function S:released(name,status)
+  self:refresh();local P=ui.P
+  if status~="ok" then ui.fail(tostring(name)..": cargo report timeout");return end
+  local d;for _,x in ipairs(self.drones) do if x.name==name then d=x end end
+  local s=stacks({cargo=d and d.cargo or {}})
+  if #s==0 then ui.ok(name.." is empty, now idle");return end
+  local lines={{name.." still holds:",P.accent}}
+  for _,e in ipairs(s) do lines[#lines+1]="  "..ui.label(e.item).." ×"..e.count end
+  lines[#lines+1]={"The scheduler returns them to stock.",P.dim}
+  ui.ok(name.." holds "..#s.." stack"..(#s==1 and "" or "s"));show("Cargo · "..name,lines)
 end
 
 function S:register(address)
@@ -156,13 +173,8 @@ function S:activate(r)
       end,{nofilter=true})
     elseif d.state=="held" then
       ui.confirm("Release cargo","Release the cargo "..d.name.." holds? ("..cargoText(d)..")",function()
-        ui.busy("Releasing "..d.name.."…")
-        local got=ui.try(lg.release,d.name);self:refresh()
-        if not got then return end
-        local lines={{d.name.." released:",P.accent}}
-        for _,e in ipairs(stacks({cargo=got})) do lines[#lines+1]="  "..ui.label(e.item).." ×"..e.count end
-        if #lines==1 then lines[2]="  nothing" end
-        ui.ok("Released "..d.name);show("Released · "..d.name,lines)
+        -- Returns at once; the listing arrives as logistics_released.
+        if ui.try(lg.release,d.name) then ui.notify("Releasing "..d.name.."…",P.accent) end;self:refresh()
       end)
     else
       local lines=fields(d,{cargo=true,held=true})

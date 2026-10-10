@@ -21,6 +21,10 @@ LAUNCHER = """local args={...}
 local computer=require("computer");local event=require("event")
 local opts={tab=args[1]};local timer,announce
 -- `announce` anywhere after the tab: 6 s in, a drone and a robot announce.
+-- `releasetimeout` / `releaseempty` anywhere after the tab: drone releases
+-- time out (5 s) / report an empty drone.
+for _,a in ipairs(args) do if a=="releasetimeout" then require("logistics").labReleaseTimeout=true end
+  if a=="releaseempty" then require("logistics").labReleaseEmpty=true end end
 for _,a in ipairs(args) do if a=="announce" then
   local function fire() require("logistics").labAnnounce();require("mes").labAnnounce() end
   announce=event.timer(6,fire)

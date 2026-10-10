@@ -297,7 +297,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     if type(listing)~="table" then return end
     d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle"
     d.held=nil;for _,s in pairs(listing) do d.held=d.held or {};d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
-    wakeScheduler()
+    wakeScheduler();event.push("logistics_released",d.name,"ok")
   elseif kind=="navigate" and d.trip~=id then
     send(d,"navigation",id,serialization.serialize({reason="unknown trip "..tostring(id)},false))
   elseif kind=="navigate" and d.trip==id and d.job and type(payload)=="string" and #payload<7000 then
@@ -447,11 +447,9 @@ function M.release(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
   if d.state~="held" then return nil,"drone is not held" end
   if d.release then return nil,"release already pending" end
-  nextTrip=nextTrip+1;saveIds();state_store:flush();d.release=nextTrip;d.cargo=nil;send(d,"release",d.release)
-  local computer=require("computer");local deadline=computer.uptime()+5
-  while d.release and computer.uptime()<deadline do event.pull(math.max(0,deadline-computer.uptime())) end
-  if d.release then d.release=nil;return nil,"cargo report timeout" end
-  return serialization.unserialize(serialization.serialize(d.cargo))
+  nextTrip=nextTrip+1;saveIds();state_store:flush();local id=nextTrip;d.release=id;d.cargo=nil;send(d,"release",id)
+  event.timer(5,function() if d.release==id then d.release=nil;event.push("logistics_released",name,"timeout") end end)
+  return true
 end
 function M.found(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
