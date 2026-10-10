@@ -366,6 +366,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         job.trips=job.trips+1;job.openEnded=false;local complete=true
         for i,s in ipairs(job.steps) do
           local r=(result.steps or {})[i] or {}
+          if r.short and (r.left or 0)==0 then job.blocked=true;job.reason=result.reason or "source empty" end
           s.moved=s.moved+(r.moved or 0);if r.listing then s.listing=r.listing;s.size=r.size end
           s.maxSize=r.maxSize or s.maxSize
           for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
@@ -382,7 +383,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         d.state=(result.held or 0)>0 and "held" or "idle";d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
         local advanced=false;for _,r in pairs(result.steps or {}) do if (r.moved or 0)>0 then advanced=true end end
         if not complete and not advanced and not result.reason then result.reason="step counts unmet" end
-        if result.reason and not result.recharge then
+        if result.reason and not result.recharge and not job.blocked then
           job.shortfalls=job.shortfalls+1
           if result.refused or result.state=="held" or job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason end
         end
@@ -404,8 +405,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       elseif (result.moved or 0)<(result.taken or 0) or (result.held or 0)>0 then
         job.blocked=true;job.reason=result.reason or "destination refused items"
       elseif (result.taken or 0)<assigned.amount and (not result.maxSize or (result.taken or 0)<d.cargoSlots*result.maxSize) then
+        if result.short and (result.left or 0)==0 then job.blocked=true;job.reason=result.reason or "source empty" else
         job.shortfalls=job.shortfalls+1
         if job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason or "source shortfall" end
+        end
       end
       wakeScheduler()
     end
