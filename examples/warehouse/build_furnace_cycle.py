@@ -51,7 +51,7 @@ def build(target=None, seed=128, shortfall=False, ram=1):
     for p in ((0,65,1),(7,68,3),(3,67,1)):
         value['expect']['containers'].append({'position':list(p),'slots':[{'slot':1,'count':0}]})
     (target/'scenario.json').write_text(json.dumps(value,indent=2)+'\n')
-    for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/warehouse/view.lua','lib/warehouse/ui.lua','drone/agent.lua'):
+    for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/cbor.lua','lib/store.lua','lib/warehouse/view.lua','lib/warehouse/ui.lua','drone/agent.lua'):
         dest=program/path;dest.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/'drone-logistics'/path,dest)
     shutil.copyfile(ROOT/'fixtures/qmenu.lua',program/'lib/qmenu.lua')

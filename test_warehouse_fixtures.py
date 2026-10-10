@@ -24,7 +24,7 @@ class WarehouseFixturesTests(unittest.TestCase):
         self.assertEqual(2, len(spec['drones']))
         self.assertEqual('baseline', spec['execution']['mode'])
         self.assertEqual(Path('examples/warehouse/room.lua').read_bytes(), (root / 'program/main.lua').read_bytes())
-        for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'drone/agent.lua', 'bin/warehouse.lua'):
+        for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'lib/cbor.lua', 'lib/store.lua', 'drone/agent.lua', 'bin/warehouse.lua'):
             self.assertEqual((Path('drone-logistics') / path).read_bytes(), (root / 'program' / path).read_bytes())
         self.assertEqual(Path('drone-logistics/drone/loader.lua').read_bytes(), (root / 'loader.lua').read_bytes())
         for chest in spec['containers']:
@@ -40,7 +40,7 @@ class WarehouseFixturesTests(unittest.TestCase):
         spec=runner_scenario.load(root/'scenario.json').normalized
         self.assertEqual(3,len(spec['containers']))
         self.assertEqual(Path('examples/warehouse/slots.lua').read_bytes(),(root/'program/main.lua').read_bytes())
-        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','drone/agent.lua','bin/warehouse.lua'):
+        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua','bin/warehouse.lua'):
             self.assertEqual((Path('drone-logistics')/path).read_bytes(),(root/'program'/path).read_bytes())
 
     def test_nbt_scenario_uses_real_native_tagged_stacks(self):
@@ -48,7 +48,7 @@ class WarehouseFixturesTests(unittest.TestCase):
         stacks=spec['containers'][0]['slots']
         self.assertEqual(5,len(stacks));self.assertEqual(5,len({s['nbt'] for s in stacks}))
         self.assertTrue(all(s['count']==16 and s['item']=='minecraft:iron_ingot' for s in stacks))
-        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','drone/agent.lua','bin/warehouse.lua'):
+        for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua','bin/warehouse.lua'):
             self.assertEqual((Path('drone-logistics')/path).read_bytes(),(root/'program'/path).read_bytes())
 
 

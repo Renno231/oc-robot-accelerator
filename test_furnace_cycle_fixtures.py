@@ -31,7 +31,7 @@ class FurnaceCycleFixturesTests(unittest.TestCase):
                 expected=sum(s['count'] for c in value['expect']['containers'] for s in c['slots'] if s.get('item')=='minecraft:brick')
                 self.assertEqual(seed-(20 if shortfall else 0),expected)
                 program=path.parent/'program'
-                for relative in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/warehouse/view.lua','lib/warehouse/ui.lua','drone/agent.lua'):
+                for relative in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/cbor.lua','lib/store.lua','lib/warehouse/view.lua','lib/warehouse/ui.lua','drone/agent.lua'):
                     self.assertEqual((ROOT/'drone-logistics'/relative).read_bytes(),(program/relative).read_bytes())
                 self.assertEqual((ROOT/'fixtures/qmenu.lua').read_bytes(),(program/'lib/qmenu.lua').read_bytes())
                 self.assertTrue((program/'route-metrics-enabled').exists())
