@@ -7,7 +7,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch')
-ALL_CASES = CASES + ('ocparts',)
+ALL_CASES = CASES + ('ocparts', 'concurrent')
 SOURCE = ROOT / 'examples/mes'
 OCPARTS_QTY = 64
 OCPARTS_BATCH = OCPARTS_QTY // 4  # Two loads in each of two furnaces.
@@ -83,6 +83,8 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
             chest['slots'] = [{'slot': 1, 'item': 'minecraft:clay_ball', 'count': 64}]
         if chest['position'] == [2, 66, 3]:
             chest['slots'] = [{'slot': 1, 'item': 'minecraft:coal', 'count': 16}]
+        if case == 'concurrent' and chest['position'] == [1, 65, 1]:
+            chest['slots'] = [{'slot': 1, 'item': 'minecraft:log', 'count': 8}]
     value['containers'].append({'position': [8, 65, 1], 'block': 'minecraft:chest', 'slots': []})
     for z in (7, 9):
         value['containers'].append({'position': [10, 64, z], 'block': 'minecraft:furnace', 'slots': []})
@@ -119,20 +121,21 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
     value['expect'] = {'containers': expected,
                        'robots': [{'index': 0, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 17)]}],
                        'drones': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 5)]} for i in range(drone_count)]}
-    if case == 'ocparts':
+    if case in ('ocparts', 'concurrent'):
         # Original robinv reserves slots 1..12. Two genuine inventory upgrades
         # provide 32 physical slots for simultaneous ingredients and outputs.
         value['robots'][0]['hardware']['upgrades'].append('inventoryupgrade')
         value['expect']['drones'] = [
             {'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 5)]}
             for i in range(ocparts_drones)]
-        for chest in value['containers']:
-            chest['slots'] = []
+        if case == 'ocparts':
+            for chest in value['containers']:
+                chest['slots'] = []
         stock = [c for c in value['containers'] if c['block'] in ('minecraft:chest', 'minecraft:trapped_chest')][:64]
         # Organized mixed stock: one stack of each raw material in a nearby
         # chest, with overflow in the adjacent chest. All 64 members remain.
         # This models normal shared storage; it changes no stock quantities.
-        for identity, qty in OCPARTS_STOCK.items():
+        for identity, qty in (OCPARTS_STOCK.items() if case == 'ocparts' else []):
             name, damage = split_item(identity)
             for stack in range((qty + 63) // 64):
                 chest = stock[stack]
@@ -175,6 +178,17 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
     (program / 'route-metrics-enabled').write_text('native per-tick route metrics\n')
     if case == 'ocparts':
         build_ocparts_program(target, ocparts_drones)
+    elif case == 'concurrent':
+        build_ocparts_program(target)
+        setup = (SOURCE / 'setup.lua').read_text().replace(
+            "wh.group('cpu1','crafter',{buffer='cpu1.buf'})",
+            "wh.group('cpu1','crafter',{buffer='cpu1.buf'})\nmap.name('cpu2.buf','10:65:2',2)\nwh.group('cpu2','crafter',{buffer='cpu2.buf'})")
+        (program / 'setup.lua').write_text(setup)
+        shutil.copyfile(SOURCE / 'recipes.tsv', program / 'recipes.tsv')
+        main = (program / 'main.lua').read_text().split('local result={case=case')[0]
+        main = main.replace(f'batch={OCPARTS_BATCH}', 'batch=64')
+        (program / 'main.lua').write_text(main + CONCURRENT_RUN)
+        (program / 'recipe-provenance.json').unlink()
     return target / 'scenario.json'
 
 
@@ -360,6 +374,57 @@ print('MES verified',case,result.status,result.gameSeconds,result.trips)
 OCPARTS_RUN = (OCPARTS_RUN.replace('__QTY__', str(OCPARTS_QTY))
                .replace('__BATCH__', str(OCPARTS_BATCH))
                .replace('__GROUP__', str(OCPARTS_QTY // 2)))
+
+CONCURRENT_RUN = r"""
+local result={case=case,status='running',runs={},robotIntervals={},furnaceLoads={}}
+local f=assert(io.open('/home/program/recipes.tsv'));local text=f:read('*a');f:close()
+local archive=assert(require('liblz16').open('/usr/lib/recipes/minecraft.dblz','wb'));assert(archive:write(text));archive:close()
+local builder=require('recipes.build');local db=builder.build();assert(builder.save(db));require('recipes').install(db)
+local recipes=require('recipes')
+assert(recipes.registerProcessingRecipe('minecraft:coal:1','furnace',{recipe={'minecraft:log'},qty=1}))
+assert(recipes.registerProcessingRecipe('minecraft:brick','furnace',{recipe={'minecraft:clay_ball'},qty=1}))
+local a=assert(mes.plan('minecraft:torch',16));local b=assert(mes.plan('minecraft:brick_block',16))
+local names={};event.listen('mes',function(_,kind,id)
+  if kind=='done' then save('/home/concurrent-done'..assert(names[id]),{id=id,at=computer.uptime()}) end
+end)
+result.mesTripWindow={first=latestJobId()+1}
+save('/home/concurrent-submit1',{at=computer.uptime()})
+local first=assert(mes.run(a));names[first]=1
+save('/home/concurrent-submit2',{at=computer.uptime()})
+local second=assert(mes.run(b));names[second]=2
+assert(first~=second and mes.status(first).status=='running' and mes.status(second).status=='running','submissions did not coexist')
+for i,id in ipairs({first,second}) do
+  local r=assert(mes.wait(id));save('/home/mes-execution-'..i..'.lua',r)
+  result.runs[i]={id=id,item=r.item,status=r.status,reason=r.reason,started=r.started,finished=r.finished,gameSeconds=r.finished-r.started,mesTrips=r.trips}
+  for _,s in ipairs(r.stages) do
+    if s.kind=='robot' and s.craftStarted then
+      result.robotIntervals[#result.robotIntervals+1]={run=id,crafter=s.crafter,started=s.craftStarted,finished=s.craftFinished}
+    end
+    for _,load in ipairs(s.loadLedger or {}) do
+      local g=load.group;result.furnaceLoads[g]=result.furnaceLoads[g] or {};result.furnaceLoads[g][#result.furnaceLoads[g]+1]=load
+    end
+  end
+end
+result.mesTripWindow.last=latestJobId();finishTripAccounting(result)
+result.combinedGameSeconds=math.max(result.runs[1].finished,result.runs[2].finished)-result.runs[1].started
+result.robotOverlapSeconds=0;result.sameRobotOverlap=false
+for i,a in ipairs(result.robotIntervals) do
+  assert(a.finished and a.finished>=a.started,'missing craft interval')
+  for j=i+1,#result.robotIntervals do local b=result.robotIntervals[j]
+    local overlap=math.max(0,math.min(a.finished,b.finished)-math.max(a.started,b.started))
+    if a.crafter==b.crafter and overlap>0 then result.sameRobotOverlap=true end
+    if a.run~=b.run and a.crafter~=b.crafter then result.robotOverlapSeconds=result.robotOverlapSeconds+overlap end
+  end
+end
+result.status='complete';save('/home/mes-progress.lua',result)
+for _,r in ipairs(result.runs) do assert(r.status=='complete',r.reason or r.status) end
+assert(not result.sameRobotOverlap,'one robot ran overlapping jobs')
+scan();result.afterScan={torch=count('minecraft:torch'),brick_block=count('minecraft:brick_block')}
+assert(result.afterScan.torch==16 and result.afterScan.brick_block==16,'final outputs missing')
+wait(function() for _,d in ipairs(lg.drones()) do if d.state~='idle' then return false end end;return true end,60)
+finishTripAccounting(result);save('/home/warehouse-results.lua',result);save('/home/mes-results.lua',result)
+print('MES verified',case,result.status)
+"""
 
 
 if __name__ == '__main__':
