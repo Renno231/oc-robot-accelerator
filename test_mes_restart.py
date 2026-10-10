@@ -45,7 +45,8 @@ class MesRestartTests(unittest.TestCase):
             map.add(name,6+i*2,0,0);map.name(name..'_face',name,0)
           end
           local config={members={stock={filter={{name='mod:raw',damage=0},{name='mod:metal',damage=0},
-            {name='mod:crafted',damage=0}}},input_face={},output_face={},buffer_face={}},groups={
+            {name='mod:crafted',damage=0},{name='minecraft:brick',damage=0},
+            {name='minecraft:brick_block',damage=0}}},input_face={},output_face={},buffer_face={}},groups={
             kiln={type='furnace',roles={input='input_face',output='output_face'}},
             cpu={type='crafter',roles={buffer='buffer_face'}}}}
           files['/etc/warehouse.cfg']=require('serialization').serialize(config)
@@ -75,6 +76,9 @@ class MesRestartTests(unittest.TestCase):
           end
           function finishPhysical(deliver)
             assert(FAKE.working);local rows={};local cargo={};local carried=0
+            for _,s in pairs(FAKE.cargo) do
+              local id=require('item_identity').stackName(s);cargo[id]=s.size;carried=carried+s.size
+            end
             for i,s in ipairs(FAKE.task.steps or {}) do
               local id=s.item and require('item_identity').stackName(s.item);local n=s.count or (s.rest and carried) or 0
               local row={moved=n,maxSize=64};rows[i]=row
@@ -290,12 +294,125 @@ class MesRestartTests(unittest.TestCase):
                   local reads,fetches=0,0
                   for _,j in ipairs(lg.jobs()) do for _,s in ipairs(j.steps or {}) do
                     if s.read and s.read.node=='buffer' then reads=reads+1 end
-                    if s.take and s.take.node=='source' then fetches=fetches+1 end
+                    if s.take and s.take.node=='source' then fetches=fetches+(s.taken or 0) end
                   end end
                   assert(reads==1 and fetches==1,'returned input must not be fetched again')
                   return held('source','mod:raw'),held('source','mod:crafted'),r.trips
                 '''))
             self.assertEqual(*outcomes)
+
+    def robot_remainder(self, partial, intermediate=False, bricks=False):
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                lua=self.start(mode)
+                lua.globals().PARTIAL=partial;lua.globals().INTERMEDIATE=intermediate;lua.globals().BRICKS=bricks
+                lua.execute('''
+                  local tasks={{item='mod:crafted',qty_produced=4,recipeOutput=1,
+                    recipe={'mod:raw'},node='crafted',input_nodes={'raw'}}}
+                  if INTERMEDIATE then tasks={
+                    {item='mod:metal',qty_produced=4,recipeOutput=1,
+                      recipe={'mod:raw','mod:raw'},node='metal',input_nodes={'raw','raw'}},
+                    {item='mod:crafted',qty_produced=4,recipeOutput=1,
+                      recipe={'mod:metal'},node='crafted',input_nodes={'metal'}}} end
+                  local raw,product,qty,inputs='mod:raw','mod:crafted',4,INTERMEDIATE and 8 or 4
+                  if BRICKS then
+                    raw,product,qty,inputs='minecraft:brick','minecraft:brick_block',16,64
+                    INV.source={['minecraft:brick']=100}
+                    wh.observed('stock',{{item={name=raw,damage=0},count=100,maxSize=64}})
+                    local scans=assert(wh.scan('stock'));untilFact(function() return wh.settled(scans[1]) end)
+                    tasks={{item=product,qty_produced=qty,recipeOutput=1,
+                      recipe={[1]=raw,[2]=raw,[4]=raw,[5]=raw},node='blocks',
+                      input_nodes={[1]='brick',[2]='brick',[4]='brick',[5]='brick'}}}
+                  end
+                  local id=assert(M.run({tasks=tasks,requestItem=product,requestQuantity=qty},{config=CFG}))
+                  untilFact(function() return ROBOT.status=='RUNNING' end)
+                  local old=ROBOT.id
+                  if PARTIAL then
+                    if INTERMEDIATE then
+                      add('buffer','mod:raw',-4);add('buffer','mod:metal',1)
+                    else add('buffer',raw,BRICKS and -4 or -1) end
+                    add('buffer',product,1)
+                  end
+                  restartRobot()
+                  untilFact(function() return M.status(id).status~='running' end)
+                  assert(M.status(id).status=='complete',M.status(id).reason)
+                  assert(ROBOT_CALLS==2 and ROBOT.id~=old)
+                  local reads,fetches=0,0
+                  for _,j in ipairs(lg.jobs()) do for _,s in ipairs(j.steps or {}) do
+                    if s.read and s.read.node=='buffer' then reads=reads+1 end
+                    if s.take and s.take.node=='source' then fetches=fetches+(s.taken or 0) end
+                  end end
+                  assert(reads==1 and fetches==inputs,'remainder must use physical buffer, not fetch again')
+                  assert(held('source',raw)==100-inputs)
+                  assert(held('source',product)==qty and held('source','mod:metal')==0)
+                  assert(held('buffer',raw)==0 and held('buffer','mod:metal')==0 and held('buffer',product)==0)
+                ''')
+
+    def test_robot_remainder_partial_single_step(self):
+        self.robot_remainder(True, bricks=True)
+
+    def test_robot_remainder_partial_intermediate(self):
+        self.robot_remainder(True, True)
+
+    def test_robot_remainder_nothing_completed(self):
+        self.robot_remainder(False)
+
+    def test_lost_fetch_retries_or_waits_for_found_without_double_counting(self):
+        for machine in (False, True):
+            for stock in (1, 100):
+                with self.subTest(machine=machine, stock=stock):
+                    lua = self.start()
+                    lua.globals().MACHINE = machine
+                    lua.globals().STOCK = stock
+                    lua.execute('''
+                      INV.source['mod:raw']=STOCK
+                      wh.observed('stock',{{item={name='mod:raw',damage=0},count=STOCK,maxSize=64}})
+                      local id=submit(MACHINE,1)
+                      untilFact(function() return FAKE.working end)
+                      add('source','mod:raw',-1);FAKE.held=1
+                      FAKE.cargo={{name='mod:raw',damage=0,size=1,maxSize=64}}
+                      report(FAKE.trip,{state='progress',steps={{taken=1,moved=1}},held=1,
+                        cargo={{item={name='mod:raw',damage=0},count=1}}})
+                      emit('modem_message','local','remote',27103,0,'secret','boot')
+                      FAKE.working=false;report(0,{state='lost',cargo=FAKE.cargo});drain()
+                      require('mes_service').pump()
+                      local r=M.status(id);assert(r.status=='running')
+                      local detail=r.stages[1].detail
+                      assert(detail:find(STOCK==1 and 'press Found' or 'Retrying',1,true),detail)
+                      assert(held('source','mod:raw')==STOCK-1)
+                      assert(lg.found('d1'));report(0,{state='ready',held=1,cargo=FAKE.cargo});drain()
+                      untilFact(function() return M.status(id).status~='running' end)
+                      assert(M.status(id).status=='complete',M.status(id).reason)
+                      assert(held('source','mod:raw')==STOCK-1 and FAKE.held==0)
+                      assert(held('source',MACHINE and 'mod:metal' or 'mod:crafted')==1)
+                      local movement=M.status(id).stages[1].itemsMoved[1]
+                      assert(movement.quantity==1 and movement.moved==1 and #movement.jobs==2)
+                    ''')
+
+    def test_lost_fetch_retry_failure_keeps_both_reasons(self):
+        self.start().execute('''
+          local function lose()
+            add('source','mod:raw',-1);FAKE.held=1
+            FAKE.cargo={{name='mod:raw',damage=0,size=1,maxSize=64}}
+            report(FAKE.trip,{state='progress',steps={{taken=1,moved=1}},held=1,
+              cargo={{item={name='mod:raw',damage=0},count=1}}})
+            emit('modem_message','local','remote',27103,0,'secret','boot')
+            FAKE.working=false;report(0,{state='lost',cargo=FAKE.cargo});drain()
+            require('mes_service').pump()
+          end
+          local id=submit(true,1);untilFact(function() return FAKE.working end);lose()
+          assert(M.status(id).status=='running')
+          assert(lg.found('d1'));report(0,{state='ready',held=1,cargo=FAKE.cargo});drain()
+          untilFact(function() return FAKE.working and not FAKE.task.cargo end)
+          lose()
+          assert(M.status(id).reason=='drone lost: d1; retry: drone lost: d1')
+          assert(held('source','mod:raw')==99 and FAKE.held==1 and held('source','mod:metal')==0)
+          assert(lg.found('d1'));report(0,{state='ready',held=1,cargo=FAKE.cargo});drain()
+          untilFact(function() return M.status(id).status~='running' end)
+          local r=M.status(id)
+          assert(r.status=='failed' and r.reason=='drone lost: d1; retry: drone lost: d1',r.reason)
+          assert(held('source','mod:raw')==100 and FAKE.held==0 and held('source','mod:metal')==0)
+        ''')
 
     def test_history_newest_twenty_snapshots_survive_restart(self):
         for mode in ('log', 'files'):

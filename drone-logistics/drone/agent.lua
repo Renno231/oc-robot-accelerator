@@ -252,10 +252,10 @@ local function runSteps(task,id,result)
     report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
   end
 end
-if x==nil or y==nil or z==nil then
+if not x or drone.getOffset()>=.02 then
   local light=drone.getLightColor()
   drone.setLightColor(0xFF0000);drone.setStatusText("LOST\nsee base")
-  report(0,{state="lost",cargo=cargoListing()})
+  report(0,{state=x and"ready"or"lost",notAtHome=x~=nil,offset=drone.getOffset(),cargo=cargoListing()})
   while true do
     local e={computer.pullSignal(60)}
     if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="found" and type(e[8])=="number" and type(e[9])=="number" and type(e[10])=="number" then
@@ -263,7 +263,7 @@ if x==nil or y==nil or z==nil then
     end
   end
 end
-report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount()})
+report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
 local backoff=0.05
 while true do
   local e={computer.pullSignal(backoff)}

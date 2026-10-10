@@ -319,6 +319,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         save(job)
       end
     elseif id==0 and result.state=="ready" then
+      if result.notAtHome then d.lost=true;d.state="lost" end
       if d.lost then return end
       d.state=(result.held or 0)>0 and "held" or "idle";d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
       if result.cargo then
@@ -455,6 +456,7 @@ function M.found(name)
   local p=assert(map.node(d.home),"missing drone home")
   d.lost=nil;d.state="booting";send(d,"found",p.x,p.y,p.z);return true
 end
+-- Restore below cannot yield; it finishes before listeners run. Move this if restore yields.
 event.listen("modem_message",receive)
 event.listen("logistics_work",schedule)
 function M.pending()

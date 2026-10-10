@@ -8,19 +8,20 @@ from test_store import install_store
 
 
 class LogisticsRestartTests(unittest.TestCase):
-    def start(self, mode):
+    def start(self, mode, item_name='mod:stock'):
         fixture = test_stock_api.LibraryApiTests()
         fixture.setUp()
         fixture.load('map', 'map')
         lua = fixture.lua
         install_store(lua, preserve_io=True)
         lua.globals().MODE = mode
+        lua.globals().ITEM_NAME = item_name
         lua.globals().LOGISTICS = Path('drone-logistics/lib/logistics.lua').read_text()
         lua.globals().WAREHOUSE = Path('drone-logistics/lib/warehouse.lua').read_text()
         lua.execute('''
           variant(MODE);TIME=10;LISTEN={};EVENTS={};SENT={}
           FAKE={cargo={},stock=10,dest=0,working=false}
-          item={name='mod:stock',damage=0,label='Stock'}
+          item={name=ITEM_NAME,damage=0,label='Stock'}
           package.loaded.map=map
           map.add('home',0,0,0);map.add('source',2,0,0);map.add('dest',4,0,0)
           map.name('stock','source',0);map.name('out','dest',0)
@@ -140,6 +141,80 @@ class LogisticsRestartTests(unittest.TestCase):
                   ready();drain();assert(#lg.jobs()==1) -- Reserved holder must not be submitted twice.
                   finishPhysical(true)
                   assert(lg.status(id).state=='done' and wh.count(item)==13 and FAKE.stock==13)
+                ''')
+
+    def test_boot_ready_lists_current_inventory(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+        lua.execute('''
+          local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and 3 or 0 end,
+            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+            getOffset=function() return 0 end}
+          local inv={getStackInInternalSlot=function(i)
+            if i==1 then return {name='minecraft:coal',damage=0,size=3,maxSize=64} end
+          end}
+          component={list=function(kind) return function() return kind end end,
+            proxy=function(kind) return kind=='drone' and drone or inv end}
+          computer={energy=function() return 5000 end,freeMemory=function() return 32000 end,
+            pullSignal=function() return coroutine.yield() end}
+          local ready
+          local modem={send=function(_,_,_,kind,id,payload)
+            if kind=='report' then ready=assert(load('return '..payload))() end
+          end}
+          local agent=coroutine.create(assert(load(AGENT)))
+          local ok,err=coroutine.resume(agent,modem,'token','controller','d1',27103,0,0,0)
+          assert(ok,err);assert(ready.state=='ready' and ready.held==3 and ready.cargo[1].size==3)
+        ''')
+
+    def test_boot_offset_mismatch_stays_lost_until_found(self):
+        for offset in (0.02, 0.2):
+            with self.subTest(offset=offset):
+                lua = self.start('log')
+                lua.globals().OFFSET = offset
+                lua.execute('''
+                  report(0,{state='ready',notAtHome=true,offset=OFFSET})
+                  local d=lg.drones()[1];assert(d.state=='lost')
+                  assert(lg.found('d1'));ready();assert(lg.drones()[1].state=='idle')
+                ''')
+                agent = LuaRuntime(unpack_returned_tuples=True)
+                agent.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+                agent.globals().OFFSET = offset
+                agent.execute('''
+                  local drone={inventorySize=function() return 4 end,count=function() return 0 end,
+                    getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+                    getOffset=function() return OFFSET end,getLightColor=function() return 0 end,
+                    setLightColor=function() end,setStatusText=function() end}
+                  component={list=function(kind) return function() return kind end end,
+                    proxy=function(kind) return kind=='drone' and drone or
+                      {getStackInInternalSlot=function() end} end}
+                  computer={energy=function() return 5000 end,pullSignal=function() return coroutine.yield() end}
+                  local report
+                  local modem={send=function(_,_,_,kind,id,payload)
+                    if kind=='report' then report=assert(load('return '..payload))() end
+                  end}
+                  local thread=coroutine.create(assert(load(AGENT)))
+                  assert(coroutine.resume(thread,modem,'token','controller','d1',27103,0,0,0))
+                  assert(report.state=='ready' and report.notAtHome==true and report.offset==OFFSET)
+                  assert(coroutine.status(thread)=='suspended')
+                ''')
+
+    def test_lost_found_fresh_ready_returns_only_remaining_cargo(self):
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                self.start(mode, 'minecraft:coal').execute('''
+                  local id=fetch();FAKE.stock=6;FAKE.held=4
+                  FAKE.cargo={{name=item.name,damage=0,size=4,maxSize=64}}
+                  report(FAKE.trip,{state='progress',steps={{taken=4,moved=4}},held=4,
+                    cargo={{item=item,count=4}}})
+                  emit('modem_message','local','remote',27103,0,'secret','boot')
+                  FAKE.working=false;report(0,{state='lost',cargo=FAKE.cargo});drain()
+                  assert(lg.status(id).state=='failed' and wh.count(item)==6)
+                  FAKE.held=3;FAKE.cargo[1].size=3 -- Player removed one while carrying it.
+                  assert(lg.found('d1'));report(0,{state='ready',held=3,cargo=FAKE.cargo});drain()
+                  assert(lg.drones()[1].held[1].count==3)
+                  assert(FAKE.working and FAKE.task.cargo)
+                  finishPhysical(true)
+                  assert(FAKE.stock==9 and wh.count(item)==9 and FAKE.held==0)
                 ''')
 
     def test_job_and_trip_ids_continue_without_reuse(self):
@@ -283,7 +358,8 @@ class AgentRestartTests(unittest.TestCase):
         lua.execute('''
           SENT={};HELD=0
           local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and HELD or 0 end,
-            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end}
+            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+            getOffset=function() return 0 end}
           local inv={getInventorySize=function() return nil end,getStackInInternalSlot=function(i)
             if HELD>0 and i==1 then return {name='mod:stock',damage=0,size=HELD,maxSize=64} end
           end}

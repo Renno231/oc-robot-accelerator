@@ -31,6 +31,23 @@ local function report(id,data)
 end
 local last
 local activeTrip,history,currentPoint,rerouted,testingCandidate
+local function askRoute(from,to,blocked)
+  local function sendRequest()
+    if blocked then report(activeTrip,blocked)
+    else modem.send(controller,port,token,"navigate",activeTrip,encode({from=from,to=to})) end
+  end
+  sendRequest()
+  while true do
+    local e={computer.pullSignal(60)}
+    if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token then
+      if e[7]=="status" then sendRequest()
+      elseif e[7]=="navigation" and e[8]==activeTrip then
+        local answer=decode(e[9]);assert(answer and answer.route,answer and answer.reason or "invalid route")
+        return answer.route
+      end
+    end
+  end
+end
 -- OC 8ca336fb entity/Drone.scala:74-78,430-457: .1 acceleration per
 -- tick, .4 axis cap, .8 drag. component/Drone.scala: getMaxVelocity=8,
 -- getAcceleration=2; convert the latter back to 40 blocks/s^2.
@@ -63,17 +80,9 @@ local function fly(path)
           local deadline=computer.uptime()+10
           repeat computer.pullSignal(0.1) until (drone.getOffset()<0.02 and drone.getVelocity()<0.02) or computer.uptime()>deadline
           assert(drone.getOffset()<0.02,"blocked link retrace failed")
-          report(activeTrip,{state="blocked",link={a=previous.name,b=p.name},to=path[#path].name,offset=offset,stalledSeconds=stalled,candidate=testingCandidate})
-          deadline=computer.uptime()+10
-          repeat
-            local e={computer.pullSignal(math.max(0.1,deadline-computer.uptime()))}
-            if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="navigation" and e[8]==activeTrip then
-              local answer=decode(e[9]);assert(answer and answer.route,answer and answer.reason or "no alternative route")
-              rerouted=true
-              return fly(answer.route)
-            end
-          until computer.uptime()>deadline
-          error("blocked link navigation timeout")
+          local route=askRoute(previous.name,path[#path].name,{state="blocked",link={a=previous.name,b=p.name},to=path[#path].name,offset=offset,stalledSeconds=stalled,candidate=testingCandidate})
+          rerouted=true
+          return fly(route)
         end
       end
       x,y,z=p.x,p.y,p.z
@@ -84,16 +93,7 @@ local function fly(path)
 end
 local function goTo(node)
   if currentPoint.name==node then return end
-  modem.send(controller,port,token,"navigate",activeTrip,encode({from=currentPoint.name,to=node}))
-  local deadline=computer.uptime()+10
-  repeat
-    local e={computer.pullSignal(math.max(0.1,deadline-computer.uptime()))}
-    if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="navigation" and e[8]==activeTrip then
-      local answer=decode(e[9]);assert(answer and answer.route,answer and answer.reason or "invalid route")
-      return fly(answer.route)
-    end
-  until computer.uptime()>deadline
-  error("navigation timeout")
+  return fly(askRoute(currentPoint.name,node))
 end
 local function travel(path)
   if rerouted then return goTo(path[#path].name) end
@@ -254,10 +254,10 @@ local function runSteps(task,id,result)
     report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
   end
 end
-if x==nil or y==nil or z==nil then
+if not x or drone.getOffset()>=.02 then
   local light=drone.getLightColor()
   drone.setLightColor(0xFF0000);drone.setStatusText("LOST\nsee base")
-  report(0,{state="lost",cargo=cargoListing()})
+  report(0,{state=x and"ready"or"lost",notAtHome=x~=nil,offset=drone.getOffset(),cargo=cargoListing()})
   while true do
     local e={computer.pullSignal(60)}
     if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="found" and type(e[8])=="number" and type(e[9])=="number" and type(e[10])=="number" then
@@ -265,7 +265,7 @@ if x==nil or y==nil or z==nil then
     end
   end
 end
-report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount()})
+report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
 local backoff=0.05
 while true do
   local e={computer.pullSignal(backoff)}

@@ -122,6 +122,7 @@ end
 local function jobReceipt(entry,job,receipt,catchup)
     if job.ended or type(receipt)~="table" or receipt.jobId~=job.id then return end
     job.idleAt=computer.uptime()+(job.options.idleTimeout or 60)
+    job.silent=nil
     local data={address=entry.address,jobId=job.id,receipt=receipt,mayHaveExecuted=job.submitted}
     if receipt.status=="COMPLETE" or receipt.status=="FAILED" or receipt.status=="NOT_FOUND" then
         data.status=receipt.status=="COMPLETE" and "complete" or
@@ -144,6 +145,11 @@ local function ownedReceipt(entry,job,receipt,catchup)
         jobReceipt(entry,job,candidate,false)
     end
 end
+local function silence(entry,job)
+    if not job or not job.silent then return end
+    if job.silent==1 then job.silent=2;entry.proxy:close();job.idleAt=math.huge
+    else job.idleAt=computer.uptime() end
+end
 local function asyncCall(entry,token,method,args,options,callback)
     local request={entry=entry,token=token,method=method,jobId=args[method=="craft" and 2 or 1],
         due=computer.uptime()+(options.rpcTimeout or 10),active=true,options=options}
@@ -157,6 +163,7 @@ local function asyncCall(entry,token,method,args,options,callback)
     end)
     if not ok then
         request.active=false;outstanding[request]=nil
+        silence(entry,entry.jobs[token])
         fact(token,"robot_transport",{address=entry.address,jobId=request.jobId,state="unknown",unknown=true,reason=tostring(err)})
         return nil,tostring(err)
     end
@@ -297,6 +304,7 @@ function craftClient.inspect(token,address,jobId,options)
         local job=entry.jobs[token]
         if job and job.id==jobId then
             job.inspectPending=false
+            if not rpcOK or type(receipt)~="table" then silence(entry,job) end
             if rpcOK then ownedReceipt(entry,job,receipt,true) end
         end
     end)
@@ -312,7 +320,7 @@ function craftClient.tick(now)
             fact(request.token,request.method=="status" and "robot_status" or "robot_transport",
                 {address=request.entry.address,jobId=request.jobId,state="unknown",unknown=true,reason="Crafting RPC response deadline exceeded."})
             local job=request.entry.jobs[request.token]
-            if job then job.inspectPending=false;job.reconcileAt=now end
+            if job then silence(request.entry,job);job.inspectPending=false;job.reconcileAt=now end
         end end
         -- A work budget, not a fleet-size limit: one slow/offline robot cannot
         -- turn a tick into N sequential handshake waits. Rotate fairly over
@@ -348,10 +356,14 @@ function craftClient.tick(now)
             local jobs={};for _,job in pairs(entry.jobs) do jobs[#jobs+1]=job end
             for _,job in ipairs(jobs) do if not job.ended then
                 if (job.endAt and now>=job.endAt) or now>=job.idleAt then
+                    if not job.silent and not (job.endAt and now>=job.endAt) then
+                        job.silent=1;job.idleAt=math.huge;job.reconcileAt=now
+                    else
                     local reason=job.endAt and now>=job.endAt and "Crafting job exceeded its total timeout." or "Crafting server stopped responding (idle timeout)."
                     forgetJob(entry,job)
                     fact(job.token,"robot_terminal",{address=entry.address,jobId=job.id,status="unknown",unknown=true,success=false,
                         mayHaveExecuted=true,reason=reason,cleanupError=job.cleanupError})
+                    end
                 elseif job.reconcileAt and now>=job.reconcileAt and connected(entry) and not job.inspectPending then
                     job.reconcileAt=nil;job.inspectPending=true
                     local sent=craftClient.inspect(job.token,entry.address,job.id,job.options)
