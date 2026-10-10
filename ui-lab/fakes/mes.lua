@@ -23,6 +23,18 @@ end
 function M.removeType(name) types[name]=nil;changed();return true end
 function M.setCrafter(name,c) assert(c.robot and c.buffer,"robot and buffer required");crafters[name]=copy(c);wh.group(name,"crafter",{buffer=c.buffer});changed();return true end
 function M.removeCrafter(name) crafters[name]=nil;wh.ungroup(name);changed();return true end
+-- Robots running unpaired cproc; same shape as mes_config.pendingRobots.
+local pendingRobots={"3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"}
+function M.pendingRobots() local out={};for _,a in ipairs(pendingRobots) do out[#out+1]={address=a} end;return out end
+function M.registerRobot(address,name,buffer)
+  local k;for i,a in ipairs(pendingRobots) do if a==address then k=i end end
+  if not k then return nil,"address is not an announcing unpaired robot" end
+  if type(name)~="string" or not name:match("^[%w_-]+$") or crafters[name] then return nil,"invalid/duplicate name" end
+  if not require("map").storage(buffer) then return nil,"unknown buffer storage" end
+  table.remove(pendingRobots,k);return M.setCrafter(name,{robot=address,buffer=buffer})
+end
+-- Lab: a robot announces (sync.py's "announce" launcher argument).
+function M.labAnnounce() local a="5d6e7f80-9a0b-4c1d-8e2f-3a4b5c6d7e8f";pendingRobots[#pendingRobots+1]=a;event.push("mes_robot_announce",a) end
 function M.robots() return {{address="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",busy=false},{address="0b9e44d1-1c2d-4e3f-8a9b-7c6d5e4f3a2b",busy=true}} end
 local names={"minecraft:torch","minecraft:brick_block","minecraft:brick","minecraft:coal:1","minecraft:planks","minecraft:stick",
   "minecraft:crafting_table","minecraft:chest","minecraft:furnace","minecraft:iron_ingot","minecraft:glass","minecraft:hopper",

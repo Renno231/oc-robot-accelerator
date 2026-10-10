@@ -203,6 +203,59 @@ function F.newCrafter()
   end)
 end
 
+---------------------------------------------------------------- stations
+-- A storage or a row by coordinates: stations.add builds the nodes, links
+-- and names, then checks them asynchronously. Every field has a default;
+-- coordinates default to the last station's.
+local faces={"top","bottom","north","south","west","east"}
+local opposite={top="bottom",bottom="top",north="south",south="north",west="east",east="west"}
+local last={}
+local function freeName(st,prefix)
+  local used={};for _,n in ipairs(map.storageNames()) do used[n]=true end
+  for _,r in ipairs(st.list()) do used[r.name]=true end
+  local n=1;while used[prefix..n] or map.node(prefix..n) do n=n+1 end;return prefix..n
+end
+local function choose(title,values,cur,done,text)
+  local rows,at={},nil;for k,v in ipairs(values) do if v==cur then at=k end;rows[k]={text=(v==cur and "● " or "  ")..(text and text(v) or tostring(v)),value=v} end
+  ui.pick(title,rows,done,{nofilter=true,at=at})
+end
+function F.addStation(kind,done)
+  local st=require("stations");local row=kind=="row"
+  local s={x=last.x,y=last.y,z=last.z,face="top",role="stock"}
+  if row then s.rowDir="north";s.count=2;s.spacing=1;s.pair=1;s.prefix="stock" else s.name=freeName(st,"stock") end
+  local function dirs() local t={};for _,f in ipairs(faces) do if f~=s.face and f~=opposite[s.face] then t[#t+1]=f end end;return t end
+  local function coord(k,label) return {label=label,show=function() return s[k] and tostring(s[k]) or "— required" end,
+    colour=function() return not s[k] and ui.P.warn or nil end,edit=function(r)
+      ui.prompt(label,label.." (block coordinate)",s[k],function(v) s[k]=v;r() end,{integer=true}) end} end
+  local w=row and " of the first block" or ""
+  local fields={coord("x","X"..w),coord("y","Y"..w),coord("z","Z"..w),
+    {label="Face",show=function() return s.face.."  (the face the drone reaches)" end,edit=function(r)
+      choose("Face the drone reaches",faces,s.face,function(v) s.face=v
+        if row and (s.rowDir==v or s.rowDir==opposite[v]) then s.rowDir=dirs()[1] end;r() end) end}}
+  if row then
+    fields[#fields+1]={label="Direction",show=function() return s.rowDir.."  (the row runs this way)" end,edit=function(r)
+      choose("Direction the row runs",dirs(),s.rowDir,function(v) s.rowDir=v;r() end) end}
+    fields[#fields+1]={label="Count",show=function() return s.count.." blocks" end,edit=function(r)
+      ui.prompt("Count","Blocks in the row (1..64)",s.count,function(v) s.count=v;r() end,{integer=true,min=1,check=function(v) if v>64 then return nil,"64 at most" end;return true end}) end}
+    fields[#fields+1]={label="Spacing",show=function() return s.spacing==1 and "1  (adjacent blocks)" or "2  (every other block)" end,edit=function(r)
+      choose("Spacing",{1,2},s.spacing,function(v) s.spacing=v;r() end,function(v) return v==1 and "1: adjacent blocks" or "2: every other block" end) end}
+    fields[#fields+1]={label="Pair",show=function() return s.pair.."  · adjacent vanilla chests merge into double chests: use pair 2" end,edit=function(r)
+      choose("Pair: blocks per inventory",{1,2},s.pair,function(v) s.pair=v;r() end,function(v) return v==1 and "1: one inventory per block" or "2: double chests, two blocks per inventory" end) end}
+  end
+  local nk=row and "prefix" or "name"
+  fields[#fields+1]={label=row and "Prefix" or "Name",show=function() return s[nk]..(row and "  ("..s.prefix.."1.."..s.prefix..s.count..")" or "") end,edit=function(r)
+    ui.prompt(row and "Prefix" or "Name",row and "Name prefix: members are prefix1, prefix2, …" or "Storage name",s[nk],function(v) s[nk]=v;r() end) end}
+  fields[#fields+1]={label="Role",show=function() return s.role=="stock" and "stock  (count and use its contents)" or "other  (a buffer or machine face)" end,edit=function(r)
+    choose("Role",{"stock","other"},s.role,function(v) s.role=v;r() end,function(v) return v=="stock" and "stock: count and use its contents" or "other: a buffer, machine face or other storage" end) end}
+  ui.form(row and "Add a row of storages" or "Add a storage",fields,row and "Add row" or "Add storage",function(close)
+    local name,err=st.add(kind,s)
+    -- stations asserts: OC prefixes "file:line: " to the message.
+    if not name then ui.fail((tostring(err):gsub("^[^:]+:%d+: ","")));return end
+    last.x,last.y,last.z=s.x,s.y,s.z;close();ui.ok(name..": checking; it updates when done")
+    if done then done(name) end
+  end,96)
+end
+
 ---------------------------------------------------------------- stock membership
 function F.membership(storage)
   local m=wh.members()[storage];local member=m~=nil;local was=member;m=m or {}

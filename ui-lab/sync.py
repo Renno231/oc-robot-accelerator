@@ -15,9 +15,16 @@ from pathlib import Path
 
 # `mesui TAB` opens a tab; `mesui TAB mem` also shows free memory in the
 # header, refreshed every second (raw: garbage not yet collected counts).
+# `mesui TAB mem announce` (or `TAB x announce`) has a drone and a robot
+# announce 6 s after start.
 LAUNCHER = """local args={...}
 local computer=require("computer");local event=require("event")
-local opts={tab=args[1]};local timer
+local opts={tab=args[1]};local timer,announce
+-- `announce` anywhere after the tab: 6 s in, a drone and a robot announce.
+for _,a in ipairs(args) do if a=="announce" then
+  local function fire() require("logistics").labAnnounce();require("mes").labAnnounce() end
+  announce=event.timer(6,fire)
+end end
 if args[2]=="mem" then
   local low=math.huge
   opts.status=function()
@@ -28,6 +35,7 @@ if args[2]=="mem" then
 end
 require("mes_ui").run(opts)
 if timer then event.cancel(timer) end
+if announce then event.cancel(announce) end
 """
 
 lab = Path(__file__).resolve().parent

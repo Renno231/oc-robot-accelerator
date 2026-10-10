@@ -41,4 +41,6 @@ function M.found(name)
   if not d.lost then return nil,"drone is not lost" end
   d.lost=nil;d.state="booting";d.job=nil;d.trip=nil;d.node=d.home;return true
 end
+-- Lab: a drone announces (sync.py's "announce" launcher argument).
+function M.labAnnounce() local a="2f3e4d5c-bbbb-4ccc-8ddd-eeeeeeeeee03";D.announcing[#D.announcing+1]=a;event.push("logistics_announce",a) end
 return M
