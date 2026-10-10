@@ -291,20 +291,23 @@ class MesStateTests(LuaCase):
           assert(WORLD.robots.r1.run==9 and WORLD.robots.r1.state=='busy')
         ''')
 
-    def test_collects_only_due_loads_and_retries_when_the_missing_output_should_be_done(self):
+    def test_collection_goes_when_a_load_is_due_and_retries_when_the_missing_output_should_be_done(self):
         self.lua.execute('''
           loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',4)})
           while #actions('fetchMany')>0 do drain('fetchMany') end
           local g=RUN.world.groups.alloy
           -- Four loads finish in order at 2, 4, 6 and 8 seconds.
-          tick(2);local c=actions('collectMany');assert(#c==1 and c[1].requests[1].count==1)
+          tick(1);assert(#actions('collectMany')==0)
+          -- The trip goes for the first load and asks for all four; finished output comes along.
+          tick(2);local c=actions('collectMany');assert(#c==1 and c[1].requests[1].count==4)
           drain('collectMany') -- nothing was there yet
           -- One missing op takes 2 seconds; the loads behind it move back with it.
           assert(g.loads[1].due==4 and g.loads[2].due==6 and g.loads[4].due==10)
           tick(3);assert(#actions('collectMany')==0)
-          put('mx','t:bronze',1);tick(4);c=actions('collectMany')
-          assert(#c==1 and c[1].requests[1].count==1);drain('collectMany')
-          assert(#g.loads==3)
+          put('mx','t:bronze',2);tick(4);c=actions('collectMany')
+          assert(#c==1 and c[1].requests[1].count==4);drain('collectMany')
+          -- Two came back: the first load and, early, the second.
+          assert(#g.loads==2 and g.loads[1].due==8)
         ''')
 
     def test_blocking_same_recipe_topup_and_different_recipe_waits_for_its_loads_to_be_collected(self):
