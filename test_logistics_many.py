@@ -60,6 +60,50 @@ class LogisticsManyTests(unittest.TestCase):
                       end
                     ''')
 
+    def test_take_all_that_empties_its_source_is_done_not_source_empty(self):
+        self.lua.execute('''
+          local id=lg.job({{take='source',item={name='mod:a'},count='all'},{put='dest',item={name='mod:a'},rest=true}})
+          local packet=dispatch()
+          report(packet.id,{state='idle',held=0,steps={{taken=64,moved=64,short=true,complete=true},{moved=64}}})
+          local s=lg.status(id);assert(s.state=='done' and s.reason==nil)
+        ''')
+
+    def test_held_drone_delivers_its_cargo_only_on_its_own_job(self):
+        self.lua.execute('''
+          lg.job({leg('take','mod:a',3,nil,64),leg('put','mod:a',3,nil,64,'dest')})
+          local packet=dispatch()
+          report(packet.id,{state='idle',held=3,reason='destination refused items',refused=true,
+            steps={{taken=3,moved=3},{moved=0,refused=3}},cargo={{item={name='mod:a',damage=0},count=3}}})
+          local d=lg.drones()[1];assert(d.state=='held' and d.held[1].count==3 and d.home=='home')
+          -- Other work does not use a held drone.
+          local before=#SENT;lg.job({leg('take','mod:b',1,nil,64),leg('put','mod:b',1,nil,64,'dest')});dispatch()
+          assert(#SENT==before)
+          lg.job({leg('put','mod:a',3,nil,64,'other')},{drone='d1',cargo=true,drones=1,retries=0})
+          local _,task=dispatch()
+          assert(task.cargo==true and #task.steps==1 and task.steps[1].put and task.steps[1].count==3)
+        ''')
+
+    def test_agent_delivers_cargo_it_already_holds(self):
+        source = Path('drone-logistics/drone/agent.lua').read_text()
+        function = source[source.index('local function runSteps('):source.index('if x==nil or y==nil or z==nil then')]
+        self.lua.execute('''
+          slots=2;CARGO={{name='mod:a',damage=0,size=3,maxSize=64}};PUT={};REPORTS={}
+          inv={getStackInInternalSlot=function(i) local c=CARGO[i];return c and c.size>0 and c or nil end}
+          function match(a,b) return a and b and a.name==b.name end
+          function goTo() end
+          function report(id,r) REPORTS[#REPORTS+1]=r end
+          function cargoCount() local n=0;for _,c in pairs(CARGO) do n=n+c.size end;return n end
+          function put(endpoint,item,n) CARGO[1].size=CARGO[1].size-n;PUT[#PUT+1]={endpoint.node,n};return n end
+          computer={energy=function() return 100 end}
+        ''')
+        run_steps = self.lua.execute(function + '\nreturn runSteps')
+        self.lua.globals().RUN = run_steps
+        self.assertEqual(self.lua.execute('''
+          local result={}
+          RUN({cargo=true,reserve=0,home='home',steps={{put={node='stock'},item={name='mod:a'},count=3}}},1,result)
+          return PUT[1][1],PUT[1][2],result.steps[1].moved,result.held,#result.cargo
+        '''), ('stock', 3, 3, 0, 0))
+
     def setUp(self):
         fixture = test_stock_api.LibraryApiTests()
         fixture.setUp()

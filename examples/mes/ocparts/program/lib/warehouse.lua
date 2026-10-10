@@ -325,6 +325,12 @@ function M.find(i)
   table.sort(out,function(a,b) return a.storage<b.storage end);return out
 end
 function M.count(i) local n=0;for _,v in ipairs(M.find(i)) do n=n+v.count end;return n end
+-- Stock no drone is already on its way to take.
+function M.available(i)
+  i=item(i);local n=0
+  for key,list in pairs(entries()) do n=n+math.max(0,quantity(list[1].entry,i)-reserved(key,i,'take')) end
+  return n
+end
 -- SHARED/read-only: aggregate physical stock inventories once per change.
 function M.totals()
   syncMapRevision()
@@ -475,6 +481,23 @@ local function full(storage,i,touched)
   for _,v in pairs(e.items) do if matches(v.item,i) then v.room=0 end end
   e.estimated=true;touched[key]=storage
 end
+local storeTargets
+-- A drone left holding items takes them to stock; the put receipts book them back.
+local function deliverHeld(name)
+  local d;for _,x in ipairs(logistics.drones()) do if x.name==name then d=x end end
+  if not d or d.state~="held" or not d.held then return end
+  local stock,source=entries(),map.place(d.home);local planned,steps={},{}
+  for _,h in ipairs(d.held) do
+    local i=item(h.item);local maximum=limits[limitKey(i)] or 64;local remaining=h.count
+    for _,c in ipairs(storeTargets(stock,i,nil,source,maximum,planned)) do
+      if remaining==0 then break end
+      local n=math.min(remaining,c.capacity)
+      planned[#planned+1]={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
+      steps[#steps+1]={put=c.storage,item=i,count=n,maxSize=maximum};remaining=remaining-n
+    end
+  end
+  if #steps>0 then submit(steps,{drone=name,cargo=true,drones=1,retries=0},planned) end
+end
 local function finished(_,id)
   local s=logistics.status(id);if not s then return end
   syncMapRevision()
@@ -520,6 +543,7 @@ local function finished(_,id)
     if (s.refused or 0)>0 and s.to and not s.to.slots then full(at(s.to),s.item,touched) end
   end
   if s.overflowEndpoint then mutationKeys({s.overflowEndpoint}) end
+  local holders={};for _,h in ipairs(s.held or {}) do if not holders[h.drone] then holders[h.drone]=true;deliverHeld(h.drone) end end
   local mutation=pendingMutations[id]
   if mutation then
     local ids={};for key in pairs(mutation) do ids[#ids+1]=key end;invalidate(ids)
@@ -547,6 +571,14 @@ end
 local function distance(a,b)
   local ok,path=pcall(logistics.plan,a,b);if not ok then return math.huge end
   local d=0;for k=2,#path do local p,q=path[k-1],path[k];d=d+math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2) end;return d
+end
+-- Something else read this inventory whole (a robot its buffer): those counts are the truth.
+function M.observed(storage,counts)
+  local key=inventory(storage) or storage;local touched={}
+  for _,v in pairs(db[key] and db[key].items or {}) do short(storage,v.item,0,touched) end
+  for _,c in ipairs(counts) do short(storage,item(c.item),c.count,touched) end
+  for k in pairs(touched) do if db[k] then saveInventory(k) end end
+  if next(touched) then changed() end
 end
 -- A machine used up n of an item it was given (known from the output collected).
 function M.consumed(storage,i,n)
@@ -839,7 +871,7 @@ function M.fetchMany(requests,to,opts)
   return submitPacked(jobs)
 end
 -- Stock storages that can take item i coming from `from`, best first.
-local function storeTargets(stock,i,from,source,maximum,planned)
+function storeTargets(stock,i,from,source,maximum,planned)
   local candidates={}
   for _,faces in pairs(stock) do for _,face in ipairs(faces) do
     local entry=face.entry;local accept=accepts(face.settings,i)

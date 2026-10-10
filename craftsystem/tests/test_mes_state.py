@@ -7,13 +7,16 @@ from test_support import LuaCase
 
 
 class MesStateTests(LuaCase):
-    def test_failure_closes_without_scans_and_where_uses_catalogue(self):
+    def test_failed_robot_buffer_is_read_once_and_where_uses_it(self):
         self.lua.execute('''
           new({robot('t:final')});local running=readyRobots()[1]
           put('b1','t:raw',2);put('b1','t:extra',3)
           local closed=false;PORTS.contents=function(storage) closed=RUN.stages[1].phase=='closed';return view(storage) end
           local before=#ACTIONS;tick(7);terminal(running,'failed')
-          assert(#ACTIONS==before and #actions('scan')==0)
+          -- The robot dumped what it held and reported nothing: one read of the buffer.
+          assert(#ACTIONS==before+1 and #actions('scan')==1 and actions('scan')[1].storage=='b1')
+          assert(RUN.stages[1].phase~='closed' and RUN.reason=='robot failed')
+          drain('scan')
           local s=RUN.stages[1]
           assert(closed and s.finished==7 and s.state=='failed' and WORLD.robots.r1.state=='idle')
           assert(s.remaining==nil and S.stageSnapshot(s).remaining==nil)
@@ -107,6 +110,7 @@ class MesStateTests(LuaCase):
             contents=function(storage) return view(storage) end,
             stock=function() return math.huge end,
             consumed=function(storage,i,n) CONSUMED[#CONSUMED+1]={storage,i.name,n} end,
+            observed=function(storage,counts) local v=view(storage);v.items={};for _,c in ipairs(counts) do put(storage,c.item.name..(c.item.damage>0 and ':'..c.item.damage or ''),c.count) end end,
             stackSize=function() return 64 end,
             crafters=function() return CF end,
             groups=function(kind) local o={};for n,g in pairs(GROUPS) do if not kind or g.type==kind then o[n]=g end end;return o end,
@@ -245,7 +249,8 @@ class MesStateTests(LuaCase):
             status='failed',receipt={status='failed',message='known robot failure'}})
           local before=#ACTIONS;assert(RUN.reason==nil)
           advance();assert(#actions('robot_begin')==1 and RUN.reason=='known robot failure')
-          assert(RUN.stages[1].craftStarted==nil and #ACTIONS==before)
+          assert(RUN.stages[1].craftStarted==nil and #ACTIONS==before+1 and #actions('scan')==1)
+          drain('scan')
           assert(RUN.status=='failed' and RUN.stages[2].receipt.message=='known robot failure')
           assert(RUN.stages[1].physicalJobs[1].status=='complete')
         ''')
@@ -258,6 +263,7 @@ class MesStateTests(LuaCase):
               receipt={status='failed',message=i==2 and 'first received b' or 'later a'}})
           end
           advance();assert(RUN.reason=='first received b')
+          drain('scan')
           assert(RUN.status=='failed' and RUN.stages[1].error=='later a' and RUN.stages[2].error=='first received b')
         ''')
 
@@ -278,7 +284,7 @@ class MesStateTests(LuaCase):
                   facts[FIRST]()
                   for _,kind in ipairs({'robot','logistics','cancel'}) do if kind~=FIRST then facts[kind]() end end
                   advance();assert(RUN.reason==FIRST..' first' and #actions('robot_begin')==1)
-                  assert(RUN.status=='running');fact('settled',{id=90});advance()
+                  assert(RUN.status=='running');fact('settled',{id=90});advance();drain('scan')
                   assert(RUN.status=='failed' and RUN.reason==FIRST..' first')
                 ''')
 
@@ -379,6 +385,34 @@ class MesStateTests(LuaCase):
           assert(#c==1 and c[1].requests[1].count==4);drain('collectMany')
           -- Two came back: the first load and, early, the second.
           assert(#g.loads==2 and g.loads[1].due==8)
+        ''')
+
+    def test_machine_loads_only_what_stock_covers_then_fails_naming_the_item(self):
+        self.lua.execute('''
+          STOCKN={['t:ore']=1};PORTS.stock=function(id) return STOCKN[id] or math.huge end
+          new({machine('t:metal',{'t:ore'},nil,4)})
+          local a=actions('fetchMany')[1];assert(#actions('fetchMany')==1 and a.requests[1].count==1)
+          STOCKN['t:ore']=0;drain('fetchMany');tick(5);advance()
+          assert(RUN.reason=='kiln: Not enough t:ore in stock' and #actions('fetchMany')==0)
+        ''')
+
+    def test_claim_on_stock_found_missing_is_released(self):
+        self.lua.execute('''
+          STOCKN={};PORTS.stock=function(id) return STOCKN[id] or math.huge end
+          new({machine('t:metal',{'t:ore'},nil,2)});RUN.claims['t:ore']=2
+          STOCKN['t:ore']=0;finish(actions('fetchMany')[1],'partial','source empty',{0})
+          assert(RUN.claims['t:ore']==nil)
+        ''')
+
+    def test_machine_holding_items_no_load_explains_is_emptied_before_work(self):
+        self.lua.execute('''
+          put('mi','t:junk',2)
+          new({machine('t:metal',{'t:ore'},nil,2)})
+          -- Known contents, nothing to read: they go to stock first, then the machine is loaded.
+          assert(#actions('scan')==0 and #actions('fetchMany')==0 and #actions('collectMany')==1)
+          local c=actions('collectMany')[1];assert(c.endpoint.storage=='mi' and c.requests[1].count==2)
+          drain('collectMany');advance()
+          assert(#actions('fetchMany')==1 and WORLD.machines.kiln.state~='unknown')
         ''')
 
     def test_collected_output_marks_its_inputs_used_up(self):

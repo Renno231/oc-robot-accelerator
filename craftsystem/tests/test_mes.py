@@ -57,7 +57,10 @@ class MesTests(LuaCase):
                 contents=function(s) return CONTENTS[s] or {items={},slots=27,freeSlots=27} end,
                 -- The fake furnace already moves its input to output.
                 consumed=function() end,
+                -- A robot's read of its buffer replaces what the buffer holds.
+                observed=function(s,counts) local id=require('item_identity').stackName;for _,v in pairs((package.loaded.warehouse.contents(s) or {}).items or {}) do put(s,id(v.item),0) end;for _,c in ipairs(counts) do put(s,id(c.item),c.count) end end,
                 count=function(i) return held('stock',require('item_identity').stackName(i)) end,
+                available=function(i) return held('stock',require('item_identity').stackName(i)) end,
                 stackSize=function() return 64 end,
                 scan=function(s) return {job()} end,
                 fetch=function(item,n,s)
@@ -316,13 +319,28 @@ class MesTests(LuaCase):
             return r.status,type(BUSY_RESULT),BUSY_ERROR,second.status,held('stock','t:final')
         '''), ('complete', 'number', None, 'complete', 2))
 
+    def test_stock_a_run_may_take_excludes_other_runs_claims(self):
+        self.assertEqual(self.lua.execute('''
+            put('stock','t:raw',3)
+            local st=require('mes_state');local P={}
+            local new,adv,upd=st.new,st.advance,st.update
+            st.new=function(id,plan,cfg,opts,world,ports) P[id]=ports
+              return {id=id,status='running',claims=id==1 and {['t:raw']=2} or {},inflight=id==1 and {['t:raw']=1} or {},stages={}} end
+            st.advance=function() end;st.update=function() end
+            local S=require('mes_service');S.start({})
+            S.submit({},CFG,{});S.submit({},CFG,{})
+            local second,first=P[2].stock('t:raw'),P[1].stock('t:raw')
+            st.new,st.advance,st.update=new,adv,upd
+            return second,first
+        '''), (2, 3))  # one claimed unit is already on a drone: the warehouse withholds it
+
     def test_machine_timeout_reports_output(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',1);put('stock','t:fuel',1);TIMEOUT=true
             local r=run({task('t:processed',{'t:raw'},1,1,'furnace')},{machines={furnace='A'}})
-            local located=false;for _,row in ipairs(r.where) do if row.storage=='ai' and row.item=='t:raw' and row.count==1 then located=true end end
-            return r.status,r.error:find('deadline')~=nil,held('ai','t:raw'),located
-        '''), ('failed', True, 1, True))
+            -- The furnace never started: its raw goes back to stock and it is back in service.
+            return r.status,r.error:find('deadline')~=nil,held('ai','t:raw'),held('stock','t:raw'),M.resources{config=CFG}.machines.A.state
+        '''), ('failed', True, 0, 1, 'idle'))
 
     def test_tool_fields_retained_without_branch_bindings(self):
         self.assertEqual(self.lua.execute('''

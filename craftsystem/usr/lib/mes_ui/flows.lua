@@ -43,7 +43,8 @@ function F.addStorage(prefill,done)
         local s=ui.try(map.name,name,node,side);if not s then return end
         map.save()
         ui.pick("Stock?",{{text="Is "..name.." part of stock?",locked=true},{text="  No: a machine, buffer or other storage",value=false},{text="  Yes: count and use its contents",value=true}},function(member)
-          if member then ui.try(wh.add,name) end
+          -- A new inventory may already hold items: read it once.
+          if member and ui.try(wh.add,name) then ui.try(wh.scan,name) end
           ui.ok("Storage "..name.." added"..(member and " to stock" or ""))
           if done then done(name) end
         end,{nofilter=true})
@@ -168,7 +169,11 @@ end
 function F.assignRoles(name,kind,def,roles,k)
   local role=def.roles[k]
   if not role then
-    if ui.try(wh.group,name,kind,roles) then ui.ok("Machine "..name.." ready: "..#def.roles.." faces") end
+    if ui.try(wh.group,name,kind,roles) then
+      local faces={};for _,s in pairs(roles) do faces[#faces+1]=s end
+      ui.try(wh.scan,faces)
+      ui.ok("Machine "..name.." ready: "..#def.roles.." faces")
+    end
     return
   end
   F.pickStorage(name.." · "..role.." ("..k.."/"..#def.roles..")",{free=true,add=name.."."..role},function(s)
@@ -189,7 +194,7 @@ function F.newCrafter()
     local n=0;for _ in pairs(mes().crafters()) do n=n+1 end
     ui.prompt("New crafter","Crafter name","cpu"..(n+1),function(name)
       F.pickStorage(name.." · buffer chest in front of the robot",{free=true,add=name..".buf"},function(buf)
-        if ui.try(mes().setCrafter,name,{robot=addr,buffer=buf}) then ui.ok("Crafter "..name.." ready: robot "..addr:sub(1,8).."…, buffer "..buf) end
+        if ui.try(mes().setCrafter,name,{robot=addr,buffer=buf}) then ui.try(wh.scan,buf);ui.ok("Crafter "..name.." ready: robot "..addr:sub(1,8).."…, buffer "..buf) end
       end)
     end)
   end
@@ -200,7 +205,7 @@ end
 
 ---------------------------------------------------------------- stock membership
 function F.membership(storage)
-  local m=wh.members()[storage];local member=m~=nil;m=m or {}
+  local m=wh.members()[storage];local member=m~=nil;local was=member;m=m or {}
   local filter=m.filter or {};local priority=m.priority
   ui.form("Stock settings · "..storage,{
     {label="In stock",show=function() return member and "yes" or "no" end,edit=function(r) member=not member;r() end},
@@ -213,6 +218,7 @@ function F.membership(storage)
   },"Save",function(close)
     local ok
     if member then ok=ui.try(wh.add,storage,{priority=priority,filter=#filter>0 and filter or nil}) else ok=ui.try(wh.remove,storage)~=nil end
+    if ok and member and not was then ui.try(wh.scan,storage) end
     if ok then close();ui.ok(storage..(member and " is in stock" or " is not stock")) end
   end)
 end

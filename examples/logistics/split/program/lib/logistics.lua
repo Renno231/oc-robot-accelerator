@@ -155,7 +155,9 @@ local function scheduleJob(job)
     if job.openEnded and n>0 then break end
     if n>=(job.opts.drones or math.huge) then break end
     local available=(job.openEnded or job.steps) and math.huge or job.remaining-reserved
-    if available>0 and d.state=="idle" then
+    -- A job for one held drone delivers what that drone already carries.
+    local ready=job.opts.drone==nil and d.state=="idle" or job.opts.drone==d.name and d.state=="held" and d.held~=nil
+    if available>0 and ready then
       local capacity=64*d.cargoSlots
       if job.opts.split==false and not job.steps and job.remaining>capacity then
         job.blocked=true;job.reason="requested "..job.remaining.." exceeds one trip "..capacity.." ("..d.cargoSlots.." slots x 64)"
@@ -170,7 +172,8 @@ local function scheduleJob(job)
           return {action=job.action,reserve=reserve,routes=routes}
         end
         if job.steps then
-          local steps={};local carried,total={},0;local reservations={};local limits={}
+          local function holding() local c={};if job.opts.cargo then for _,h in ipairs(d.held) do local k=itemKey(h.item);c[k]=(c[k] or 0)+h.count end end;return c end
+          local steps={};local carried,total=holding(),0;local reservations={};local limits={}
           for _,assigned in pairs(job.active) do
             for i,count in pairs(assigned.steps or {}) do reservations[i]=(reservations[i] or 0)+count end
           end
@@ -194,7 +197,7 @@ local function scheduleJob(job)
             steps[i]=step
           end
           if job.opts.split==false and total>capacity then error("requested "..total.." exceeds one trip "..capacity) end
-          carried={};local allocation={};local useful=false
+          carried=holding();local allocation={};local useful=false
           for i,s in ipairs(steps) do
             if s.take then
               local key=itemKey(s.item);local used=0
@@ -216,7 +219,7 @@ local function scheduleJob(job)
             if n==0 then error("step counts unmet") end
             return nil
           end
-          return {steps=steps,allocation=allocation,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,routes={take=points({d.home})}}
+          return {steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,routes={take=points({d.home})}}
         end
         local routes={take=path(d.home,job.from.node,job.avoid),put=path(job.from.node,job.to.node,job.avoid),back=path(job.to.node,job.from.node,job.avoid),homeSource=path(job.from.node,d.home,job.avoid),homeDest=path(job.to.node,d.home,job.avoid)}
         if job.opts.overflow then routes.overflow=path(job.to.node,job.opts.overflow.node,job.avoid);routes.homeOverflow=path(job.opts.overflow.node,d.home,job.avoid) end
@@ -282,7 +285,9 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   elseif kind=="cargo" and id==d.release and type(payload)=="string" and #payload<7000 then
     local listing=serialization.unserialize(payload)
     if type(listing)~="table" then return end
-    d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle";wakeScheduler()
+    d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle"
+    d.held=nil;for _,s in pairs(listing) do d.held=d.held or {};d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
+    wakeScheduler()
   elseif kind=="navigate" and d.trip==id and d.job and type(payload)=="string" and #payload<7000 then
     local request=serialization.unserialize(payload);local job=jobs[d.job]
     if type(request)~="table" or not map.node(request.from) or not map.node(request.to) then return end
@@ -356,7 +361,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       if assigned.timing then assigned.timing.finishedAt=uptime() end;job.active[id]=nil
       if job.action then
         job.trips=job.trips+1;job.scan=result.scan;job.test=job.test or result.test
-        job.remaining=0;d.state=(result.away or (result.held or 0)>0) and "held" or "idle"
+        job.remaining=0;d.state=(result.away or (result.held or 0)>0) and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil
         d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
         if (result.held or 0)>0 then
           for _,cargo in pairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=cargo.item,count=cargo.count} end
@@ -367,7 +372,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         job.trips=job.trips+1;job.openEnded=false;local complete=true
         for i,s in ipairs(job.steps) do
           local r=(result.steps or {})[i] or {}
-          if r.short and (r.left or 0)==0 then job.blocked=true;job.reason=result.reason or "source empty" end
+          -- A take-all that empties its source is complete, not short.
+          if r.short and (r.left or 0)==0 and not s.all then job.blocked=true;job.reason=result.reason or "source empty" end
           s.moved=s.moved+(r.moved or 0);if r.listing then s.listing=r.listing;s.size=r.size end
           s.maxSize=r.maxSize or s.maxSize
           for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
@@ -381,7 +387,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         for _,s in ipairs(job.steps) do if s.put then job.moved=job.moved+s.moved end end
         job.remaining=math.max(0,job.requested-job.moved)
         for _,held in ipairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=held.item,count=held.count} end
-        d.state=(result.held or 0)>0 and "held" or "idle";d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
+        d.state=(result.held or 0)>0 and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil;d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
         local advanced=false;for _,r in pairs(result.steps or {}) do if (r.moved or 0)>0 then advanced=true end end
         if not complete and not advanced and not result.reason then result.reason="step counts unmet" end
         if result.reason and not result.recharge and not job.blocked then
@@ -397,7 +403,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       job.short=job.short or result.short
       if result.short then job.found=(result.left or 0)+(result.returned or 0)
       elseif job.found then job.found=math.max(0,job.found-(result.taken or 0)+(result.returned or 0)) end
-      if (result.held or 0)>0 then job.held[#job.held+1]={drone=d.name,item=job.item,count=result.held};d.state="held" else d.state="idle" end
+      if (result.held or 0)>0 then job.held[#job.held+1]={drone=d.name,item=job.item,count=result.held};d.state="held";d.held={{item=job.item,count=result.held}} else d.state="idle";d.held=nil end
       d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
       if result.recharge then
         -- The wait was interrupted to charge; no source retry was consumed.
@@ -452,13 +458,13 @@ function M.forget(name)
 end
 function M.drones()
   local out={};for _,d in pairs(fleet) do
-    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,releasePending=d.release~=nil}
+    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,held=d.held,home=d.home,releasePending=d.release~=nil}
   end
   table.sort(out,function(a,b) return a.name<b.name end);return out
 end
 local function options(opts)
   opts=opts or {}
-  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait" or k=="expectedItems","unsupported option "..k) end
+  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait" or k=="expectedItems" or k=="drone" or k=="cargo","unsupported option "..k) end
   for _,k in ipairs({"retries","drones"}) do if opts[k]~=nil then assert(type(opts[k])=="number" and opts[k]%1==0 and opts[k]>=(k=="drones" and 1 or 0),"invalid "..k) end end
   assert(opts.split==nil or type(opts.split)=="boolean","invalid split")
   if opts.wait then assert(type(opts.wait)=="table" and type(opts.wait.timeout)=="number" and opts.wait.timeout>=0 and opts.wait.timeout<math.huge,"invalid wait timeout") end
