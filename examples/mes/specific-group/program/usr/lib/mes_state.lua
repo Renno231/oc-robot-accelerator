@@ -426,7 +426,9 @@ local function admit(w,g)
         load.bundle=beginMany(r.run,r.stage,'fetch',load.fetches,load.fetches[1].endpoint);g.loading=load;g.phase='loading';publish(w,g);return true
       end
     end
-    if donor then r.blocked=true;if w.now>=r.deadline then bad(w,g,r,'Machine input deadline exceeded',false) end end
+    -- Loads already in the machine, from any run, must clear first.
+    if donor then r.blocked=true;for _,l in ipairs(g.loads) do r.deadline=math.max(r.deadline,l.deadline or w.now+60) end
+      if w.now>=r.deadline then bad(w,g,r,'Machine input deadline exceeded',false) end end
   end
   blocked(w,g);return true
 end
