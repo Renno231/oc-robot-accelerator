@@ -2,6 +2,12 @@
 -- There are deliberately no event, computer, warehouse or transport imports.
 local M = {}
 local identity = require('item_identity')
+-- Machine timing. A load may run this long past its expected finish, and a
+-- blocked request may wait this long for input room, before it fails.
+local MACHINE_GRACE = 60
+-- Re-read delays for machine input and output start here and double up to
+-- the maximum while nothing changes (run options may override both).
+local BACKOFF, MAX_BACKOFF = 0.5, 8
 local function copy(t)
   if type(t) ~= 'table' then
     return t
@@ -36,25 +42,22 @@ end
 local function terminal(s)
   return s == 'done' or s == 'partial' or s == 'failed'
 end
-local stageInternal = {
-  phase = true,
-  prepared = true,
-  toolWithdrawals = true,
-  bundle = true,
-  robotAction = true,
-  robotResult = true,
-  robotResultAt = true,
-  scan = true,
-  failureScans = true,
-  machineWork = true,
-  buffer = true,
-  robotLock = true,
-  bufferLock = true,
-}
+-- The public status of a step. Everything else on a stage is working state.
+local stagePublic = {}
+for _, k in ipairs({
+  'index', 'kind', 'state', 'status', 'detail', 'error', 'done', 'total',
+  'tasks', 'taskIndices', 'firstTask', 'inputs', 'outputs', 'after',
+  'crafter', 'machineType', 'groups', 'loads', 'fuel', 'locations',
+  'assigned', 'started', 'craftStarted', 'craftFinished', 'released', 'finished',
+  'jobId', 'submitted', 'admission', 'receipt', 'remaining', 'toolReservations',
+  'itemsMoved', 'physicalJobs', 'loadLedger', 'loadsDelivered', 'storeAllocations',
+}) do
+  stagePublic[k] = true
+end
 function M.stageSnapshot(s)
   local o = {}
   for k, v in pairs(s) do
-    if not stageInternal[k] then
+    if stagePublic[k] then
       o[k] = copy(v)
     end
   end
@@ -988,7 +991,7 @@ local function startMachine(run, s)
       outputs = outputs,
       recipe = table.concat(signature, ';'),
       inputs = {},
-      deadline = run.now + 60,
+      deadline = run.now + MACHINE_GRACE,
       work = work,
       active = 0,
     }
@@ -1019,8 +1022,8 @@ local function startMachine(run, s)
         phase = 'idle',
         inputDue = 0,
         outputDue = math.huge,
-        inputBackoff = run.opts.machineBackoffSeconds or 0.5,
-        outputBackoff = run.opts.machineBackoffSeconds or 0.5,
+        inputBackoff = run.opts.machineBackoffSeconds or BACKOFF,
+        outputBackoff = run.opts.machineBackoffSeconds or BACKOFF,
       }
       run.world.groups[name] = g
     end
@@ -1089,7 +1092,7 @@ end
 local function blocked(w, g)
   g.cachedInputs = nil
   g.inputDue = w.now + g.inputBackoff
-  g.inputBackoff = math.min(g.inputBackoff * 2, g.opts.machineMaxBackoffSeconds or 8)
+  g.inputBackoff = math.min(g.inputBackoff * 2, g.opts.machineMaxBackoffSeconds or MAX_BACKOFF)
   g.phase = 'idle'
 end
 local function admit(w, g)
@@ -1218,7 +1221,7 @@ local function admit(w, g)
     if donor then
       r.blocked = true
       for _, l in ipairs(g.loads) do
-        r.deadline = math.max(r.deadline, l.deadline or w.now + 60)
+        r.deadline = math.max(r.deadline, l.deadline or w.now + MACHINE_GRACE)
       end
       if w.now >= r.deadline then
         bad(w, g, r, 'Machine input deadline exceeded', false)
@@ -1265,7 +1268,7 @@ local function finishLoad(w, g)
     local duration = load.ops * r.perOp * mt.seconds
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
     g.lastExpectedDue = load.due
-    load.deadline = load.due + duration + 60
+    load.deadline = load.due + duration + MACHINE_GRACE
     record.state = 'processing'
     record.started = w.now
     record.delivered = w.now
@@ -1295,7 +1298,7 @@ local function finishLoad(w, g)
   g.loading = nil
   g.phase = 'idle'
   g.inputDue = w.now
-  g.inputBackoff = g.opts.machineBackoffSeconds or 0.5
+  g.inputBackoff = g.opts.machineBackoffSeconds or BACKOFF
   publish(w, g)
   return true
 end
@@ -1324,8 +1327,8 @@ local function reap(w, g, collected)
       g.outputDue = math.min(g.outputDue, load.due)
     end
   end
-  g.outputBackoff = collected and (g.opts.machineBackoffSeconds or 0.5)
-    or math.min(g.outputBackoff * 2, g.opts.machineMaxBackoffSeconds or 8)
+  g.outputBackoff = collected and (g.opts.machineBackoffSeconds or BACKOFF)
+    or math.min(g.outputBackoff * 2, g.opts.machineMaxBackoffSeconds or MAX_BACKOFF)
   g.phase = 'idle'
   publish(w, g)
 end
@@ -1698,8 +1701,10 @@ local function finishRun(run)
   run.ports.emit('done', run.id, run.status)
   -- Retain public ledgers, not planner blueprints and transient action graphs.
   for _, s in ipairs(run.stages) do
-    for key in pairs(stageInternal) do
-      s[key] = nil
+    for key in pairs(s) do
+      if not stagePublic[key] then
+        s[key] = nil
+      end
     end
   end
   -- A machine group outlives a run only while another run still uses it.

@@ -261,36 +261,21 @@ function M.submit(plan, cfg, opts)
   M.pump()
   return run.id
 end
-local internal = {
-  plan = true,
-  cfg = true,
-  opts = true,
-  world = true,
-  ports = true,
-  now = true,
-  actions = true,
-  jobs = true,
-  settled = true,
-  robotFacts = true,
-  sequence = true,
-  groups = true,
-  toolReservations = true,
-  claims = true,
-  served = true,
-  yielded = true,
-  fuelAvailable = true,
-  emptyBuffers = true,
-  advancing = true,
-  onStage = true,
-  failureFacts = true,
-}
+-- The public status of a run; the rest is working state.
+local public = {}
+for _, k in ipairs({
+  'id', 'item', 'qty', 'status', 'stage', 'active', 'started', 'finished', 'trips',
+  'reason', 'error', 'where', 'scans', 'stopping', 'uncertain', 'callbackError',
+}) do
+  public[k] = true
+end
 local function snapshot(run)
   if not run then
     return
   end
   local o = {}
   for k, v in pairs(run) do
-    if k ~= 'stages' and not internal[k] then
+    if public[k] then
       o[k] = state.copy(v)
     end
   end
