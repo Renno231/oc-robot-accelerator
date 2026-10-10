@@ -232,6 +232,7 @@ function M.submit(plan, cfg, opts)
       event.push('mes', ...)
     end,
     contents = wh.contents,
+    consumed = wh.consumed,
     stock = function(id)
       local n, d = id:match('^(.*):(%d+)$')
       return wh.count({ name = n or id, damage = tonumber(d) or 0 })

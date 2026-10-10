@@ -7,6 +7,21 @@ from test_support import LuaCase
 
 
 class MesStateTests(LuaCase):
+    def test_failure_closes_without_scans_and_where_uses_catalogue(self):
+        self.lua.execute('''
+          new({robot('t:final')});local running=readyRobots()[1]
+          put('b1','t:raw',2);put('b1','t:extra',3)
+          local closed=false;PORTS.contents=function(storage) closed=RUN.stages[1].phase=='closed';return view(storage) end
+          local before=#ACTIONS;tick(7);terminal(running,'failed')
+          assert(#ACTIONS==before and #actions('scan')==0)
+          local s=RUN.stages[1]
+          assert(closed and s.finished==7 and s.state=='failed' and WORLD.robots.r1.state=='idle')
+          assert(s.remaining==nil and S.stageSnapshot(s).remaining==nil)
+          assert(RUN.status=='failed' and #RUN.where==2)
+          local found={};for _,row in ipairs(RUN.where) do assert(row.storage=='b1');found[row.item]=row.count end
+          assert(found['t:raw']==2 and found['t:extra']==3)
+        ''')
+
     def test_collection_wait_for_only_counts_due_load_output(self):
         self.lua.execute('''
           loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',2)})
@@ -69,7 +84,7 @@ class MesStateTests(LuaCase):
             package.preload[name]=function() error('state imported hardware: '..name) end
           end
           os.sleep=function() error('state slept') end
-          S=require('mes_state');WORLD=S.world();ACTIONS={};EMITTED={};VIEWS={};TIME=0;NEXT=0
+          S=require('mes_state');WORLD=S.world();ACTIONS={};EMITTED={};VIEWS={};CONSUMED={};TIME=0;NEXT=0
           CF={a={robot='r1',buffer='b1'},b={robot='r2',buffer='b2'}}
           WORLD.robots.r1={state='idle'};WORLD.robots.r2={state='idle'}
           GROUPS={kiln={type='furnace',roles={input='mi',output='mo',fuel='mf'}},
@@ -90,6 +105,8 @@ class MesStateTests(LuaCase):
             dispatch=function(a) ACTIONS[#ACTIONS+1]=a end,
             emit=function(...) EMITTED[#EMITTED+1]={...} end,
             contents=function(storage) return view(storage) end,
+            stock=function() return math.huge end,
+            consumed=function(storage,i,n) CONSUMED[#CONSUMED+1]={storage,i.name,n} end,
             stackSize=function() return 64 end,
             crafters=function() return CF end,
             groups=function(kind) local o={};for n,g in pairs(GROUPS) do if not kind or g.type==kind then o[n]=g end end;return o end,
@@ -195,7 +212,7 @@ class MesStateTests(LuaCase):
           a.testDone=true;submit(a,{21,22},'submission stopped');receipt(a,21,'partial','later failure',{0});advance()
           assert(RUN.status=='running' and RUN.reason=='submission stopped' and #RUN.stages[1].physicalJobs==2)
           fact('settled',{id=21});receipt(a,22);advance();assert(RUN.status=='running')
-          fact('settled',{id=22});advance();drain('scan')
+          fact('settled',{id=22});advance();assert(#actions('scan')==0)
           assert(RUN.status=='failed' and #actions('robot_begin')==0)
         ''')
 
@@ -204,7 +221,7 @@ class MesStateTests(LuaCase):
           new({robot('t:left'),robot('t:right')});drain('scan')
           local a,b=actions('fetchMany')[1],actions('fetchMany')[2];submit(a,{31});submit(b,{32})
           receipt(b,32,'partial','first b');receipt(a,31,'partial','second a');advance()
-          assert(RUN.reason=='first b');fact('settled',{id=31});fact('settled',{id=32});advance();drain('scan')
+          assert(RUN.reason=='first b');fact('settled',{id=31});fact('settled',{id=32});advance()
           assert(RUN.status=='failed' and #actions('robot_begin')==0)
         ''')
 
@@ -228,8 +245,8 @@ class MesStateTests(LuaCase):
             status='failed',receipt={status='failed',message='known robot failure'}})
           local before=#ACTIONS;assert(RUN.reason==nil)
           advance();assert(#actions('robot_begin')==1 and RUN.reason=='known robot failure')
-          assert(RUN.stages[1].craftStarted==nil and #ACTIONS>before)
-          drain('scan');assert(RUN.status=='failed' and RUN.stages[2].receipt.message=='known robot failure')
+          assert(RUN.stages[1].craftStarted==nil and #ACTIONS==before)
+          assert(RUN.status=='failed' and RUN.stages[2].receipt.message=='known robot failure')
           assert(RUN.stages[1].physicalJobs[1].status=='complete')
         ''')
 
@@ -240,7 +257,7 @@ class MesStateTests(LuaCase):
             fact('robot_terminal',{token=a.token,address=a.address,jobId=a.jobId,status='failed',
               receipt={status='failed',message=i==2 and 'first received b' or 'later a'}})
           end
-          advance();assert(RUN.reason=='first received b');drain('scan')
+          advance();assert(RUN.reason=='first received b')
           assert(RUN.status=='failed' and RUN.stages[1].error=='later a' and RUN.stages[2].error=='first received b')
         ''')
 
@@ -261,7 +278,7 @@ class MesStateTests(LuaCase):
                   facts[FIRST]()
                   for _,kind in ipairs({'robot','logistics','cancel'}) do if kind~=FIRST then facts[kind]() end end
                   advance();assert(RUN.reason==FIRST..' first' and #actions('robot_begin')==1)
-                  assert(RUN.status=='running');fact('settled',{id=90});advance();drain('scan')
+                  assert(RUN.status=='running');fact('settled',{id=90});advance()
                   assert(RUN.status=='failed' and RUN.reason==FIRST..' first')
                 ''')
 
@@ -286,12 +303,12 @@ class MesStateTests(LuaCase):
             receipt={status='COMPLETE',message='SUCCESS',receipt=true}})
           fact('robot_terminal',{token=a.token,address=a.address,jobId=a.jobId,status='failed',at=4,reason='duplicate'})
           advance();assert(RUN.reason==nil and RUN.stages[1].craftFinished==3)
-          drain('scan');assert(RUN.status=='complete' and RUN.stages[1].receipt.message=='SUCCESS')
+          assert(RUN.status=='complete' and RUN.stages[1].receipt.message=='SUCCESS')
         ''')
 
     def test_unknown_owner_quarantines_alias_and_only_own_idle_fact_clears(self):
         self.lua.execute('''
-          ALIAS='shared';new({robot('t:left',{},'a')});terminal(readyRobots()[1],'unknown');drain('scan')
+          ALIAS='shared';new({robot('t:left',{},'a')});terminal(readyRobots()[1],'unknown')
           assert(RUN.status=='unknown' and WORLD.buffers.shared.state=='unknown' and RUN.stages[1].released==nil)
           S.confirmIdle(WORLD,'r2');assert(WORLD.buffers.shared.state=='unknown')
           S.confirmIdle(WORLD,'r1');assert(WORLD.buffers.shared.state=='idle')
@@ -363,6 +380,15 @@ class MesStateTests(LuaCase):
           -- Two came back: the first load and, early, the second.
           assert(#g.loads==2 and g.loads[1].due==8)
         ''')
+
+    def test_collected_output_marks_its_inputs_used_up(self):
+        self.assertEqual(self.lua.execute('''
+          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',4)})
+          while #actions('fetchMany')>0 do drain('fetchMany') end
+          put('mx','t:bronze',2);tick(4);drain('collectMany')
+          local used={};for _,c in ipairs(CONSUMED) do used[c[1]..' '..c[2]]=(used[c[1]..' '..c[2]] or 0)+c[3] end
+          return used['ma t:copper'],used['mb t:tin'],#CONSUMED
+        '''), (2, 2, 4))
 
     def test_blocking_same_recipe_topup_and_different_recipe_waits_for_its_loads_to_be_collected(self):
         self.lua.execute('''

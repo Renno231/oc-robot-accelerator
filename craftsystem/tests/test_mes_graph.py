@@ -117,6 +117,8 @@ class MesGraphTests(LuaCase):
             package.preload.warehouse=function() return {
                 members=function() return MEMBERS end,
                 groups=function(kind) local out={};for n,g in pairs(GROUPS) do if not kind or kind==g.type then out[n]=g end end;return out end,
+                -- Fake machines use up their own inputs.
+                consumed=function() end,count=function(i) return held('stock',require('item_identity').stackName(i)) end,
                 contents=listing,stackSize=function(i) return MAXSTACK[require('item_identity').stackName(i)] or 64 end,
                 settled=function(id) return JOBS[id].settled==true end,
                 scan=function(s) SCANS[#SCANS+1]={storage=s,time=TIME};return {job()} end,

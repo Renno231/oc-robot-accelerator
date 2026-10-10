@@ -40,7 +40,7 @@ for _, k in ipairs({
   'tasks', 'taskIndices', 'firstTask', 'inputs', 'outputs', 'after',
   'crafter', 'machineType', 'groups', 'loads', 'fuel', 'locations',
   'assigned', 'started', 'craftStarted', 'craftFinished', 'released', 'finished',
-  'jobId', 'submitted', 'admission', 'receipt', 'remaining', 'toolReservations',
+  'jobId', 'submitted', 'admission', 'receipt', 'toolReservations',
   'itemsMoved', 'physicalJobs', 'loadLedger', 'loadsDelivered', 'storeAllocations',
 }) do
   stagePublic[k] = true
@@ -542,7 +542,7 @@ local function completeStage(run, s)
   release(run, s)
 end
 local function failStage(run, s, err, unknown)
-  if s.phase == 'failure' or s.phase == 'closed' then
+  if s.phase == 'closed' then
     return
   end
   stop(run, err)
@@ -551,32 +551,10 @@ local function failStage(run, s, err, unknown)
   if unknown then
     run.uncertain = true
   end
-  s.remaining = {}
-  s.failureScans = {}
-  s.phase = 'failure'
-  for _, storage in ipairs(s.locations or {}) do
-    s.failureScans[storage] = action(run, 'scan', { storage = storage })
-  end
   changed(run, s, 'failed', s.error)
-end
-local function failureDrain(run, s)
-  for storage, a in pairs(s.failureScans) do
-    local ledgers, err = outcome(run, a)
-    if not ledgers then
-      return false
-    end
-    local contents = run.ports.contents(storage)
-    s.remaining[storage] = {
-      contents = copy(contents),
-      verified = not err and contents ~= nil,
-      unknown = not (not err and contents ~= nil),
-      error = err,
-    }
-  end
   s.phase = 'closed'
   s.finished = run.now
   release(run, s)
-  return true
 end
 local function robotMatches(s, d)
   return s.robotLock == d.address
@@ -991,6 +969,15 @@ local function admit(w, g)
           ops = math.floor(ops / 2)
         end
       end
+      -- Inputs come from stock: with too little for one operation the request cannot finish.
+      for _, input in pairs(r.inputs) do
+        for id, n in pairs(input.items) do
+          if ops > 0 and not r.run.stopping and r.run.ports.stock(id) < n then
+            bad(w, g, r, 'Not enough ' .. id .. ' in stock')
+            ops = 0
+          end
+        end
+      end
       if ops > 0 and not r.run.stopping then
         donor.left = donor.left - ops
         r.blocked = false
@@ -1281,6 +1268,31 @@ local function collect(w, g)
   g.collection.bundle.action.partialOk = true
   g.phase = 'storing'
 end
+-- Collected output means the machine used up its inputs, and the fuel burned for them.
+local function consume(g, load)
+  local r = load.request
+  local ops = load.ops
+  for id, n in pairs(r.outputs) do
+    ops = math.min(ops, math.floor((load.record.collectedItems[id] or 0) / n))
+  end
+  local delta = ops - (load.consumed or 0)
+  if delta <= 0 then
+    return
+  end
+  load.consumed = ops
+  local consumed = r.run.ports.consumed
+  for _, fetch in ipairs(load.fetches) do
+    if not fetch.fuel then
+      consumed(fetch.endpoint.storage, item(fetch.item), delta * r.inputs[fetch.role].items[fetch.item])
+    end
+  end
+  local f = g.mt.fuel
+  if f then
+    local before = g.fuel.processed or 0
+    g.fuel.processed = before + delta * r.perOp
+    consumed(g.roles[f.role], item(f.item), math.ceil(g.fuel.processed / f.per) - math.ceil(before / f.per))
+  end
+end
 local function finishCollection(w, g)
   local c = g.collection
   local done, err = finishMany(c.bundle.run, c.bundle)
@@ -1339,6 +1351,7 @@ local function finishCollection(w, g)
         any = true
         load.remaining[id] = load.remaining[id] - got
         load.record.collectedItems[id] = (load.record.collectedItems[id] or 0) + got
+        consume(g, load)
         r.stage.done = r.stage.done + got
         load.record.state = 'processing'
         changed(r.run, r.stage, 'processing', 'Machine processing', r.stage.done)
@@ -1519,11 +1532,7 @@ function M.advance(run)
         end
       end
       for _, s in ipairs(run.stages) do
-        if s.phase == 'failure' then
-          if failureDrain(run, s) then
-            progressed = true
-          end
-        elseif s.kind == 'robot' and s.phase and s.phase ~= 'closed' then
+        if s.kind == 'robot' and s.phase and s.phase ~= 'closed' then
           local good, result = pcall(robotAdvance, run, s)
           if not good then
             failStage(run, s, result)
