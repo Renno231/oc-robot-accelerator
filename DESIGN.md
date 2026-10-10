@@ -51,6 +51,14 @@ attempt have been removed.
   or service-owned reconnection. Reconnection restores subscriptions and queries
   status; it never blindly repeats a craft request. The service uses the frozen
   public networking libraries.
+- Several runs are active at once. Robots, buffers, machine groups and tool
+  reservations live in one shared world state. A machine group's loads may come
+  from different runs, and each load's failure stops only its own run. Facts
+  reach their run by run id, robot token or job id; the rest are world facts.
+  The least recently served run decides first, and a run that just released a
+  robot leaves it to a waiting run. Raw stock a run will take stays claimed in
+  the MES until it is fetched or the run ends; planning sees stock minus other
+  runs' claims. The warehouse stays physical.
 - There are no OpenOS threads or process-internal registration pinning in the
   controller. The planner's plain coroutines retain their existing behavior.
   Foreground `mes.wait(runId)` may pull events; closing that caller does not stop

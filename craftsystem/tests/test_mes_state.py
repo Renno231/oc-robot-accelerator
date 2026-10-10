@@ -327,11 +327,11 @@ class MesStateTests(LuaCase):
     def test_tool_exact_physical_reservations_serialize_when_only_one_unit(self):
         self.lua.execute('''
           TOOL_COUNT=1;local a,b=robot('t:left'),robot('t:right');a.tool=true;b.tool=true
-          new({a,b});assert(#actions('scan')==1 and RUN.toolReservations['t:tool:7']==1)
+          new({a,b});assert(#actions('scan')==1 and WORLD.toolReservations['t:tool:7']==1)
           local running=readyRobots()[1];put('b1','t:tool:8',1);put('b1','t:left',1)
           terminal(running);drain('scan');drain('storeMany')
           assert(RUN.stages[1].state=='done' and RUN.stages[2].state=='fetching' and #actions('fetchMany')==1)
-          assert(RUN.toolReservations['t:tool:7']==1)
+          assert(WORLD.toolReservations['t:tool:7']==1)
         ''')
 
     def test_scoped_fuel_credits_are_cumulative_and_extra_units_refresh_first(self):
@@ -345,5 +345,5 @@ class MesStateTests(LuaCase):
           -- Fuel's initial one-unit credit remains accounted even after burn;
           -- the newly observed unit replaces consumed credit, not all history.
           local fuel=0;for _,a in ipairs(ACTIONS) do if a.kind=='fetchMany' then for _,v in ipairs(a.requests) do if v.item.name=='t:fuel' then fuel=fuel+v.count end end end end
-          assert(fuel==0 and RUN.groups.kiln.fuelCredit==2)
+          assert(fuel==0 and WORLD.groups.kiln.fuelCredit==2)
         ''')
