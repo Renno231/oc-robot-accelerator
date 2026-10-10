@@ -108,6 +108,24 @@ local function action(run, kind, data)
   end
   return a
 end
+-- The destination refused part of a delivery and every leftover item is back in
+-- storage. Machine loads count what went in and retry the rest.
+local function cleanRefusal(job)
+  return (job.refused or 0) > 0 and not next(job.held or {})
+end
+-- Whether job id belongs to a delivery that may be refused (a machine load).
+local function refusable(run, id)
+  for _, a in pairs(run.actions) do
+    if a.refusable then
+      for _, j in ipairs(a.ids or {}) do
+        if j == id then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
 -- update records facts only. All transitions, including failures, happen in advance.
 function M.update(run, what, data)
   data = data or {}
@@ -117,8 +135,9 @@ function M.update(run, what, data)
     run.failureFacts[#run.failureFacts + 1] = data.reason or 'Cancelled'
   elseif what == 'job' then
     run.jobs[data.id] = copy(data.receipt)
-    if data.receipt and terminal(data.receipt.state) and data.receipt.state ~= 'done' then
-      run.failureFacts[#run.failureFacts + 1] = data.receipt.reason or ('Logistics ' .. data.receipt.state)
+    local r = data.receipt
+    if r and terminal(r.state) and r.state ~= 'done' and not (cleanRefusal(r) and refusable(run, data.id)) then
+      run.failureFacts[#run.failureFacts + 1] = r.reason or ('Logistics ' .. r.state)
     end
   elseif what == 'settled' then
     run.settled[data.id] = data.settled ~= false
@@ -284,7 +303,7 @@ local function outcome(run, a)
   end
   for i, id in ipairs(a.ids) do
     local r = run.jobs[id]
-    if r and terminal(r.state) and r.state ~= 'done' then
+    if r and terminal(r.state) and r.state ~= 'done' and not (a.refusable and cleanRefusal(r)) then
       problem = problem or r.reason or ('Logistics ' .. r.state)
       stop(run, problem)
     end
@@ -387,6 +406,9 @@ local function finishMany(run, bundle)
   for i, id in ipairs(a.ids) do
     local ledger = ledgers[i]
     local physical = bundle.physical[i]
+    if a.refusable and cleanRefusal(ledger) then
+      bundle.refused = true
+    end
     physical.status = ledger.state == 'done' and 'complete' or ledger.state
     for _, k in ipairs({
       'reason',
@@ -469,7 +491,7 @@ local function finishMany(run, bundle)
     if r.physicalStatus then
       r.status = r.physicalStatus
     end
-    if r.shortfall > 0 then
+    if r.shortfall > 0 and not bundle.refused then
       r.reason = r.reason or errorText or 'Packed item shortfall'
       errorText = errorText or r.reason
     end
@@ -1017,28 +1039,6 @@ local function startMachine(run, s)
   changed(run, s, 'processing', 'Machine processing')
   return true
 end
-local function occupy(run, view, id, n)
-  local stack
-  for _, v in pairs(view.items) do
-    if identity.stackName(v.item) == id then
-      stack = v
-      break
-    end
-  end
-  if not stack then
-    stack = { item = item(id), count = 0, room = 0, stacks = 0, maxSize = run.ports.stackSize(item(id)) }
-    view.items[id] = stack
-  end
-  stack.maxSize = stack.maxSize or run.ports.stackSize(item(id))
-  assert(stack.maxSize, 'Unknown role stack size: ' .. id)
-  stack.room = stack.room or 0
-  stack.stacks = stack.stacks or math.ceil(stack.count / stack.maxSize)
-  local slots = math.ceil(math.max(0, n - stack.room) / stack.maxSize)
-  view.freeSlots = view.freeSlots - slots
-  stack.count = stack.count + n
-  stack.stacks = stack.stacks + slots
-  stack.room = stack.room + slots * stack.maxSize - n
-end
 local function scanInputs(w, g, observed)
   g.observed = observed or {}
   g.inputScans = {}
@@ -1060,10 +1060,12 @@ local function fits(run, g, r, ops)
     for id, q in pairs(input.items) do
       needed[id] = ops * q
     end
-    local ok, e = run.ports.roleFits(g.observed[role], needed)
-    assert(ok ~= nil, e)
-    if not ok then
-      return false
+    if g.observed[role] then
+      local ok, e = run.ports.roleFits(g.observed[role], needed)
+      assert(ok ~= nil, e)
+      if not ok then
+        return false
+      end
     end
   end
   return true
@@ -1074,7 +1076,6 @@ local function additional(g, r, n)
     or 0
 end
 local function blocked(w, g)
-  g.cachedInputs = nil
   g.inputDue = w.now + g.inputBackoff
   g.inputBackoff = math.min(g.inputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
@@ -1105,7 +1106,8 @@ local function admit(w, g)
       end
     end
     local ops = donor and math.min(donor.left, r.capacity) or 0
-    if donor and (mt.blocking == false or empty or same) then
+    -- After a refusal the machine takes nothing new until output is collected.
+    if donor and not g.refused and (mt.blocking == false or empty or same) then
       while ops > 0 and not fits(r.run, g, r, ops) do
         ops = math.floor(ops / 2)
       end
@@ -1133,7 +1135,6 @@ local function admit(w, g)
           collectedItems = {},
           inputHeldBefore = {},
           inputBefore = 0,
-          inputVerified = g.verified,
           items = ops * r.perOp,
         }
         for role, view in pairs(g.observed) do
@@ -1145,7 +1146,7 @@ local function admit(w, g)
             end
           end
         end
-        if not g.verified then
+        if not next(g.observed) then
           record.inputBefore = nil
           record.inputHeldBefore = nil
         end
@@ -1157,6 +1158,7 @@ local function admit(w, g)
           record = record,
           remaining = copy(record.outputs),
           ops = ops,
+          donor = donor,
           fuelAdditional = fuelAdditional,
           position = position,
           fetches = {},
@@ -1187,6 +1189,7 @@ local function admit(w, g)
           end
         end
         load.bundle = beginMany(r.run, r.stage, 'fetch', load.fetches, load.fetches[1].endpoint)
+        load.bundle.action.refusable = true
         g.loading = load
         g.phase = 'loading'
         publish(w, g)
@@ -1231,14 +1234,53 @@ local function finishLoad(w, g)
     end
   end
   r.admitting = false
+  -- The machine may refuse part of a delivery: the load is what went in, and
+  -- the rest goes back to the request to retry after the next collection.
+  local ops, fuelMoved = load.ops, 0
+  for _, fetch in ipairs(load.fetches) do
+    local moved = fetch.receipt and fetch.receipt.moved or 0
+    if fetch.fuel then
+      fuelMoved = moved
+    else
+      ops = math.min(ops, math.floor(moved / r.inputs[fetch.role].items[fetch.item]))
+    end
+  end
   if err then
     bad(w, g, r, err, true)
     quarantine(w, g, load, 'failed')
     r.active = r.active - 1
     table.remove(g.loads, #g.loads)
+  elseif ops == 0 then
+    if mt.fuel then
+      g.fuelCredit = g.fuelCredit + fuelMoved
+      r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
+    end
+    load.donor.left = load.donor.left + load.ops
+    g.refused = true
+    r.blocked = true
+    r.active = r.active - 1
+    table.remove(g.loads, #g.loads)
+    for i, v in ipairs(r.stage.loadLedger) do
+      if v == record then
+        table.remove(r.stage.loadLedger, i)
+        break
+      end
+    end
+    changed(r.run, r.stage, nil, 'Machine ' .. g.name .. ' refused the load; retrying after collection')
   else
     if mt.fuel then
-      g.fuelCredit = g.fuelCredit + load.fuelAdditional
+      g.fuelCredit = g.fuelCredit + fuelMoved
+      r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
+    end
+    if ops < load.ops then
+      load.donor.left = load.donor.left + load.ops - ops
+      g.refused = true
+      load.ops = ops
+      record.items = ops * r.perOp
+      for id, n in pairs(r.outputs) do
+        record.outputs[id] = ops * n
+      end
+      load.remaining = copy(record.outputs)
     end
     local duration = load.ops * r.perOp * mt.seconds
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
@@ -1251,12 +1293,7 @@ local function finishLoad(w, g)
     g.outputDue = math.min(g.outputDue, load.due)
     g.inputRecipe = r.recipe
     r.deadline = load.deadline
-    g.cachedInputs = copy(g.observed)
-    for role, input in pairs(r.inputs) do
-      for id, q in pairs(input.items) do
-        occupy(r.run, g.cachedInputs[role], id, load.ops * q)
-      end
-    end
+    g.observed = {}
     r.stage.loadsDelivered = (r.stage.loadsDelivered or 0) + 1
     changed(r.run, r.stage, nil, 'Load ' .. r.stage.loadsDelivered .. ' delivered')
     for i, candidate in ipairs(g.pending) do
@@ -1300,8 +1337,10 @@ local function reap(w, g, collected)
       g.outputDue = math.min(g.outputDue, load.due)
     end
   end
-  g.outputBackoff = collected and (BACKOFF)
-    or math.min(g.outputBackoff * 2, MAX_BACKOFF)
+  if collected then
+    g.refused = nil
+  end
+  g.outputBackoff = collected and BACKOFF or math.min(g.outputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
   publish(w, g)
 end
@@ -1491,14 +1530,12 @@ local function groupAdvance(w, g)
     if g.initialInputs then
       g.observed = g.initialInputs
       g.initialInputs = nil
-      g.verified = true
       g.phase = 'admit'
-    elseif mt.blocking == false and not g.opts.verifyTopups and g.cachedInputs then
-      g.observed = copy(g.cachedInputs)
-      g.verified = false
+    elseif mt.blocking == false then
+      -- A non-blocking machine is sized by its first look until a load goes in;
+      -- after that each delivery reports what fit.
       g.phase = 'admit'
     else
-      g.verified = true
       scanInputs(w, g)
     end
     return true

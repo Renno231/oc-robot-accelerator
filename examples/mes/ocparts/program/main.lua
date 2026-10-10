@@ -176,7 +176,7 @@ assert(submit:write([[
 local mes=require('mes')
 local counter=package.loaded.runner_component_calls
 local before=counter and counter.snapshot()
-local id=assert(mes.run('/home/mes.plan',{pollSeconds=0.2,verifyTopups=true}))
+local id=assert(mes.run('/home/mes.plan',{pollSeconds=0.2}))
 if counter then counter.submittedBefore=before end
 assert(mes.status(id).status=='running','submit did not return mid-run')
 local file=assert(io.open('/home/mes-submitted-id','w'));assert(file:write(tostring(id)))

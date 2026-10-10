@@ -126,7 +126,7 @@ class OcpartsFixtureTests(unittest.TestCase):
                 self.assertIn(text, main)
             self.assertNotIn("{crafter='cpu1'", main)
             self.assertIn(f'batch={generator.OCPARTS_BATCH}', main)
-            self.assertIn('verifyTopups=true', main)
+            self.assertNotIn('verifyTopups', main)
             self.assertNotIn('collectgarbage(', main, 'OC sandbox has no public collectgarbage')
             self.assertIn("roles={'input','fuel','output'},roleSlots={input={1},fuel={1},output={1}}", main)
             self.assertIn("mes.wait(runId));finishComponentCalls(result,componentBefore)", main)
