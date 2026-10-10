@@ -97,6 +97,10 @@ local function fact(token,what,data)
         if not ok then craftClient.factError=tostring(err) end
     end
 end
+function craftClient.reboot(a)
+for _,e in pairs(pool)do if e.address==a and e.proxy then e.proxy:close();e.reconnectAt=0 end end
+fact(nil,"robot_transport",{address=a,state="rebooted"})
+end
 local function connected(entry)
     return entry and entry.proxy and entry.proxy:getConnection().connected
 end

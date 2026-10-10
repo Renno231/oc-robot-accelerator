@@ -149,4 +149,50 @@ function M.robots(timeout)
   if not ok then return nil,tostring(result) end
   return result
 end
+local pending,H,D,E={}
+local function key() return string.format("%06x%06x",math.random(0,0xffffff),math.random(0,0xffffff)) end
+local function welcome(a,h)
+  if not H.localhost() then H.addHost(D.address,require("computer").address(),nil,key(),{},true) end
+  local c=H.localhost()
+  D.send(a,27105,"mes_robot_welcome",require("serialization").serialize({name=h:getName(),wake=h:getWakeKey(),
+    controller={address=c:getAddress(),cid=c:getCID(),name=c:getName()}}))
+end
+function M.installRobots()
+  if H then return end
+  H,D,E=require("hosts"),require("component").modem,require("event")
+  D.open(27105)
+  E.listen("modem_message",function(_,_,a,p,_,kind,cid)
+    if p~=27105 then return end
+    local h=H.getHost(a);local paired=h and h:getKeys().service=="craftServer" and text(h:getWakeKey())
+    if kind=="mes_robot_hello" then
+      if paired then welcome(a,h)
+      elseif not pending[a] then pending[a]=cid;E.push("mes_robot_announce",a) end
+    elseif kind=="mes_robot_boot" and paired then require("craft_client").reboot(a) end
+  end)
+end
+function M.pendingRobots()
+  local out={};for a in pairs(pending) do out[#out+1]={address=a} end;return out
+end
+function M.registerRobot(a,n,b)
+  local ok,err=pcall(function()
+    assert(pending[a],"Robot is not pending")
+    local cfg,wh=M.config(),require("warehouse")
+    assert(type(n)=="string" and #n<=48 and n:match("^[%w_-]+$") and not H.getHost(n)
+      and not (cfg.crafters or {})[n],"Invalid or used name")
+    local members,groups=wh.members(),wh.groups();local g=groups[n]
+    assert(not g or g.type=="crafter","Group name is used")
+    assert(require("map").storage(b),"Unknown buffer")
+    local inventory=(members[b] or {}).inventory or b;local grouped
+    for _,v in pairs(groups) do for _,s in pairs(v.roles) do
+      if ((members[s] or {}).inventory or s)==inventory then grouped=true end
+    end end
+    assert(not members[b] or grouped,"Buffer is stock")
+    for _,c in pairs(cfg.crafters or {}) do
+      assert(((members[c.buffer] or {}).inventory or c.buffer)~=inventory,"Buffer is used")
+    end
+    H.addHost(a,pending[a],n,key(),{service="craftServer"},true)
+    welcome(a,H.getHost(a));M.setCrafter(n,{robot=a,buffer=b});pending[a]=nil
+  end)
+  return ok or nil,not ok and tostring(err) or nil
+end
 return M

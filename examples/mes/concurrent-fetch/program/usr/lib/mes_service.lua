@@ -177,6 +177,7 @@ function M.start(opts, prepare)
   if installed then
     return true
   end
+  require('mes_config').installRobots()
   -- First imports occur here, never in a transient stage/client.
   lg = require('logistics')
   require('map')

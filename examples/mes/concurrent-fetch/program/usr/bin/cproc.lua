@@ -63,11 +63,28 @@ end
 -- cproc owns its computer's networking; a lost subscriber never cancels admitted work.
 local ok, startupError = xpcall(function()
     pcall(executor.dumpInventory,storageSide)
+    local hosts,modem,computer=require("hosts"),require("component").modem,require("computer")
+    local host=hosts.localhost()
+    modem.open(27105)
+    while running and (not host or not host:getWakeKey() or host:getWakeKey()=="") do
+        modem.broadcast(27105,"mes_robot_hello",computer.address())
+        local _,_,_,port,_,kind,data=event.pull(1,"modem_message")
+        if port==27105 and kind=="mes_robot_welcome" then
+            local w=require("serialization").unserialize(data)
+            hosts.addHost(modem.address,computer.address(),w.name,w.wake,{service="craftServer"},true)
+            local c=w.controller;hosts.addHost(c.address,c.cid,c.name,nil,{},true)
+            host=hosts.localhost()
+        end
+    end
+    if not running then return end
     local endpoint=api.expose("craftServer",handlers,5990)
-    local host=require("hosts").localhost()
-    assert(host and type(host:getWakeKey())=="string" and host:getWakeKey()~="", "Pair this robot before starting cproc.")
     endpoint:setAccessKey(host:getWakeKey())
     publisher=require("pubsub").attach(endpoint)
+    for _,h in ipairs(hosts.getAll()) do
+        if h:getCID()~=computer.address() and not h:getKeys().service then
+            modem.send(h:getAddress(),27105,"mes_robot_boot",host:getName(),computer.address())
+        end
+    end
     print("CraftProcessor ready. Awaiting connection.")
     while running do
         if active then execute(active) else os.sleep(0.1) end
