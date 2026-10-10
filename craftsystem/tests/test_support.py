@@ -16,6 +16,23 @@ class LuaCase(unittest.TestCase):
         self.module('craft_resources', 'lib/craft_resources.lua')
         self.module('craft_execution', 'lib/craft_execution.lua')
         self.module('craft_plan', 'lib/craft_plan.lua')
+        self.module('cbor', 'lib/cbor.lua')
+        self.module('mes_persist', 'lib/mes_persist.lua')
+        # Legacy hardware fixtures use an in-memory store seam. Restart tests
+        # replace this with the canonical store and its counted filesystem.
+        self.lua.execute('''
+          package.preload.store=function()
+            local cbor=require('cbor');local files={}
+            return {open=function(path)
+              files[path]=files[path] or {};local rows=files[path]
+              return {
+                load=function() local out={};for k,v in pairs(rows) do out[k]=cbor.decode(v) end;return out end,
+                put=function(_,k,v) rows[k]=cbor.encode(v) end,
+                delete=function(_,k) rows[k]=nil end,
+                flush=function() end,close=function() end}
+            end}
+          end
+        ''')
         for name in ('craft_handoff', 'craft_preview', 'craft_edit', 'craft_receipts'):
             self.module(name, 'lib/' + name + '.lua')
         self.lua.execute("""

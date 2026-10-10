@@ -9,6 +9,7 @@ local queue, head = {}, 1
 local installed, pumping = false, false
 local history, active, nextRun, none = {}, {}, 0, { status = 'idle', stages = {}, active = {} }
 local wh, lg, client, prepareRobot
+local persist, disk, savedRevision, portsFor, snapshot
 local watched = {} -- logistics job id -> owning run id
 local function enqueue(id, what, data)
   queue[#queue + 1] = { id = id, what = what, data = data }
@@ -158,6 +159,10 @@ function M.pump()
     end
     queue = {}
     head = 1
+    if world.revision ~= savedRevision then
+      persist.save(disk, world, history, active, nextRun, snapshot)
+      savedRevision = world.revision
+    end
   end, debug.traceback)
   pumping = false
   if not ok then
@@ -177,13 +182,21 @@ function M.start(opts, prepare)
   require('map')
   wh = require('warehouse')
   client = require('craft_client')
+  persist = require('mes_persist')
+  disk = persist.open()
   M.clientOptions = state.copy(opts.client or {})
   installed = true
   pumping = true
   local ok, rows = pcall(client.install, onRobot, M.clientOptions)
   if ok then
+    history, active, nextRun, watched = persist.restore(disk, world,
+      function() return require('mes_config').config(opts) end, portsFor, client, computer.uptime())
+    savedRevision = world.revision
     for _, row in ipairs(rows or {}) do
-      world.robots[row.address] = world.robots[row.address] or { state = 'unknown' }
+      if not world.robots[row.address] then
+        world.robots[row.address] = { state = 'unknown' }
+        world.revision = world.revision + 1
+      end
     end
   end
   pumping = false
@@ -224,10 +237,8 @@ local function bufferIdentity(storage)
   local member = wh.members()[storage]
   return member and member.inventory or storage
 end
-function M.submit(plan, cfg, opts)
-  nextRun = nextRun + 1
-  local id = nextRun
-  local ports = {
+portsFor = function(id, cfg)
+  return {
     dispatch = dispatch,
     emit = function(...)
       event.push('mes', ...)
@@ -254,7 +265,11 @@ function M.submit(plan, cfg, opts)
     bufferIdentity = bufferIdentity,
     prepareRobot = prepareRobot,
   }
-  local run = state.new(nextRun, plan, cfg, opts, world, ports, computer.uptime())
+end
+function M.submit(plan, cfg, opts)
+  nextRun = nextRun + 1
+  local run = state.new(nextRun, plan, cfg, opts, world, portsFor(nextRun, cfg), computer.uptime())
+  persist.plan(disk, run)
   history[nextRun] = run
   active[#active + 1] = run
   enqueue(run.id, 'advance', {})
@@ -269,7 +284,7 @@ for _, k in ipairs({
 }) do
   public[k] = true
 end
-local function snapshot(run)
+snapshot = function(run)
   if not run then
     return
   end
@@ -315,7 +330,7 @@ function M.runs()
   local o = {}
   for id = nextRun, 1, -1 do
     local r = history[id]
-    o[#o + 1] = {
+    if r then o[#o + 1] = {
       id = id,
       item = r.item,
       qty = r.qty,
@@ -323,7 +338,7 @@ function M.runs()
       stage = r.stage,
       active = state.copy(r.active),
       stages = #r.stages,
-    }
+    } end
   end
   return o
 end

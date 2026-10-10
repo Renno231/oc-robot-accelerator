@@ -2,6 +2,15 @@ from test_transport import TransportFixture
 
 
 class ServerTests(TransportFixture):
+    def test_startup_dumps_inventory_before_serving(self):
+        self.lua.execute('''
+            assert(A.bootCleanups==1 and B.bootCleanups==1 and A.cleanups==0 and B.cleanups==0)
+            local restarted=peer('restarted');restarted.dumpThrow=true
+            server(restarted);pairHost(C,restarted);advance(0.1)
+            job(C,'restarted');untilDone(function() return C.result end)
+            assert(restarted.bootCleanups==1 and restarted.executions==1 and C.result.success)
+        ''')
+
     def test_malformed_and_unknown_rpc_do_not_execute(self):
         self.lua.execute('''
             spawn(function()
