@@ -238,6 +238,44 @@ class MesRestartTests(unittest.TestCase):
                 '''))
             self.assertEqual(*outcomes)
 
+    def test_restart_during_recovery_scan(self):
+        self.compare_restart(True, "saved().grp_kiln and saved().grp_kiln.recovery "
+          "and saved().grp_kiln.recovery.phase=='reading' and saved().grp_kiln.recovery.read.submitted", setup='''
+          DELAY=80;local old=submit(true)
+          untilFact(function() return M.status(old).status~='running' end)
+          assert(M.status(old).status=='failed');untilFact(function() return held('output','mod:metal')>0 end)
+          assert(saved().stuck_kiln and #saved().stuck_kiln==1);DELAY=1
+        ''')
+
+    def test_restart_read_blocked_by_inflight_mutation(self):
+        for mode in ('log', 'files'):
+            outcomes=[]
+            for restart in (False, True):
+                with self.subTest(mode=mode, restart=restart):
+                    lua=self.start(mode);lua.globals().RESTART=restart
+                    outcomes.append(lua.execute('''
+                      local ids=assert(wh.fetchMany({{item={name='mod:raw',damage=0},count=1}},'input_face'))
+                      local scans=assert(wh.scan('stock'));drain()
+                      assert(not wh.settled(ids[1]) and not wh.settled(scans[1]))
+                      local function up(fn,key)
+                        for i=1,50 do local name,value=debug.getupvalue(fn,i);if name==key then return value end end
+                      end
+                      local function blocked()
+                        local callback=up(lg.onRead,'readObservers')['warehouse.role-cache']
+                        assert(up(callback,'pendingReads')[scans[1]][1].blocked,'read provenance must be blocked')
+                      end
+                      blocked()
+                      if RESTART then reboot() end
+                      blocked()
+                      -- A stale listing must remain unusable even after the mutation finishes.
+                      untilFact(function() return wh.settled(ids[1]) end)
+                      INV.source['mod:raw']=42
+                      untilFact(function() return wh.settled(scans[1]) end)
+                      assert(wh.count({name='mod:raw',damage=0})==99,'blocked read was applied')
+                      return wh.count({name='mod:raw',damage=0}),lg.status(ids[1]).trips,lg.status(scans[1]).trips
+                    '''))
+            self.assertEqual(*outcomes)
+
     def test_robot_not_found_rereads_once_and_refetches_only_missing(self):
         for mode in ('log', 'files'):
             outcomes=[]
