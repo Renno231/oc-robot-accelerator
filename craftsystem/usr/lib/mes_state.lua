@@ -1129,6 +1129,7 @@ local function finishLoad(w, g)
       load.remaining = copy(record.outputs)
     end
     local duration = load.ops * r.perOp * mt.seconds
+    load.duration = duration
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
     g.lastExpectedDue = load.due
     load.deadline = load.due + duration + MACHINE_GRACE
@@ -1178,9 +1179,27 @@ local function reap(w, g, collected)
       load.request.active = load.request.active - 1
       table.remove(g.loads, i)
     else
-      load.due = math.max(load.due, w.now + g.outputBackoff)
-      g.outputDue = math.min(g.outputDue, load.due)
+      if w.now >= load.due then
+        -- Short: come back when the missing output should be done. The backoff
+        -- only matters for a machine that has stopped making progress.
+        local ops = 0
+        for id, q in pairs(load.remaining) do
+          ops = math.max(ops, math.ceil(q / load.request.outputs[id]))
+        end
+        load.due = w.now + math.max(ops * load.request.perOp * g.mt.seconds, g.outputBackoff)
+      end
     end
+  end
+  -- The machine works through its loads in order: a late load delays the ones after it.
+  local previous
+  for _, load in ipairs(g.loads) do
+    if previous and load.due < previous.due + load.duration then
+      load.due = previous.due + load.duration
+      load.deadline = math.max(load.deadline, load.due + load.duration + MACHINE_GRACE)
+    end
+    g.outputDue = math.min(g.outputDue, load.due)
+    g.lastExpectedDue = math.max(g.lastExpectedDue or load.due, load.due)
+    previous = load
   end
   if collected then
     g.awaitCollection = nil
@@ -1192,9 +1211,10 @@ end
 -- Take what our loads should have produced by now, without looking first. The
 -- receipt says how much was there; anything not ready is taken next time.
 local function collect(w, g)
-  local requests, byItem = {}, {}
+  local requests, byItem, first = {}, {}, nil
   for _, load in ipairs(g.loads) do
-    for _, id in ipairs(sorted(load.remaining)) do
+    -- A load still processing has nothing to take yet.
+    for _, id in ipairs(w.now >= load.due and sorted(load.remaining) or {}) do
       local n = load.remaining[id]
       if n > 0 then
         if not byItem[id] then
@@ -1203,6 +1223,7 @@ local function collect(w, g)
         end
         local allocations = byItem[id]
         allocations[#allocations + 1] = { load = load, count = n }
+        first = first or load.request
         for _, q in ipairs(requests) do
           if q.item == id then
             q.count = q.count + n
@@ -1215,7 +1236,6 @@ local function collect(w, g)
     reap(w, g, false)
     return
   end
-  local first = g.loads[1].request
   g.collection = {
     requests = requests,
     byItem = byItem,
