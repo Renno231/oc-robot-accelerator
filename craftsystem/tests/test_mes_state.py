@@ -7,6 +7,47 @@ from test_support import LuaCase
 
 
 class MesStateTests(LuaCase):
+    def test_robot_refetches_only_clean_shortfalls_with_other_stock(self):
+        for stock, refused in ((1, 0), (0, 0), (1, 1)):
+            with self.subTest(stock=stock, refused=refused):
+                self.setUp()
+                self.lua.globals().STOCK = stock
+                self.lua.globals().REFUSED = refused
+                self.lua.execute('''
+                  PORTS.stock=function(id) assert(id=='t:raw');return STOCK end
+                  PORTS.prepareRobot=function() return {tasks={},inventory_needed={['t:raw']=3},tools={}},nil,{} end
+                  new({robot('t:out')});drain('scan')
+                  local a=actions('fetchMany')[1];assert(a.requests[1].count==3)
+                  a.testDone=true;submit(a,{90})
+                  local l=receipt(a,90,'done',nil,{2})
+                  l.state='partial';l.reason='source empty';l.steps={{short=true}};l.refused=REFUSED;fact('job',{id=90,receipt=l})
+                  fact('settled',{id=90});advance()
+                  local second=actions('fetchMany')
+                  if STOCK==1 and REFUSED==0 then
+                    assert(#second==1 and second[1].requests[1].count==1 and second[1].endpoint=='b1')
+                    finish(second[1]);assert(#actions('robot_begin')==1)
+                  else assert(#second==0 and RUN.stages[1].state=='failed' and RUN.stages[1].error=='source empty') end
+                ''')
+
+    def test_collection_wait_uses_latest_bundle_longest_trip(self):
+        self.lua.execute('''
+          WAITS={};PORTS.dispatch=function(a) ACTIONS[#ACTIONS+1]=a;WAITS[a.token]=S.copy(a.wait) end
+          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',4)})
+          while #actions('fetchMany')>0 do drain('fetchMany') end
+          tick(2);local first=actions('collectMany')[1];assert(first and not first.wait and not WAITS[first.token])
+          drain('collectMany')
+          local g=WORLD.groups.alloy;assert(not g.tripSeconds)
+        ''')
+        self.setUp()
+        self.lua.execute('''
+          WAITS={};PORTS.dispatch=function(a) ACTIONS[#ACTIONS+1]=a;WAITS[a.token]=S.copy(a.wait) end
+          new({machine('t:bronze',{'t:copper','t:tin'},'alloy',1)})
+          local a=actions('fetchMany')[1];a.testDone=true;submit(a,{91})
+          local l=receipt(a,91);l.tripTimings={{startedAt=1,finishedAt=6},{startedAt=2,finishedAt=9}}
+          fact('job',{id=91,receipt=l});fact('settled',{id=91});advance()
+          tick(2);local c=actions('collectMany')[1];assert(c and c.wait.timeout==7 and WAITS[c.token].timeout==7)
+        ''')
+
     def setUp(self):
         super().setUp()
         self.module('mes_state', 'lib/mes_state.lua')

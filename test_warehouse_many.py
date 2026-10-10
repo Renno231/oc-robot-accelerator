@@ -4,6 +4,14 @@ import test_stock_api
 
 
 class WarehouseManyTests(unittest.TestCase):
+    def test_collection_wait_reaches_logistics_job(self):
+        self.lua.execute('''
+          observe('stock',{},3)
+          local opts={wait={timeout=5}}
+          local ids=assert(wh.collect('buffer',{{item={name='mod:output'},count=4}},opts))
+          assert(jobs[ids[1]].opts.wait.timeout==5 and opts.retries==nil)
+        ''')
+
     def setUp(self):
         fixture = test_stock_api.WarehouseApiTests()
         fixture.setUp()

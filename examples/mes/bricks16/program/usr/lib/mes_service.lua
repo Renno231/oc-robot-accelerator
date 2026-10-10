@@ -62,6 +62,8 @@ local function dispatch(a, run)
   elseif a.kind == 'fetchMany' then
     ok, ids, err, partial = pcall(wh.fetchMany, a.requests, a.endpoint, options)
   elseif a.kind == 'collectMany' then
+    options = state.copy(options or {})
+    options.wait = a.wait
     ok, ids, err, partial = pcall(wh.collect, a.endpoint, a.requests, options)
   elseif a.kind == 'scan' then
     ok, ids, err, partial = pcall(wh.scan, a.storage)
@@ -230,6 +232,10 @@ function M.submit(plan, cfg, opts)
       event.push('mes', ...)
     end,
     contents = wh.contents,
+    stock = function(id)
+      local n, d = id:match('^(.*):(%d+)$')
+      return wh.count({ name = n or id, damage = tonumber(d) or 0 })
+    end,
     crafters = function()
       return crafters(cfg)
     end,

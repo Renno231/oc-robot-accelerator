@@ -4,6 +4,32 @@ import test_stock_api
 
 
 class LogisticsManyTests(unittest.TestCase):
+    def test_empty_sources_block_without_retry_but_nonempty_sources_retry(self):
+        for packed in (True, False):
+            for left in (0, 1):
+                with self.subTest(packed=packed, left=left):
+                    self.setUp()
+                    self.lua.globals().PACKED = packed
+                    self.lua.globals().LEFT = left
+                    self.lua.execute('''
+                      local id
+                      if PACKED then
+                        id=lg.job({leg('take','mod:a',4,nil,64),leg('put','mod:a',4,nil,64,'dest')},{retries=2})
+                      else id=lg.transfer({name='mod:a'},4,'source','dest',{retries=2}) end
+                      local packet=assert(dispatch())
+                      local result={state='idle',taken=0,moved=0,short=true,left=LEFT,held=0}
+                      if PACKED then result.steps={{short=true,left=LEFT,taken=0,moved=0},{moved=0}} end
+                      report(packet.id,result)
+                      local s=lg.status(id)
+                      assert(s.trips==1)
+                      if LEFT==0 then
+                        assert(s.reason=='source empty' and s.shortfalls==0)
+                        local before=#SENT;dispatch();assert(#SENT==before)
+                      else
+                        assert(s.shortfalls==1);local before=#SENT;dispatch();assert(#SENT==before+1)
+                      end
+                    ''')
+
     def setUp(self):
         fixture = test_stock_api.LibraryApiTests()
         fixture.setUp()

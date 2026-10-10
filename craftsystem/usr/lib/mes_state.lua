@@ -119,7 +119,7 @@ end
 -- Whether job id belongs to a machine load or collection, which may move less.
 local function partialOk(run, id)
   for _, a in pairs(run.actions) do
-    if a.partialOk then
+    if a.partialOk or (a.sourceRetry and (run.jobs[id].refused or 0) == 0) then
       for _, j in ipairs(a.ids or {}) do
         if j == id then
           return true
@@ -307,7 +307,7 @@ local function outcome(run, a)
     local r = run.jobs[id]
     if r and terminal(r.state) and r.state ~= 'done' and not (a.partialOk and cleanPartial(r)) then
       problem = problem or r.reason or ('Logistics ' .. r.state)
-      stop(run, problem)
+      if not (a.sourceRetry and cleanPartial(r) and (r.refused or 0) == 0) then stop(run, problem) end
     end
     if not r or not terminal(r.state) or not run.settled[id] then
       all = false
@@ -335,7 +335,7 @@ local function outcome(run, a)
   end
   return receipts, problem
 end
-local function beginMany(run, stage, kind, requests, endpoint)
+local function beginMany(run, stage, kind, requests, endpoint, wait)
   local bundle = { records = {}, physical = {}, kind = kind, endpoint = endpoint }
   local payload = {}
   for _, r in ipairs(requests) do
@@ -364,7 +364,7 @@ local function beginMany(run, stage, kind, requests, endpoint)
     bundle.action = { kind = kind .. 'Many', token = 'empty:' .. run.id, submitted = true, ids = {} }
   else
     bundle.action =
-      action(run, kind .. 'Many', { requests = payload, endpoint = endpoint })
+      action(run, kind .. 'Many', { requests = payload, endpoint = endpoint, wait = wait })
   end
   bundle.stage = stage
   bundle.run = run
@@ -501,7 +501,7 @@ local function finishMany(run, bundle)
     end
   end
   bundle.error = errorText
-  if errorText then
+  if errorText and not a.sourceRetry then
     stop(run, errorText)
   end
   return true, errorText
@@ -696,6 +696,7 @@ local function robotAdvance(run, s)
       requests[#requests + 1] = { item = id, count = needed[id], endpoint = s.buffer }
     end
     s.bundle = beginMany(run, s, 'fetch', requests, s.buffer)
+    s.bundle.action.sourceRetry = true
     s.phase = 'robot_fetching'
     return true
   elseif s.phase == 'robot_fetching' then
@@ -704,6 +705,23 @@ local function robotAdvance(run, s)
       return false
     end
     if err or run.stopping then
+      if err and not run.stopping then
+        local requests, retry = {}, true
+        for _, ledger in ipairs(s.bundle.action.results or {}) do
+          if ledger.state ~= 'done' and not (cleanPartial(ledger) and (ledger.refused or 0) == 0) then retry = false end
+        end
+        for _, r in ipairs(s.bundle.records) do
+          if r.shortfall > 0 then
+            if run.ports.stock(r.item) < r.shortfall then retry = false end
+            requests[#requests + 1] = { item = r.item, count = r.shortfall }
+          end
+        end
+        if retry and #requests > 0 then
+          s.bundle = beginMany(run, s, 'fetch', requests, s.buffer)
+          s.bundle.action.sourceRetry = true
+          return true
+        end
+      end
       failStage(run, s, err or run.reason)
       return true
     end
@@ -1056,6 +1074,15 @@ local function admit(w, g)
   blocked(w, g)
   return true
 end
+local function tripSeconds(g, bundle)
+  local longest
+  for _, p in ipairs(bundle.physical) do
+    for _, t in ipairs(p.tripTimings or {}) do
+      if t.startedAt and t.finishedAt then longest = math.max(longest or 0, t.finishedAt - t.startedAt) end
+    end
+  end
+  g.tripSeconds = longest
+end
 local function finishLoad(w, g)
   local load = g.loading
   local done, err = finishMany(load.bundle.run, load.bundle)
@@ -1063,6 +1090,7 @@ local function finishLoad(w, g)
     return false
   end
   local r = load.request
+  tripSeconds(g, load.bundle)
   local mt = g.mt
   local record = load.record
   for _, fetch in ipairs(load.fetches) do
@@ -1245,7 +1273,8 @@ local function collect(w, g)
       first.stage,
       'collect',
       requests,
-      { storage = g.roles[g.mt.output], slots = g.mt.roleSlots[g.mt.output] }
+      { storage = g.roles[g.mt.output], slots = g.mt.roleSlots[g.mt.output] },
+      g.tripSeconds and { timeout = g.tripSeconds } or nil
     ),
   }
   g.collection.bundle.action.partialOk = true
@@ -1258,6 +1287,7 @@ local function finishCollection(w, g)
     return false
   end
   local any = false
+  tripSeconds(g, c.bundle)
   for i, request in ipairs(c.requests) do
     local id = request.item
     local movement = c.bundle.records[i]
