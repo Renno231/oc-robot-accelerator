@@ -5,12 +5,21 @@ local wh=require("warehouse")
 local M={}
 local function copy(t) if type(t)~="table" then return t end;local o={};for k,v in pairs(t) do o[k]=copy(v) end;return o end
 local types={furnace={roles={"input","fuel","output"},inputs={"input"},output="output",fuel={role="fuel",item="minecraft:coal",per=8},batch=64,seconds=10}}
-local crafters={cpu1={robot="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",buffer="cpu1.buf"}}
+local crafters={cpu1={robot="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",buffer="cpu1.buf"},cpu2={robot="0b9e44d1-1c2d-4e3f-8a9b-7c6d5e4f3a2b",buffer="cpu2.buf"}}
 local runs={}
 local function changed() event.push("mes","changed") end
 function M.types() return copy(types) end
 function M.crafters() return copy(crafters) end
 function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");types[name]=copy(def);changed();return true end
+-- Fleet board: cpu1 busy on a run, cpu2 idle; furnaceA holds two loads.
+function M.resources()
+  local o={crafters={},machines={}}
+  for n,c in pairs(crafters) do o.crafters[n]=n=="cpu1" and {state="busy",robot=c.robot,buffer=c.buffer,run=3,step=2} or {state="idle",robot=c.robot,buffer=c.buffer} end
+  for n,g in pairs(wh.groups()) do if g.type~="crafter" then
+    o.machines[n]=n=="furnaceA" and {state="busy",type=g.type,loads={{run=3,step=1,item="minecraft:clay_ball",count=64},{run=3,step=1,item="minecraft:clay_ball",count=32}}} or {state="idle",type=g.type,loads={}}
+  end end
+  return o
+end
 function M.removeType(name) types[name]=nil;changed();return true end
 function M.setCrafter(name,c) assert(c.robot and c.buffer,"robot and buffer required");crafters[name]=copy(c);wh.group(name,"crafter",{buffer=c.buffer});changed();return true end
 function M.removeCrafter(name) crafters[name]=nil;wh.ungroup(name);changed();return true end

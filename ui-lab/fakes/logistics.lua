@@ -18,4 +18,27 @@ function M.fake(kind,ep,i,n)
     event.push("logistics",id,"done") end)
   return id
 end
+-- Fleet board: announcing drones, registration, held cargo, lost drones.
+local function drone(name) for _,d in ipairs(D.drones) do if d.name==name then return d end end end
+function M.pending() return copy(D.announcing) end
+function M.register(address,name,home)
+  local k;for i,a in ipairs(D.announcing) do if a==address then k=i end end
+  if not k then return nil,"address is not an announcing unpaired drone" end
+  if type(name)~="string" or not name:match("^[%w_-]+$") or #name>48 or drone(name) then return nil,"invalid/duplicate name" end
+  local node=D.nodes[home];if not node or not node.charger then return nil,"home must be a mapped charger" end
+  table.remove(D.announcing,k)
+  D.drones[#D.drones+1]={name=name,address=address,state="booting",node=home,home=home,cargoSlots=8}
+  table.sort(D.drones,function(a,b) return a.name<b.name end)
+  return true
+end
+function M.release(name)
+  local d=drone(name);if not d then return nil,"unknown drone" end
+  if d.state~="held" then return nil,"drone is not held" end
+  local got=copy(d.cargo or {});d.cargo=nil;d.held=nil;d.state="idle";return got
+end
+function M.found(name)
+  local d=drone(name);if not d then return nil,"unknown drone" end
+  if not d.lost then return nil,"drone is not lost" end
+  d.lost=nil;d.state="booting";d.job=nil;d.trip=nil;d.node=d.home;return true
+end
 return M

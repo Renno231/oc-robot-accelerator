@@ -7,8 +7,8 @@ local component=require("component");local event=require("event");local computer
 local unicode=require("unicode");local keyboard=require("keyboard");local keys=keyboard.keys
 local qmenu=require("qmenu")
 
-local ui={tabs={"craft","stock","setup","recipes","jobs","manage"},
-  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs",manage="Manage"},keys=keys}
+local ui={tabs={"craft","stock","setup","recipes","jobs","fleet","manage"},
+  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs",fleet="Fleet",manage="Manage"},badges={},keys=keys}
 local P={bg=0x10161C,bar=0x1D2731,box=0x26323E,fg=0xD6DDE4,dim=0x6E7C88,accent=0x4FB3E8,
   good=0x7BC96F,warn=0xE6B450,bad=0xE0646E,sel=0x4FB3E8,selFg=0x10161C}
 ui.P=P
@@ -318,13 +318,15 @@ end
 function ui.busy(text) ui.notify(text,P.accent);ui.flush() end
 
 ---------------------------------------------------------------- header/footer
+-- A count after a tab's title, e.g. "Fleet (2)"; 0 or nil hides it.
+function ui.badge(name,n) n=(n or 0)>0 and n or nil;if ui.badges[name]~=n then ui.badges[name]=n;headerDirty=true end end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
 local function header()
   ui.fill(1,1,W,1,P.bar);local x=2
   ui.text(x,1,"◆ MES",P.accent,P.bar);x=x+7
   local current=stack[1] and stack[1].tab
   for k,name in ipairs(ui.tabs) do
-    local t=" "..ui.titles[name].." "
+    local t=" "..ui.titles[name]..(ui.badges[name] and " ("..ui.badges[name]..")" or "").." "
     if name==current then ui.text(x,1,t,P.selFg,P.sel) else ui.text(x,1,t,P.fg,P.bar) end
     tabHits[k]={x,x+len(t)-1,name};x=x+len(t)+1
   end

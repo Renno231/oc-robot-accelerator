@@ -19,6 +19,7 @@ D.members.s0_0_N={filter={{name="minecraft:brick",damage=0}},priority=5};D.membe
 D.groups.furnaceA={type="furnace",roles={input="furnA.in",fuel="furnA.fuel",output="furnA.out"}}
 D.groups.furnaceB={type="furnace",roles={input="furnB.in",fuel="furnB.fuel",output="furnB.out"}}
 D.groups.cpu1={type="crafter",roles={buffer="cpu1.buf"}}
+node("6:65:7",6,65,7);D.storages["cpu2.buf"]={node="6:65:7",side=3};D.groups.cpu2={type="crafter",roles={buffer="cpu2.buf"}}
 local stock={
   {"minecraft:log",0,"Oak Wood",192},{"minecraft:log",1,"Spruce Wood",64},{"minecraft:planks",0,"Oak Wood Planks",37},
   {"minecraft:stick",0,"Stick",12},{"minecraft:coal",0,"Coal",20},{"minecraft:coal",1,"Charcoal",0},
@@ -44,5 +45,21 @@ for id=1,60 do
   D.jobs[id]={id=id,state=st,requested=req,moved=st=="done" and req or st=="partial" and req//2 or 0,item=i,
     from={storage=names[(id%7)+1]},to={storage=names[((id+3)%7)+1]},reason=st=="failed" and "drone d2: route blocked at 5:66:2" or nil}
 end
-D.drones={{name="d1",address="a1b2",state="idle",node="-2:65:2",energy=19400},{name="d2",address="c3d4",state="flying",node="3:66:2",energy=12800}}
+-- Fleet: 6 registered drones in every state (one lost, one held), 2 announcing,
+-- 8 chargers of which 2 are free.
+for k=2,8 do local n="-2:65:"..(2*k);node(n,-2,65,2*k);D.nodes[n].charger=true end
+local function st(name,d,n,label) return {name=name,damage=d,label=label,size=n,maxSize=64} end
+D.drones={
+  {name="drone1",address="a1b2c3d4-0001-4e00-8000-000000000001",state="idle",node="-2:65:2",home="-2:65:2",energy=4800,cargoSlots=8,cargo={}},
+  {name="drone2",address="b2c3d4e5-0002-4e00-8000-000000000002",state="working",node="3:66:2",home="-2:65:4",energy=3100,cargoSlots=8,job=58,trip=112,
+    cargo={st("minecraft:iron_ingot",0,64,"Iron Ingot"),st("minecraft:iron_ingot",0,64,"Iron Ingot"),st("minecraft:coal",0,20,"Coal")}},
+  {name="drone3",address="c3d4e5f6-0003-4e00-8000-000000000003",state="held",node="-2:65:6",home="-2:65:6",energy=4100,cargoSlots=8,
+    cargo={st("minecraft:brick",0,64,"Brick"),st("minecraft:clay_ball",0,9,"Clay")},
+    held={{item={name="minecraft:brick",damage=0,label="Brick"},count=64},{item={name="minecraft:clay_ball",damage=0,label="Clay"},count=9}}},
+  {name="drone4",address="d4e5f6a7-0004-4e00-8000-000000000004",state="charging",node="-2:65:8",home="-2:65:8",energy=900,cargoSlots=8},
+  {name="drone5",address="e5f6a7b8-0005-4e00-8000-000000000005",state="working",home="-2:65:10",energy=150,cargoSlots=8,lost=true,job=57,trip=109,
+    cargo={st("minecraft:sand",0,64,"Sand")}},
+  {name="drone6",address="f6a7b8c9-0006-4e00-8000-000000000006",state="booting",node="-2:65:12",home="-2:65:12",cargoSlots=8},
+}
+D.announcing={"9c1d2e3f-aaaa-4bbb-8ccc-dddddddddd01","7b8a9f0e-1111-4222-8333-444444444402"}
 return D
