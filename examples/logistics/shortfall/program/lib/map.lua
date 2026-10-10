@@ -177,6 +177,10 @@ function M.node(name) return nodes[name] and copy(nodes[name]) end
 -- A node name, or a storage name standing for its node.
 function M.place(name) return nodes[name] and name or storages[name] and storages[name].node end
 function M.nodes() return copy(nodes) end
+function M.links(n)
+  if not links[n] then return end
+  local out={};for k in pairs(links[n]) do out[#out+1]=k end;return out
+end
 function M.link(a,b)
   assert(nodes[a] and nodes[b] and a~=b,"unknown/same node")
   links[a][b]=true;links[b][a]=true

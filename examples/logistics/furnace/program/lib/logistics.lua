@@ -251,7 +251,10 @@ local function schedule()
 end
 local function receive(_,_,sender,received,_,token,kind,id,payload)
   if received~=port then return end
-  if token=="lgx_hello" then announcing[sender]=true;return end
+  if token=="lgx_hello" then
+    if not addresses[sender] and not announcing[sender] then announcing[sender]=true;event.push("logistics_announce",sender) end
+    return
+  end
   local d=addresses[sender];if not d or token~=d.token then return end
   d.received=(d.received or 0)+1
   if kind=="boot" then
@@ -478,7 +481,7 @@ function M.forget(name)
 end
 function M.drones()
   local out={};for _,d in pairs(fleet) do
-    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,held=d.held,home=d.home,releasePending=d.release~=nil}
+    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,held=d.held,home=d.home,releasePending=d.release~=nil,job=d.job,trip=d.trip,lost=d.lost==true}
   end
   table.sort(out,function(a,b) return a.name<b.name end);return out
 end
