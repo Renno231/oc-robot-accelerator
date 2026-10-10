@@ -533,7 +533,7 @@ class MesGraphTests(LuaCase):
             local bronze=r.stages[1].loadLedger;local steel=r.stages[2].loadLedger[1]
             assert(#bronze==2 and bronze[2].inputBefore>0)
             assert(bronze[2].delivered<bronze[1].collected)
-            assert(steel.inputBefore==0 and steel.delivered<bronze[1].collected)
+            assert(steel.inputBefore==0 and steel.delivered>=bronze[1].collected) -- waits for the collection
             local loads=M.resources{config=CFG}.machines.alloy.loads
             return held('stock','t:bronze'),held('stock','t:steel'),#loads
         '''), (2, 1, 0))

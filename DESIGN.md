@@ -379,7 +379,8 @@ with the slots each role's face exposes). A processing step uses any group of th
 group, or a chosen set. Machines are scheduled per load, not owned per step. Admission follows AE2
 blocking mode: non-blocking types (a vanilla furnace) take loads while input room allows; blocking
 types (multi-input, e.g. copper + tin) take a load only when their inputs are empty or hold the same
-recipe. A blocking machine's inputs are read before each load. A non-blocking machine is read once,
+recipe. A blocking machine's inputs are read before each load; when it can take nothing, it is not read
+again until its next collection. A non-blocking machine is read once,
 before its first load; after that each delivery reports what went in. A machine that refuses part of
 a load keeps what went in, the drone returns the rest to storage, and the rest is retried after the
 machine's next collection, failing at the input deadline. Output never gates admission; it is collected continuously and attributed to loads FIFO by
