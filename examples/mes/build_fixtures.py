@@ -406,9 +406,14 @@ TRIP_KINDS = r"""
       if short then kind='shortCollect';kinds.shorts[#kinds.shorts+1]={job=id,trips=j.trips,requested=need,moved=moved,items=j.perItem} end
     end
     kinds[kind]=kinds[kind]+(j.trips or 0)
-    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips}
+    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips,queuedAt=j.queuedAt,tripTimings=j.tripTimings}
     if (j.refused or 0)>0 then kinds.refusals[#kinds.refusals+1]={job=id,group=group,refused=j.refused,items=j.perItem,finishedAt=j.finishedAt} end
   end end
+  kinds.following={}
+  if window then for id,j in pairs(jobs) do if id>window.last then for _,t in ipairs(j.tripTimings or {}) do
+    local p=kinds.following[t.drone]
+    if not p or t.startedAt<p.startedAt then kinds.following[t.drone]={job=id,trip=t.trip,startedAt=t.startedAt,queuedAt=j.queuedAt} end
+  end end end end
   assert(kinds.movement+kinds.shortCollect+kinds.first+kinds.input+kinds.output==mesTrips,'trip kind accounting mismatch')
   result.tripKinds=kinds
 """
