@@ -85,7 +85,7 @@ class LogisticsManyTests(unittest.TestCase):
 
     def test_agent_delivers_cargo_it_already_holds(self):
         source = Path('drone-logistics/drone/agent.lua').read_text()
-        function = source[source.index('local function runSteps('):source.index('if x==nil or y==nil or z==nil then')]
+        function = source[source.index('local function runSteps('):source.index('if not x or drone.getOffset()>=.02 then')]
         self.lua.execute('''
           slots=2;CARGO={{name='mod:a',damage=0,size=3,maxSize=64}};PUT={};REPORTS={}
           inv={getStackInInternalSlot=function(i) local c=CARGO[i];return c and c.size>0 and c or nil end}

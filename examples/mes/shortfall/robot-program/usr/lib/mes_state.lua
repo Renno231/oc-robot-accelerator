@@ -118,15 +118,18 @@ local function cleanPartial(job)
   return false
 end
 -- Whether job id belongs to a machine load or collection, which may move less.
+local function lost(job)
+  return (job.refused or 0)==0 and next(job.held or {}) and
+    (((job.held or {})[1] or {}).state=='lost' or (job.reason or ''):find('drone lost',1,true))
+end
 local function partialOk(run, id)
   for _, a in pairs(run.actions) do
-    if a.partialOk or (a.sourceRetry and (run.jobs[id].refused or 0) == 0) then
       for _, j in ipairs(a.ids or {}) do
         if j == id then
-          return true
+          return a.partialOk or (a.sourceRetry and (run.jobs[id].refused or 0)==0)
+            or (a.kind=='fetchMany' and not a.lost and lost(run.jobs[id])), a.lost
         end
       end
-    end
   end
   return false
 end
@@ -141,8 +144,9 @@ function M.update(run, what, data)
   elseif what == 'job' then
     run.jobs[data.id] = copy(data.receipt)
     local r = data.receipt
-    if r and terminal(r.state) and r.state ~= 'done' and not (cleanPartial(r) and partialOk(run, data.id)) then
-      run.failureFacts[#run.failureFacts + 1] = r.reason or ('Logistics ' .. r.state)
+    local allowed, original = partialOk(run, data.id)
+    if r and terminal(r.state) and r.state ~= 'done' and not (allowed and (cleanPartial(r) or (not original and lost(r)))) then
+      run.failureFacts[#run.failureFacts + 1] = (original and original..'; retry: ' or '')..(r.reason or ('Logistics ' .. r.state))
     end
   elseif what == 'settled' then
     run.settled[data.id] = data.settled ~= false
@@ -318,9 +322,10 @@ local function outcome(run, a)
   end
   for i, id in ipairs(a.ids) do
     local r = run.jobs[id]
+    if r and a.kind=='fetchMany' and not a.lost and lost(r) then a.sourceRetry=true end
     if r and terminal(r.state) and r.state ~= 'done' and not (a.partialOk and cleanPartial(r)) then
-      problem = problem or r.reason or ('Logistics ' .. r.state)
-      if not (a.sourceRetry and cleanPartial(r) and (r.refused or 0) == 0) then stop(run, problem) end
+      problem = problem or (a.lost and a.lost..'; retry: ' or '')..(r.reason or ('Logistics ' .. r.state))
+      if not ((a.sourceRetry and cleanPartial(r) and (r.refused or 0) == 0) or (a.kind=='fetchMany' and not a.lost and lost(r))) then stop(run, problem) end
     end
     if not r or not terminal(r.state) or not run.settled[id] then
       all = false
@@ -388,7 +393,7 @@ local function beginMany(run, stage, kind, requests, endpoint, wait)
   bundle.run = run
   return bundle
 end
-local function finishMany(run, bundle)
+local function finishBundle(run, bundle)
   local a = bundle.action
   local stage = bundle.stage
   if a.submitted and not bundle.registered then
@@ -448,7 +453,7 @@ local function finishMany(run, bundle)
         if
           r.item == name
           and requested > 0
-          and (row.requestIndex == nil or row.requestIndex == index)
+          and (row.requestIndex == nil or row.requestIndex == (r.retryIndex or index))
         then
           local assigned = math.min(requested, r.quantity - (r.accounted or 0))
           if assigned > 0 then
@@ -518,7 +523,7 @@ local function finishMany(run, bundle)
       local c = run.claims[r.item]
       if c then
         -- A claim on stock the drone found missing withholds nothing real.
-        c = math.min(c - math.min(c, r.moved), r.shortfall > 0 and run.ports.stock(r.item) or c)
+        c = math.min(c - math.min(c, r.moved-(r.previous or 0)), r.shortfall > 0 and run.ports.stock(r.item) or c)
         run.claims[r.item] = c > 0 and c or nil
       end
     end
@@ -529,7 +534,35 @@ local function finishMany(run, bundle)
   end
   return true, errorText
 end
-local function release(run, s)
+local function finishMany(run, b)
+  local done, err = finishBundle(run,b)
+  if not done or not err or run.stopping or b.action.lost then return done,err end
+  local why
+  for _,r in ipairs(b.action.results or {}) do
+    if lost(r) then why=r.reason or 'drone lost'
+    elseif r.state~='done' and not (b.action.sourceRetry and cleanPartial(r) and (r.refused or 0)==0) then return done,err end
+  end
+  local requests={}
+  for _,r in ipairs(b.records) do if r.shortfall>0 then
+    if run.ports.stock(r.item)<r.shortfall then
+      if not why then return done,err end
+      local detail='Waiting for cargo ('..why..'); put the drone on its charger and press Found'
+      if b.stage.detail~=detail then changed(run,b.stage,nil,detail) end
+      return false
+    end
+    requests[#requests+1]={item=item(r.item),count=r.shortfall,to={storage=r.storage,slots=r.slots}}
+    r.retryIndex=#requests
+  end end
+  if #requests==0 or b.kind~='fetch' then return done,err end
+  for _,r in ipairs(b.records) do
+    r.previous=r.moved;r.accounted=r.moved;r.shortfall=0;r.physicalStatus=nil;r.reason=nil
+  end
+  b.action=action(run,'fetchMany',{requests=requests,endpoint=b.endpoint,sourceRetry=true,lost=why})
+  b.finished=nil;b.registered=nil;b.physical={};b.error=nil
+  changed(run,b.stage,nil,'Retrying shortfall: '..err)
+  return false
+end
+local function unreserve(run, s)
   local tools = run.world.toolReservations
   for id, n in pairs(s.toolReservations or {}) do
     tools[id] = tools[id] - n
@@ -538,6 +571,9 @@ local function release(run, s)
     end
   end
   s.toolReservations = nil
+end
+local function release(run, s)
+  unreserve(run,s)
   if s.robotLock then
     local state = s.status == 'unknown' and 'unknown' or 'idle'
     local r = run.world.robots[s.robotLock]
@@ -715,23 +751,6 @@ local function robotAdvance(run, s)
       return false
     end
     if err or run.stopping then
-      if err and not run.stopping then
-        local requests, retry = {}, true
-        for _, ledger in ipairs(s.bundle.action.results or {}) do
-          if ledger.state ~= 'done' and not (cleanPartial(ledger) and (ledger.refused or 0) == 0) then retry = false end
-        end
-        for _, r in ipairs(s.bundle.records) do
-          if r.shortfall > 0 then
-            if run.ports.stock(r.item) < r.shortfall then retry = false end
-            requests[#requests + 1] = { item = r.item, count = r.shortfall }
-          end
-        end
-        if retry and #requests > 0 then
-          s.bundle = beginMany(run, s, 'fetch', requests, s.buffer)
-          s.bundle.action.sourceRetry = true
-          return true
-        end
-      end
       failStage(run, s, err or run.reason)
       return true
     end
@@ -799,6 +818,12 @@ local function robotAdvance(run, s)
     return true
   elseif s.phase == 'robot_reread' then
     if not outcome(run, s.bufferRead) then return false end
+    unreserve(run,s)
+    local tools=run.world.toolReservations
+    local p,e,w=run.ports.prepareRobot(run,s,tools,(run.ports.contents(s.buffer) or {}).items or {})
+    if not p then failStage(run,s,e);return true end
+    s.prepared=p;s.toolWithdrawals=w;s.toolReservations=w
+    for id,n in pairs(w) do tools[id]=(tools[id] or 0)+n end
     s.phase = 'robot_fetch'
     return true
   elseif s.phase == 'robot_storing' then

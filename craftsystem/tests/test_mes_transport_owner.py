@@ -283,6 +283,43 @@ class MesTransportOwnerTests(TransportFixture):
             assert(crafts==1 and statuses>=1 and unknowns>=1 and #C.errors==0)
         ''')
 
+    def test_idle_inspects_running_before_failing(self):
+        self.lua.execute('''
+            A.duration=2;A.progressEvery=1
+            C.command=function(client)
+                assert(client.begin('silent-running','robot-a',{},'silent-job',{idleTimeout=0.2,rpcTimeout=0.1}))
+            end
+            untilDone(function() return C.terminals['silent-running'] end,4)
+            assert(C.terminals['silent-running'].success and A.executions==1)
+            local statuses=0
+            for _,m in ipairs(commands('client')) do
+                if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end
+            end
+            assert(statuses>0 and #C.created==C.installs and #C.errors==0)
+        ''')
+
+    def test_idle_first_unanswered_inspect_reconnects_second_unanswered_fails(self):
+        self.lua.execute('''
+            A.duration=10;A.progressEvery=10
+            C.command=function(client)
+                assert(client.begin('silent','robot-a',{},'silent-job',{idleTimeout=0.2,rpcTimeout=0.1}))
+            end
+            untilDone(function() return A.executions==1 end)
+            local send=A.modem.send
+            A.modem.send=function(to,port,wake,info,msg,...)
+                if msg=='rpc' then return true end
+                return send(to,port,wake,info,msg,...)
+            end
+            untilDone(function() return C.terminals.silent end,3)
+            assert(C.terminals.silent.reason:find('idle timeout',1,true))
+            assert(#C.created>C.installs and A.executions==1 and #C.errors==0)
+            local statuses=0
+            for _,m in ipairs(commands('client')) do
+                if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end
+            end
+            assert(statuses==2,statuses)
+        ''')
+
     def test_async_timeouts_are_service_owned_after_frontend_exit(self):
         self.lua.execute('''
             local send=A.modem.send

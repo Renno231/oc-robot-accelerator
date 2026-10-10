@@ -82,31 +82,22 @@ local function inputQuantities(t, plan)
   local node = plan.blueprint and plan.blueprint.nodes[t.node]
   return t.input_quantities or (node and node.input_quantities) or {}
 end
-local function stockSnapshot(reserved)
+local function snapshot(reserved, rows)
   local stacks = {}
   reserved = copy(reserved or {})
-  eachStock(function(v)
+  local function add(v)
     local id = identity.stackName(v.item)
     local withheld = math.min(v.count, reserved[id] or 0)
     reserved[id] = (reserved[id] or 0) - withheld
     if v.count > withheld then
-      stacks[#stacks + 1] =
-        { name = v.item.name, damage = v.item.damage or 0, size = v.count - withheld, maxSize = v.maxSize or 64 }
+      stacks[#stacks+1]={name=v.item.name,damage=v.item.damage or 0,size=v.count-withheld,maxSize=v.maxSize or 64}
     end
-  end)
-  return assert(require('inventory').new({
-    getAllStacks = function()
-      return {
-        getAll = function()
-          return stacks
-        end,
-      }
-    end,
-  }, 0))
+  end
+  if rows then for _,v in pairs(rows) do add(v) end else eachStock(add) end
+  return assert(require('inventory').new({getAllStacks=function() return {getAll=function() return stacks end} end},0))
 end
--- Prefix deficits preserve task order; exact physical tool wear is rebudgeted
--- after settlement. Cached plans retain their blueprint-independent payload.
-function M.robotPlan(plan, first, last, inventory)
+-- Shared stage choices, task payload.
+function M.robotPlan(plan, first, last, inventory, recovery)
   local sub = {
     success = true,
     craftable = true,
@@ -117,8 +108,17 @@ function M.robotPlan(plan, first, last, inventory)
     tool_stock = {},
   }
   local usedTools, manufacturedTools = {}, {}
+  local b={nodes={},roots={},tools=sub.tools}
   for i = first, last do
     local t = copy(plan.tasks[i])
+    local n=copy(t);n.deps={};n.useStock=true
+    for slot,id in pairs(t.recipe) do
+      if id=='minecraft:air' then n.recipe[slot]=nil else
+        local dep=(t.input_nodes or {})[slot] or id
+        n.deps[slot]=dep;b.nodes[dep]=b.nodes[dep] or {item=id,useStock=true}
+      end
+    end
+    b.nodes[t.node or t.item]=n
     t.node = nil
     t.input_nodes = nil
     sub.tasks[#sub.tasks + 1] = t
@@ -133,6 +133,18 @@ function M.robotPlan(plan, first, last, inventory)
     end
   end
   sub.inventory_needed, sub.requestOutputs = chainNeeds(sub.tasks)
+  for i=first,last do
+    local t=plan.tasks[i];local q=sub.requestOutputs[t.item]
+    if q then
+      q=q-(recovery and math.min(q,(recovery:countItemByName(t.item))) or 0)
+      if q>0 then b.roots[#b.roots+1]={node=t.node or t.item,quantity=q} end
+    end
+  end
+  if recovery then
+    local p,e=require('craft_blueprint').calculate(b,recovery)
+    if not p then return nil,e end
+    return M.robotPlan(p,1,#p.tasks,recovery)
+  end
   for id in pairs(usedTools) do
     if manufacturedTools[id] then
       return nil,
@@ -188,12 +200,12 @@ function M.robotPlan(plan, first, last, inventory)
   end
   return sub, nil, withdrawals
 end
-local function prepareRobot(run, s, reserved)
+local function prepareRobot(run, s, reserved, rows)
   local selected = { tasks = {}, tools = run.plan.tools, tool_stock = run.plan.tool_stock }
   for _, i in ipairs(s.taskIndices) do
     selected.tasks[#selected.tasks + 1] = run.plan.tasks[i]
   end
-  return M.robotPlan(selected, 1, #selected.tasks, stockSnapshot(reserved))
+  return M.robotPlan(selected,1,#selected.tasks,snapshot(reserved), rows and snapshot(nil,rows))
 end
 function M.start(opts)
   return service.start(opts, prepareRobot)
@@ -216,7 +228,7 @@ function M.plan(id, qty, opts)
   local ok, p, err = pcall(function()
     assert(positive(qty), 'Quantity must be a positive integer')
     start(opts)
-    local snapshot = require('craft_plans').inventory({ inventory = stockSnapshot(service.claims()) })
+    local snapshot = require('craft_plans').inventory({ inventory = snapshot(service.claims()) })
     local all = {}
     for i = 1, snapshot:getInventorySize() do
       all[i] = snapshot:getItemInSlot(i)
