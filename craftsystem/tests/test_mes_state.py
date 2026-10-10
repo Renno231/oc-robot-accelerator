@@ -334,16 +334,15 @@ class MesStateTests(LuaCase):
           assert(WORLD.toolReservations['t:tool:7']==1)
         ''')
 
-    def test_scoped_fuel_credits_are_cumulative_and_extra_units_refresh_first(self):
+    def test_fuel_credit_is_first_read_plus_deliveries(self):
         self.lua.execute('''
           CFG.machineTypes.furnace.fuel={role='fuel',item='t:fuel',per=2}
           local stage=machine('t:metal',{'t:ore'},nil,4);stage.fuel={item='t:fuel',need=2}
           put('mf','t:fuel',1);loaded({stage})
           local r=RUN.stages[1].loadLedger[1];assert(r.items==2)
           put('mi','t:ore',0);put('mf','t:fuel',1)
-          drain('scanRole');drain('scanRole');drain('fetchMany')
-          -- Fuel's initial one-unit credit remains accounted even after burn;
-          -- the newly observed unit replaces consumed credit, not all history.
+          drain('scanRole');drain('fetchMany')
+          -- The unit seen at the first read counts; one added by hand later does not.
           local fuel=0;for _,a in ipairs(ACTIONS) do if a.kind=='fetchMany' then for _,v in ipairs(a.requests) do if v.item.name=='t:fuel' then fuel=fuel+v.count end end end end
-          assert(fuel==0 and WORLD.groups.kiln.fuelCredit==2)
+          assert(fuel==1 and WORLD.groups.kiln.fuelCredit==2,fuel..' '..WORLD.groups.kiln.fuelCredit)
         ''')

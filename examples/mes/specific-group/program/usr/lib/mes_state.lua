@@ -6,7 +6,7 @@ local identity = require('item_identity')
 -- blocked request may wait this long for input room, before it fails.
 local MACHINE_GRACE = 60
 -- Re-read delays for machine input and output start here and double up to
--- the maximum while nothing changes (run options may override both).
+-- the maximum while nothing changes.
 local BACKOFF, MAX_BACKOFF = 0.5, 8
 local function copy(t)
   if type(t) ~= 'table' then
@@ -667,19 +667,11 @@ local function acquireRobot(run, s)
     local key = run.ports.bufferIdentity(c.buffer)
     local b = run.world.buffers[key] or { state = 'idle' }
     run.world.buffers[key] = b
-    local allowed = true
-    if run.opts.isCrafterIdle then
-      allowed = run.opts.isCrafterIdle(name, copy(c)) == true
-      if allowed and not r.run then
-        M.confirmIdle(run.world, c.robot)
-        r = run.world.robots[c.robot]
-      end
-    end
     local yield = r.last == run.id and wanted(name)
     if yield then
       run.yielded = true
     end
-    if allowed and r.state == 'idle' and b.state == 'idle' and not yield then
+    if r.state == 'idle' and b.state == 'idle' and not yield then
       local sub, err, withdrawals = run.ports.prepareRobot(run, s, tools)
       if not sub then
         if next(tools) then
@@ -911,14 +903,6 @@ local function startMachine(run, s)
     seen[name] = true
     local resource = run.world.machines[name] or { state = 'idle', type = s.machineType, loads = {} }
     run.world.machines[name] = resource
-    if
-      resource.state == 'unknown'
-      and run.opts.isMachineIdle
-      and run.opts.isMachineIdle(name, copy(resource)) == true
-    then
-      resource.state = 'idle'
-      resource.loads = {}
-    end
     if resource.state ~= 'unknown' then
       free[#free + 1] = name
     end
@@ -1022,8 +1006,8 @@ local function startMachine(run, s)
         phase = 'idle',
         inputDue = 0,
         outputDue = math.huge,
-        inputBackoff = run.opts.machineBackoffSeconds or BACKOFF,
-        outputBackoff = run.opts.machineBackoffSeconds or BACKOFF,
+        inputBackoff = BACKOFF,
+        outputBackoff = BACKOFF,
       }
       run.world.groups[name] = g
     end
@@ -1092,7 +1076,7 @@ end
 local function blocked(w, g)
   g.cachedInputs = nil
   g.inputDue = w.now + g.inputBackoff
-  g.inputBackoff = math.min(g.inputBackoff * 2, g.opts.machineMaxBackoffSeconds or MAX_BACKOFF)
+  g.inputBackoff = math.min(g.inputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
 end
 local function admit(w, g)
@@ -1126,14 +1110,6 @@ local function admit(w, g)
         ops = math.floor(ops / 2)
       end
       if ops > 0 and mt.fuel then
-        if additional(g, r, ops) > 0 and not g.fuelPreflightFresh then
-          g.observing = { [r.stage] = true }
-          g.fuelCandidate = { r = r, donor = donor, position = position, ops = ops }
-          g.fuelScan =
-            action(r.run, 'scanRole', { storage = g.roles[mt.fuel.role], slots = mt.roleSlots[mt.fuel.role] })
-          g.phase = 'fuel'
-          return true
-        end
         while ops > 0 and additional(g, r, ops) > (r.run.fuelAvailable[mt.fuel.item] or 0) do
           ops = math.floor(ops / 2)
         end
@@ -1263,7 +1239,6 @@ local function finishLoad(w, g)
   else
     if mt.fuel then
       g.fuelCredit = g.fuelCredit + load.fuelAdditional
-      g.fuelObserved = (g.fuelObserved or 0) + load.fuelAdditional
     end
     local duration = load.ops * r.perOp * mt.seconds
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
@@ -1273,7 +1248,6 @@ local function finishLoad(w, g)
     record.started = w.now
     record.delivered = w.now
     g.inputsAdmitted = (g.inputsAdmitted or 0) + record.items
-    g.fuelPreflightFresh = false
     g.outputDue = math.min(g.outputDue, load.due)
     g.inputRecipe = r.recipe
     r.deadline = load.deadline
@@ -1298,7 +1272,7 @@ local function finishLoad(w, g)
   g.loading = nil
   g.phase = 'idle'
   g.inputDue = w.now
-  g.inputBackoff = g.opts.machineBackoffSeconds or BACKOFF
+  g.inputBackoff = BACKOFF
   publish(w, g)
   return true
 end
@@ -1317,7 +1291,6 @@ local function reap(w, g, collected)
       elseif load.record.state ~= 'failed' then
         load.record.state = 'done'
         load.record.collected = w.now
-        g.inputsCompleted = (g.inputsCompleted or 0) + load.record.items
       end
       load.record.finished = w.now
       load.request.active = load.request.active - 1
@@ -1327,8 +1300,8 @@ local function reap(w, g, collected)
       g.outputDue = math.min(g.outputDue, load.due)
     end
   end
-  g.outputBackoff = collected and (g.opts.machineBackoffSeconds or BACKOFF)
-    or math.min(g.outputBackoff * 2, g.opts.machineMaxBackoffSeconds or MAX_BACKOFF)
+  g.outputBackoff = collected and (BACKOFF)
+    or math.min(g.outputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
   publish(w, g)
 end
@@ -1557,13 +1530,11 @@ local function groupAdvance(w, g)
     end
     if mt.fuel then
       g.fuelCredit = count(views[mt.fuel.role], mt.fuel.item)
-      g.fuelObserved = g.fuelCredit
-      g.fuelPreflightFresh = true
     end
     g.initialized = true
     g.phase = 'idle'
     return true
-  elseif g.phase == 'inputs' or g.phase == 'fuel_inputs' then
+  elseif g.phase == 'inputs' then
     local errorText
     local done = true
     for role, a in pairs(g.inputScans) do
@@ -1586,9 +1557,6 @@ local function groupAdvance(w, g)
       g.phase = 'idle'
     elseif not next(g.pending) then
       g.phase = 'idle'
-    elseif g.phase == 'fuel_inputs' then
-      g.verified = true
-      g.phase = 'fuel_credit'
     else
       g.phase = 'admit'
     end
@@ -1599,46 +1567,6 @@ local function groupAdvance(w, g)
       return true
     end
     return admit(w, g)
-  elseif g.phase == 'fuel' then
-    local view, e = roleView(g.fuelScan, g.roles[mt.fuel.role], mt.roleSlots[mt.fuel.role])
-    if view == nil then
-      return false
-    end
-    if not view then
-      bad(w, g, g.fuelCandidate.r, e, true)
-      g.phase = 'idle'
-    elseif not next(g.pending) then
-      g.phase = 'idle'
-    else
-      g.freshFuel = count(view, mt.fuel.item)
-      if not g.verified then
-        scanInputs(w, g, g.observed)
-        g.phase = 'fuel_inputs'
-      else
-        g.phase = 'fuel_credit'
-      end
-    end
-    return true
-  elseif g.phase == 'fuel_credit' then
-    if not next(g.pending) then
-      g.phase = 'idle'
-      return true
-    end
-    local held = 0
-    for _, view in pairs(g.observed) do
-      for _, v in pairs(view.items) do
-        held = held + v.count
-      end
-    end
-    local consumed = math.max(g.inputsCompleted or 0, math.max(0, (g.inputsAdmitted or 0) - held))
-    g.fuelBurnedMinimum = math.max(g.fuelBurnedMinimum or 0, math.ceil(consumed / mt.fuel.per))
-    local accounted = math.max(0, g.fuelCredit - g.fuelBurnedMinimum)
-    local unaccounted = math.max(0, g.freshFuel - accounted, g.freshFuel - (g.fuelObserved or 0))
-    g.fuelCredit = g.fuelCredit + unaccounted
-    g.fuelObserved = g.freshFuel
-    g.fuelPreflightFresh = true
-    g.phase = 'admit'
-    return true
   elseif g.phase == 'loading' then
     return finishLoad(w, g)
   elseif g.phase == 'output' then
@@ -1841,9 +1769,6 @@ function M.advance(run)
           for _, g in pairs(w.groups) do
             local observing = g.phase == 'preflight'
               or g.phase == 'inputs'
-              or g.phase == 'fuel'
-              or g.phase == 'fuel_inputs'
-              or g.phase == 'fuel_credit'
               or g.phase == 'admit'
             if observing and g.observing and g.observing[s] then
               pending = true

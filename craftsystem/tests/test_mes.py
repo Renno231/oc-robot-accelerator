@@ -470,7 +470,7 @@ class MesTests(LuaCase):
             return r.status,m.status,m.moved,m.taken,m.returned,m.reason,CLIENT_CALLS
         '''), ('failed', 'partial', 1, 2, 1, 'late removal', 0))
 
-    def test_first_idle_crafter_hook_and_per_crafter_occupancy(self):
+    def test_per_crafter_occupancy(self):
         self.assertEqual(self.lua.execute('''
             CFG.crafters.cpu2={robot='second-robot'}
             GROUPS.cpu2={type='crafter',roles={buffer='buf'}}
@@ -478,7 +478,7 @@ class MesTests(LuaCase):
             local client=require('craft_client');local original=client.runDetailed
             local first,second
             client.runDetailed=function(...) local c=M.resources{config=CFG}.crafters;first=c.cpu1.state;second=c.cpu2.state;return original(...) end
-            local r=run({task('t:final',{'t:raw'})},{isCrafterIdle=function(name) return name=='cpu2' end})
+            local r=run({task('t:final',{'t:raw'})},{crafter='cpu2'})
             return r.status,ADDRESS,first,second,M.resources{config=CFG}.crafters.cpu2.state
         '''), ('complete', 'second-robot', 'busy', 'busy', 'idle'))
 
