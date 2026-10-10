@@ -167,10 +167,21 @@ class MesGraphTests(LuaCase):
                     local id=require('item_identity').stackName(i)
                     if FAIL_STORAGE==s then return nil,'injected fetch failure' end
                     assert(held('stock',id)>=n,'fetch before settled stock '..id)
-                    put('stock',id,held('stock',id)-n);put(s,id,held(s,id)+n)
-                    MOVES[#MOVES+1]={kind='fetch',storage=s,item=id,count=n,time=TIME}
+                    -- A storage with a set CAPACITY refuses what doesn't fit; the
+                    -- drone brings the rest back to stock.
+                    local accept=n
+                    if CAPACITY[s] then
+                        local maximum=MAXSTACK[id] or 64;local used=0
+                        for other,c in pairs(CONTENTS[s] or {}) do if other~=id then used=used+math.ceil(c/(MAXSTACK[other] or 64)) end end
+                        accept=math.max(0,math.min(n,(CAPACITY[s]-used)*maximum-held(s,id)))
+                    end
+                    put('stock',id,held('stock',id)-accept);put(s,id,held(s,id)+accept)
+                    MOVES[#MOVES+1]={kind='fetch',storage=s,item=id,count=accept,time=TIME,refused=n-accept}
                     process(s)
-                    return job()
+                    if accept==n then return job() end
+                    local j=job(nil,accept>0 and 'partial' or 'failed')
+                    JOBS[j].accepted=accept;JOBS[j].refused=n-accept;JOBS[j].held={};JOBS[j].reason='destination refused items'
+                    return j
                 end,
                 store=function(i,n,s)
                     s=type(s)=='table' and s.storage or s
@@ -212,7 +223,8 @@ class MesGraphTests(LuaCase):
                         if apply then current.applies[#current.applies+1]=apply end
                         local target=current
                         current.apply=function() for _,fn in ipairs(target.applies) do fn() end end
-                        local moved=j.outcome=='partial' and 0 or n
+                        local moved=j.outcome and (j.accepted or 0) or n
+                        if j.refused then current.refused=(current.refused or 0)+j.refused;current.held={} end
                         current.perItem[#current.perItem+1]={item=r.item,requestIndex=index,
                             requested=n,moved=moved,shortfall=n-moved,taken=n,returned=n-moved,overflow=0}
                         current.moved=current.moved+n
@@ -526,7 +538,29 @@ class MesGraphTests(LuaCase):
             return held('stock','t:bronze'),held('stock','t:steel'),#loads
         '''), (2, 1, 0))
 
-    def test_nonblocking_capacity_and_fifo_same_output_across_steps(self):
+    def _sand_added_by_hand(self, slots):
+        # Someone puts sand in the furnace after the MES looked, before the load arrives.
+        self.lua.globals().SLOTS = slots
+        return self.lua.execute('''
+            CFG.machineTypes.furnace.batch=4;CAPACITY.in1=SLOTS;MAXSTACK['t:ore']=2
+            put('stock','t:ore',4)
+            MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
+            local wh=require('warehouse');local original=wh.fetchMany;local once=true
+            wh.fetchMany=function(...) if once then once=false;put('in1','t:sand',1) end;return original(...) end
+            local r=run({task('t:metal',{'t:ore'},'a',{'ore'},'furnace',4)})
+            local refused=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' then refused=refused+(m.refused or 0) end end
+            local loads={};for _,l in ipairs(r.stages[1].loadLedger or {}) do loads[#loads+1]=l.items end
+            return r.status,r.reason,refused,table.concat(loads,','),held('stock','t:metal'),held('stock','t:ore')
+        ''')
+
+    def test_partly_refused_load_counts_what_went_in_and_retries_the_rest(self):
+        self.assertEqual(self._sand_added_by_hand(2), ('complete', None, 2, '2,2', 4, 0))
+
+    def test_load_refused_with_nothing_to_collect_fails_at_the_input_deadline(self):
+        self.assertEqual(self._sand_added_by_hand(1),
+            ('failed', 'kiln: Machine input deadline exceeded', 2, '', 0, 4))
+
+    def test_nonblocking_refused_load_returns_to_stock_and_retries_after_collection(self):
         self.assertEqual(self.lua.execute('''
             CFG.machineTypes.furnace.batch=2;CAPACITY.in1=1;MAXSTACK['t:ore']=2
             put('stock','t:ore',4)
@@ -535,12 +569,12 @@ class MesGraphTests(LuaCase):
                 task('t:metal',{'t:ore'},'b',{'ore'},'furnace',2)})
             assert(r.status=='complete',r.reason)
             local a=r.stages[1].loadLedger[1];local b=r.stages[2].loadLedger[1]
-            assert(b.delivered>a.delivered and b.delivered<a.collected)
-            assert(b.inputBefore==0) -- first full stack had to be consumed
-            assert(a.collected<=b.collected)
+            -- The slot was full: the second load came back, then went in after collection.
+            local refused=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' then refused=refused+(m.refused or 0) end end
+            assert(b.delivered>=a.collected)
             assert(a.collectedItems['t:metal']==2 and b.collectedItems['t:metal']==2)
-            return held('stock','t:metal'),r.stages[1].done,r.stages[2].done
-        '''), (4, 2, 2))
+            return refused,#r.stages[2].loadLedger,held('stock','t:metal'),held('stock','t:ore')
+        '''), (2, 1, 4, 0))
 
     def test_mid_graph_failure_settles_active_sibling_and_never_dispatches_join(self):
         self.assertEqual(self.lua.execute('''
@@ -674,8 +708,8 @@ class MesGraphTests(LuaCase):
             assert(a.collected==b.collected and a.storeJobs[1].job==b.storeJobs[1].job)
             assert(a.collected>=JOBS[a.storeJobs[1].job].settle)
             assert(a.collectedItems['t:metal']==1 and b.collectedItems['t:metal']==1)
-            return stores,held('stock','t:metal'),b.inputBefore==nil,b.inputVerified
-        '''), (1, 2, True, False))
+            return stores,held('stock','t:metal'),b.inputBefore==nil
+        '''), (1, 2, True))
 
     def test_shared_buffer_cannot_be_double_dispatched(self):
         self.assertEqual(self.lua.execute('''
