@@ -60,6 +60,7 @@ local function stop(run, reason)
   run.error = run.reason
 end
 local function changed(run, s, state, detail, done)
+  run.world.revision = run.world.revision + 1
   if state then
     s.state = state
   end
@@ -135,6 +136,7 @@ function M.update(run, what, data)
   if what == 'tick' then
     run.now = data.now
   elseif what == 'cancel' then
+    run.world.revision = run.world.revision + 1
     run.failureFacts[#run.failureFacts + 1] = data.reason or 'Cancelled'
   elseif what == 'job' then
     run.jobs[data.id] = copy(data.receipt)
@@ -149,6 +151,7 @@ function M.update(run, what, data)
   elseif what == 'action_submitted' then
     local a = run.actions[data.token]
     if a then
+      run.world.revision = run.world.revision + 1
       a.submitted = true
       a.ids = copy(data.ids or {})
       a.error = data.error
@@ -174,16 +177,20 @@ function M.update(run, what, data)
 end
 -- Shared by all runs: robots, buffers and machine groups are scheduled across requests.
 function M.world()
-  return { robots = {}, buffers = {}, machines = {}, facts = {}, groups = {}, toolReservations = {}, waiting = {}, serves = 0, now = 0 }
+  return { robots = {}, buffers = {}, machines = {}, facts = {}, groups = {}, toolReservations = {}, waiting = {}, serves = 0, now = 0, revision = 0 }
 end
 function M.confirmIdle(world, address)
   local r = world.robots[address]
   if r and r.state == 'busy' and r.run then
     return
   end
+  if not r or r.state ~= 'idle' or r.last or r.run or r.step then
+    world.revision = world.revision + 1
+  end
   world.robots[address] = { state = 'idle' }
   for _, b in pairs(world.buffers) do
     if b.state == 'unknown' and b.owner == address then
+      world.revision = world.revision + 1
       b.state = 'idle'
       b.owner = nil
       b.run = nil
@@ -200,6 +207,7 @@ function M.updateWorld(world, what, data)
 end
 function M.advanceWorld(world, dispatch, options)
   local function inspect(address, opts)
+    if not world.robots[address] then world.revision = world.revision + 1 end
     local r = world.robots[address] or { state = 'unknown' }
     world.robots[address] = r
     if r.run or r.pending then
@@ -216,7 +224,9 @@ function M.advanceWorld(world, dispatch, options)
         inspect(address, d.opts)
       end
     else
+      local previous = world.robots[d.address]
       local r = world.robots[d.address] or { state = 'unknown' }
+      local before = r.state
       world.robots[d.address] = r
       if f.what == 'robot_status' then
         r.pending = nil
@@ -236,11 +246,13 @@ function M.advanceWorld(world, dispatch, options)
           r.state = 'unknown'
         end
       end
+      if not previous or r.state ~= before then world.revision = world.revision + 1 end
     end
   end
   world.facts = {}
 end
 function M.new(id, plan, cfg, opts, world, ports, now)
+  world.revision = world.revision + 1
   local run = {
     id = id,
     item = plan.requestItem,
@@ -574,6 +586,7 @@ local function robotMatches(s, d)
 end
 local function robotResult(d)
   local result = copy(d.receipt or {})
+  result.notFound = result.status == 'NOT_FOUND' or result.notFound or nil
   result.status = d.status or (d.unknown and 'unknown') or result.status
   result.message = result.message or d.reason
   return result
@@ -596,6 +609,7 @@ local function robotFacts(run)
           end
         elseif f.what == 'robot_admitted' then
           s.admission = copy(d)
+          run.world.revision = run.world.revision + 1
         end
       end
     end
@@ -682,7 +696,14 @@ local function robotAdvance(run, s)
     end
     local requests = {}
     for _, id in ipairs(sorted(needed)) do
-      requests[#requests + 1] = { item = id, count = needed[id], endpoint = s.buffer }
+      local held = 0
+      if s.bufferRead then
+        for _, v in pairs((run.ports.contents(s.buffer) or {}).items or {}) do
+          if identity.stackName(v.item) == identity.canonical(id) then held = held + v.count end
+        end
+      end
+      local n = needed[id] - held
+      if n > 0 then requests[#requests + 1] = { item = id, count = n, endpoint = s.buffer } end
     end
     s.bundle = beginMany(run, s, 'fetch', requests, s.buffer)
     s.bundle.action.sourceRetry = true
@@ -715,7 +736,9 @@ local function robotAdvance(run, s)
       return true
     end
     s.submitted = true
-    s.jobId = 'mes-' .. run.id .. '-' .. s.index
+    s.jobId = 'mes-' .. run.id .. '-' .. s.index .. (s.bufferRead and ('-' .. (run.sequence + 1)) or '')
+    s.bufferRead = nil
+    s.robotResult, s.robotResultAt = nil, nil
     s.craftStarted = run.now
     changed(run, s, 'crafting', 'Robot crafting')
     s.robotAction = action(run, 'robot_begin', { address = s.robotLock, plan = s.prepared, jobId = s.jobId })
@@ -730,6 +753,11 @@ local function robotAdvance(run, s)
       return false
     end
     local result = s.robotResult
+    if result.notFound then
+      s.bufferRead = action(run, 'scan', { storage = s.buffer })
+      s.phase = 'robot_reread'
+      return true
+    end
     s.receipt = copy(result)
     -- The robot read its buffer after crafting: inputs used and tools broken are gone.
     if result.buffer then
@@ -768,6 +796,10 @@ local function robotAdvance(run, s)
       s.bundle = beginMany(run, s, 'collect', requests, s.buffer)
       s.phase = 'robot_storing'
     end
+    return true
+  elseif s.phase == 'robot_reread' then
+    if not outcome(run, s.bufferRead) then return false end
+    s.phase = 'robot_fetch'
     return true
   elseif s.phase == 'robot_storing' then
     local done, err = finishMany(run, s.bundle)
@@ -836,33 +868,11 @@ local function donorFor(r)
     end
   end
 end
-local function startMachine(run, s)
+function M.machineRequests(run, s)
   local mt = assert(run.cfg.machineTypes[s.machineType], 'Unknown machine type')
   local available = run.ports.groups(s.machineType)
-  assert(
-    type(mt.seconds) == 'number' and mt.seconds >= 0 and mt.seconds < math.huge,
-    'Invalid batch/deadline configuration'
-  )
-  local names = s.groups == 'any' and sorted(available)
-    or type(s.groups) == 'string' and { s.groups }
-    or s.groups
-  assert(type(names) == 'table' and #names > 0, 'No machine groups')
-  local free, seen = {}, {}
-  for _, name in ipairs(names) do
-    assert(available[name] and not seen[name], 'Unknown or duplicate machine group ' .. tostring(name))
-    seen[name] = true
-    local resource = run.world.machines[name] or { state = 'idle', type = s.machineType, loads = {} }
-    run.world.machines[name] = resource
-    free[#free + 1] = name
-  end
-  if #free == 0 then
-    return false
-  end
-  s.groups = free
+  local free = s.groups
   s.locations = {}
-  s.phase = 'machine'
-  s.status = 'running'
-  s.started = run.now
   local t = run.plan.tasks[s.firstTask]
   local quantities = t.input_quantities
     or (run.plan.blueprint and run.plan.blueprint.nodes[t.node] and run.plan.blueprint.nodes[t.node].input_quantities)
@@ -915,6 +925,7 @@ local function startMachine(run, s)
     end
     assert(roles[mt.output], 'Missing output role')
     local r = {
+      group = name,
       run = run,
       stage = s,
       left = math.floor(operations / #free) + (i <= operations % #free and 1 or 0),
@@ -940,6 +951,34 @@ local function startMachine(run, s)
       end
     end
     work.requests[#work.requests + 1] = r
+  end
+  return work
+end
+local function startMachine(run, s)
+  local mt = assert(run.cfg.machineTypes[s.machineType], 'Unknown machine type')
+  local available = run.ports.groups(s.machineType)
+  assert(
+    type(mt.seconds) == 'number' and mt.seconds >= 0 and mt.seconds < math.huge,
+    'Invalid batch/deadline configuration'
+  )
+  local names = s.groups == 'any' and sorted(available)
+    or type(s.groups) == 'string' and { s.groups }
+    or s.groups
+  assert(type(names) == 'table' and #names > 0, 'No machine groups')
+  local free, seen = {}, {}
+  for _, name in ipairs(names) do
+    assert(available[name] and not seen[name], 'Unknown or duplicate machine group ' .. tostring(name))
+    seen[name] = true
+    run.world.machines[name] = run.world.machines[name] or { state = 'idle', type = s.machineType, loads = {} }
+    free[#free + 1] = name
+  end
+  s.groups = free
+  s.phase = 'machine'
+  s.status = 'running'
+  s.started = run.now
+  local work = M.machineRequests(run, s)
+  for i, name in ipairs(free) do
+    local roles, r = available[name].roles, work.requests[i]
     local g = run.world.groups[name]
     if not g then
       g = {
@@ -1678,13 +1717,15 @@ function M.advance(run)
             local result = robotResult(f.data)
             s.robotResult = result
             s.robotResultAt = f.data.at or run.now
-            if result.status ~= 'complete' then
+            w.revision = w.revision + 1
+            if result.status ~= 'complete' and not result.notFound then
               stop(run, result.message or 'Robot did not complete')
             end
           end
         end
       else
         stop(run, f)
+        w.revision = w.revision + 1
       end
     end
     run.failureFacts = {}
@@ -1775,6 +1816,7 @@ function M.advance(run)
           end
         end
       end
+      if progressed then w.revision = w.revision + 1 end
     end
     local active = false
     local waiting = false
@@ -1812,6 +1854,7 @@ function M.advance(run)
         stop(run, 'No idle resources for ready steps')
       end
       if not waiting or run.stopping then
+        w.revision = w.revision + 1
         finishRun(run)
       end
     end

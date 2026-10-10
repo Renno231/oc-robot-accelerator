@@ -171,6 +171,7 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
         shutil.copytree(ROOT / 'craftsystem/usr', dest / 'usr',
                         ignore=shutil.ignore_patterns('mes_ui', 'mesui.lua'))
         shutil.copyfile(SOURCE / 'install.lua', dest / 'install.lua')
+    shutil.copytree(ROOT / 'craftsystem/etc', program / 'etc', dirs_exist_ok=True)
     for name in ('main.lua', 'setup.lua', 'recipes.tsv'):
         shutil.copyfile(SOURCE / name, program / name)
     shutil.copyfile(SOURCE / 'robot.lua', target / 'robot-program/main.lua')

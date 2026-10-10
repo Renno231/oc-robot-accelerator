@@ -60,7 +60,9 @@ class TransportFixture(LuaCase):
                     sides={front=3},shell={parse=function() return p.args or {},p.options or {} end},filesystem=fs,io={open=open},
                     uuid={next=function() p.seq=p.seq+1;return address..'-job-'..p.seq end}}
                 modules.craft_executor={validatePlan=function(plan) return type(plan)=='table' and not plan.invalid,'invalid plan' end,
-                    dumpInventory=function() p.cleanups=p.cleanups+1
+                    dumpInventory=function()
+                        if p.booting then p.bootCleanups=(p.bootCleanups or 0)+1;p.booting=false
+                        else p.cleanups=p.cleanups+1 end
                         if p.dumpThrow then error('dump exception') end
                         return not p.dumpFail,'storage blocked'
                     end,
@@ -90,6 +92,7 @@ class TransportFixture(LuaCase):
                 return p
             end
             function server(p)
+                p.booting=true
                 p.main=spawn(function() assert(load(CPROC_SOURCE,'cproc','t',p.env))() end,p)
             end
             function job(p,robot,options,plan)

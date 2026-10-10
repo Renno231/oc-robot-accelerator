@@ -22,6 +22,36 @@ generator = module('mes_fixture_builder', ROOT / 'examples/mes/build_fixtures.py
 
 
 class MesFixtureTests(unittest.TestCase):
+    def test_mes_rc_start_and_controller_only_install(self):
+        for controller in (True, False):
+            with self.subTest(controller=controller):
+                lua=LuaRuntime(unpack_returned_tuples=True)
+                lua.globals().CONTROLLER=controller
+                lua.execute('''
+                  COPIED={};ENABLED=0;STARTS=0
+                  local tree={['/home/program/usr']={'lib'},['/home/program/usr/lib']={'mes.lua'},
+                    ['/home/program/etc']={'rc.d'},['/home/program/etc/rc.d']={'mes.lua'}}
+                  package.preload.filesystem=function() return {
+                    makeDirectory=function() return true end,
+                    concat=function(a,b) return a..'/'..b end,
+                    list=function(path) local i=0;return function() i=i+1;return tree[path][i] end end,
+                    isDirectory=function(path) return tree[path]~=nil end,
+                    exists=function(path) assert(path=='/home/program/lib/logistics.lua');return CONTROLLER end,
+                    copy=function(a,b) COPIED[b]=a;return true end} end
+                  package.preload.shell=function() return {execute=function(command)
+                    assert(command=='rc mes enable');ENABLED=ENABLED+1;return true end} end
+                  package.preload.liblz16=function() return {open=function(path,mode)
+                    assert(path=='/usr/lib/oredict/oredict.dblz' and mode=='wb');return {close=function() end} end} end
+                  package.preload.mes=function() return {start=function() STARTS=STARTS+1;return true end} end
+                ''')
+                lua.execute((ROOT / 'examples/mes/install.lua').read_text())
+                lua.execute((ROOT / 'craftsystem/etc/rc.d/mes.lua').read_text())
+                lua.execute('''
+                  assert(COPIED['/usr/lib/mes.lua']);assert(ENABLED==(CONTROLLER and 1 or 0))
+                  assert((COPIED['/etc/rc.d/mes.lua']~=nil)==CONTROLLER)
+                  assert(start() and STARTS==1)
+                ''')
+
     def test_shortfall_counts_input_clay_and_output_bricks_once(self):
         main = (ROOT / 'examples/mes/main.lua').read_text()
         proof = main[main.index("if case=='shortfall' then\n  scan()"):main.index('result.afterScan=')]

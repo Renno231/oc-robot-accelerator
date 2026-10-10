@@ -211,16 +211,9 @@ local function actionEntry(address,options)
     local host=paired(address,connectionOptions.service or "craftServer")
     return assert(pool[keyFor(host:getAddress(),connectionOptions)],"Robot was not loaded by transport service installation")
 end
-function craftClient.begin(token,address,plan,jobId,options)
-    options=options or {}
-    local ok,entry=pcall(actionEntry,address,options)
-    if not ok then return nil,tostring(entry) end
-    if not connected(entry) then return nil,"Crafting transport is disconnected; robot state is unknown" end
+local function registerJob(entry,token,jobId,options)
     if token==nil or type(jobId)~="string" or jobId=="" then return nil,"Request token and job ID required" end
     if entry.jobs[token] then return nil,"Request token already has a crafting job" end
-    if type(plan)=="table" and plan.blueprint then
-        local payload={};for k,v in pairs(plan) do if k~="blueprint" then payload[k]=v end end;plan=payload
-    end
     local now=computer.uptime()
     local job={token=token,id=jobId,options=options,idleAt=now+(options.idleTimeout or 60),submitted=false}
     local limit=options.jobTimeout==nil and 300 or options.jobTimeout
@@ -241,11 +234,35 @@ function craftClient.begin(token,address,plan,jobId,options)
     end
     local topic="job:"..jobId
     entry.observers[topic]=entry.observers[topic] or {};entry.observers[topic][job.observer]=true
-    local subscribed,result=pcall(observe,entry,topic)
-    if not subscribed or not result then
-        forgetJob(entry,job);return nil,"Unable to subscribe to crafting job: "..tostring(result)
+    if connected(entry) then
+        local subscribed,result=pcall(observe,entry,topic)
+        if not subscribed or not result then
+            forgetJob(entry,job);return nil,"Unable to subscribe to crafting job: "..tostring(result)
+        end
     end
     entry.jobs[token]=job;job.submitted=true
+    return job
+end
+function craftClient.adopt(token,address,jobId,options)
+    options=options or {}
+    local ok,entry=pcall(actionEntry,address,options)
+    if not ok then return nil,tostring(entry) end
+    local job,err=registerJob(entry,token,jobId,options)
+    if not job then return nil,err end
+    job.reconcileAt=computer.uptime()
+    return true
+end
+function craftClient.begin(token,address,plan,jobId,options)
+    options=options or {}
+    local ok,entry=pcall(actionEntry,address,options)
+    if not ok then return nil,tostring(entry) end
+    if not connected(entry) then return nil,"Crafting transport is disconnected; robot state is unknown" end
+    if type(plan)=="table" and plan.blueprint then
+        local payload={};for k,v in pairs(plan) do if k~="blueprint" then payload[k]=v end end;plan=payload
+    end
+    local job,why=registerJob(entry,token,jobId,options)
+    if not job then return nil,why end
+    local now=computer.uptime()
     local sent,err=asyncCall(entry,token,"craft",table.pack(plan,jobId,options.retryOnly==true),options,function(rpcOK,disposition,receipt)
         if job.ended then return end
         if not rpcOK then

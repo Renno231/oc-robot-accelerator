@@ -62,6 +62,7 @@ local function execute(job)
 end
 -- cproc owns its computer's networking; a lost subscriber never cancels admitted work.
 local ok, startupError = xpcall(function()
+    pcall(executor.dumpInventory,storageSide)
     local endpoint=api.expose("craftServer",handlers,5990)
     local host=require("hosts").localhost()
     assert(host and type(host:getWakeKey())=="string" and host:getWakeKey()~="", "Pair this robot before starting cproc.")

@@ -9,6 +9,55 @@ from test_support import ROOT
 
 
 class MesTransportOwnerTests(TransportFixture):
+    def test_adopt_running_job_sends_no_second_craft(self):
+        self.lua.execute('''
+            A.duration=2
+            C.command=function(client) assert(client.begin('original','robot-a',{},'adopt-live')) end
+            untilDone(function() return A.executions==1 end)
+            C.command=function(client) assert(client.adopt('restored','robot-a','adopt-live')) end
+            untilDone(function() return C.terminals.restored end)
+            assert(C.terminals.restored.success and A.executions==1)
+            local crafts,statuses,progress=0,0,false
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' then
+                if m.args[2]=='craft' then crafts=crafts+1 end
+                if m.args[2]=='status' then statuses=statuses+1 end
+            end end
+            for _,f in ipairs(C.facts) do if f.token=='restored' and f.what=='robot_progress' then progress=true end end
+            assert(crafts==1 and statuses>=1 and progress and #C.errors==0)
+        ''')
+
+    def test_adopt_complete_and_failed_cached_receipts(self):
+        for success in (True, False):
+            with self.subTest(success=success):
+                self.setUp()
+                self.lua.globals().SUCCESS = success
+                self.lua.execute('''
+                    A.success=SUCCESS;A.duration=0.2
+                    C.command=function(client) assert(client.begin('original','robot-a',{},'adopt-cached')) end
+                    untilDone(function() return C.terminals.original end)
+                    C.command=function(client) assert(client.adopt('restored','robot-a','adopt-cached')) end
+                    untilDone(function() return C.terminals.restored end)
+                    assert(C.terminals.restored.success==SUCCESS and A.executions==1)
+                    local crafts=0;for _,m in ipairs(commands('client')) do
+                        if m.msg=='rpc' and m.args[2]=='craft' then crafts=crafts+1 end
+                    end
+                    assert(crafts==1 and #C.errors==0)
+                ''')
+
+    def test_adopt_disconnected_not_found_without_craft(self):
+        self.lua.execute('''
+            untilDone(function() return C['robot-a']~=nil end)
+            C['robot-a']:close()
+            C.command=function(client) assert(client.adopt('restored','robot-a','missing-at-boot')) end
+            untilDone(function() return C.terminals.restored end)
+            local d=C.terminals.restored
+            assert(d.unknown and d.receipt.status=='NOT_FOUND' and A.executions==0)
+            local crafts=0;for _,m in ipairs(commands('client')) do
+                if m.msg=='rpc' and m.args[2]=='craft' then crafts=crafts+1 end
+            end
+            assert(crafts==0 and #C.errors==0)
+        ''')
+
     def setUp(self):
         super().setUp()
         oc = ROOT.parent / '.cache/oc-source/src/main/resources/assets/opencomputers/loot/openos/lib'
