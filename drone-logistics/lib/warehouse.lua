@@ -895,4 +895,17 @@ for id in pairs(inFlight) do
     inFlight[id]=nil;pendingCatalogue[id]=nil;flight_store:delete("job_"..id);flight_store:flush()
   elseif s.state=="done" or s.state=="failed" or s.state=="partial" then finished("logistics",id) end
 end
+-- Restore all mutations before capturing read provenance.
+local reads={}
+for id in pairs(inFlight) do
+  local movements={};reads[id]={}
+  for _,s in ipairs(logistics.status(id).steps or {}) do
+    if s.take or s.put then movements[#movements+1]=s.take or s.put end
+    if s.read then reads[id][#reads[id]+1]=s.read end
+  end
+  if #movements>0 then beginMutation(id,movements) end
+end
+for id,endpoints in pairs(reads) do
+  if #endpoints>0 then pendingReads[id]=readProvenance(endpoints) end
+end
 return M
