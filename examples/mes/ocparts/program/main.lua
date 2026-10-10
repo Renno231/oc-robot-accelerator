@@ -72,7 +72,10 @@ local function finishTripAccounting(result)
     end
   end end
   
-  local kinds={movement=0,first=0,input=0,output=0,refusals={},jobs={}}
+  local kinds={movement=0,shortCollect=0,first=0,input=0,output=0,shorts={},refusals={},jobs={}}
+  local collect={};for _,r in ipairs(mes.runs()) do for _,s in ipairs(mes.status(r.id).stages) do
+    for _,p in ipairs(s.physicalJobs or {}) do if p.kind=='collect' then collect[p.job]=true end end
+  end end
   local roles,fed={},{};local map=require('map')
   local function key(e) return e.node..':'..e.side end
   for name,g in pairs(wh.groups()) do for role,storage in pairs(g.roles) do
@@ -89,11 +92,16 @@ local function finishTripAccounting(result)
         elseif r and r.role=='buffer' then kind=fed[key(s.read)] and 'output' or 'first' end
       end
     end
+    if collect[id] then
+      local need,moved,short=0,0,false
+      for _,r in ipairs(j.perItem or {}) do need=need+r.requested;moved=moved+r.moved;short=short or r.moved<r.requested end
+      if short then kind='shortCollect';kinds.shorts[#kinds.shorts+1]={job=id,trips=j.trips,requested=need,moved=moved,items=j.perItem} end
+    end
     kinds[kind]=kinds[kind]+(j.trips or 0)
     kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips}
     if (j.refused or 0)>0 then kinds.refusals[#kinds.refusals+1]={job=id,group=group,refused=j.refused,items=j.perItem,finishedAt=j.finishedAt} end
   end end
-  assert(kinds.movement+kinds.first+kinds.input+kinds.output==mesTrips,'trip kind accounting mismatch')
+  assert(kinds.movement+kinds.shortCollect+kinds.first+kinds.input+kinds.output==mesTrips,'trip kind accounting mismatch')
   result.tripKinds=kinds
 
   result.droneBusy=busy
