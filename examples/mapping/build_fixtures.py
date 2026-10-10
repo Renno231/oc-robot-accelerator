@@ -33,7 +33,7 @@ for case in ('service','actions'):
             destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(ROOT/'drone-logistics'/path,destination)
         if case=='actions' and target=='program':
-            for path in ('lib/logistics.lua','drone/agent.lua'):
+            for path in ('lib/logistics.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua'):
                 destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(ROOT/'drone-logistics'/path,destination)
         (program/'case.lua').write_text('return "'+case+'"\n')

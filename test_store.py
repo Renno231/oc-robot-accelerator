@@ -28,7 +28,8 @@ def install_store(lua, preserve_io=False):
       os.rename=function(a,b) count('rename');renames=renames+1;disk[b]=disk[a];disk[a]=nil;return true end
       local previous=io.open
       io.open=function(path,mode)
-        if PRESERVE_IO and path~='/etc/store.cfg' and not path:match('^/etc/warehouse%.db') then
+        if PRESERVE_IO and path~='/etc/store.cfg' and not path:match('^/etc/warehouse%.db')
+          and not path:match('^/etc/warehouse%.flight') and not path:match('^/etc/logistics%.state') then
           return previous(path,mode)
         end
         count('open');mode=mode or 'r'

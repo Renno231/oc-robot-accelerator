@@ -330,7 +330,7 @@ class WarehouseManyTests(unittest.TestCase):
           lg.drones=function() return {{cargoSlots=4}} end
           lg.plan=function() return {{x=0,y=0,z=0},{x=1,y=0,z=0}} end
           package.preload.computer=function() return {uptime=function() return 0 end} end
-          package.loaded.event={push=function() end,listen=function(_,fn) listener=fn end}
+          package.loaded.event={push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end}
           os.rename=function() return true end
         ''')
         fixture.load('warehouse', 'wh')

@@ -28,6 +28,12 @@ local registry=read("/etc/logistics.drones",{})
 local savedRoutes=read("/etc/logistics.routes",{})
 local fleet,addresses,announcing,jobs,queue,finished={},{},{},{},{},{}
 local nextJob,nextTrip=0,0
+local state_store=require("store").open("/etc/logistics.state")
+local function saveIds() state_store:put("ids",{job=nextJob,trip=nextTrip}) end
+local function save(job)
+  local record={};for k,v in pairs(job) do if k~="avoid" then record[k]=v end end
+  state_store:put("job_"..job.id,record);saveIds();state_store:flush()
+end
 local clockOK,clock=pcall(require,"computer")
 local function uptime() if clockOK and type(clock.uptime)=="function" then return clock.uptime() end end
 local mutationObservers,readObservers={},{}
@@ -96,9 +102,9 @@ local function finish(job,state,reason)
   end
   job.state=state;job.reason=reason or job.reason;job.finished=true;job.finishedAt=uptime()
   finished[#finished+1]=job.id
-  if #finished>32 then jobs[table.remove(finished,1)]=nil end
+  if #finished>32 then local id=table.remove(finished,1);jobs[id]=nil;state_store:delete("job_"..id) end
   for i,id in ipairs(queue) do if id==job.id then table.remove(queue,i);break end end
-  event.push("logistics",job.id,state);wakeScheduler()
+  save(job);event.push("logistics",job.id,state);wakeScheduler()
 end
 local function endpoint(e)
   if type(e)=="string" then e=assert(map.storage(e),"unknown storage "..e)
@@ -235,7 +241,7 @@ local function scheduleJob(job)
       job.tripTimings=job.tripTimings or {};job.tripTimings[#job.tripTimings+1]=timing
       job.active[nextTrip]={drone=d.name,amount=amount,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
       job.dispatchedAt=job.dispatchedAt or uptime()
-      send(d,"trip",nextTrip,data);n=n+1;reserved=reserved+amount
+      save(job);send(d,"trip",nextTrip,data);n=n+1;reserved=reserved+amount
     end
   end
 end
@@ -274,6 +280,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         end
         job.blocked=true;job.reason="drone lost: "..d.name
         d.lostJob=job.id;job.lostPending=job.lostPending or {};job.lostPending[d.name]=true
+        save(job)
       end
       d.trip=nil;d.job=nil;d.lost=true;d.position=nil;d.node=nil
     end
@@ -296,6 +303,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   elseif kind=="report" and type(payload)=="string" and #payload<7000 then
     local result=serialization.unserialize(payload);if type(result)~="table" then return end
     d.energy=result.energy;d.position=result.position
+    if result.cargoSlots then d.cargoSlots=result.cargoSlots end
     if id==0 and result.state=="lost" and d.lost then
       d.cargo=result.cargo
       local job=jobs[d.lostJob]
@@ -306,14 +314,22 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         end
         job.lostPending[d.name]=nil
         if not next(job.active) and not next(job.lostPending) then finish(job,job.moved>0 and "partial" or "failed") end
+        save(job)
       end
     elseif id==0 and result.state=="ready" then
       if d.lost then return end
       d.state=(result.held or 0)>0 and "held" or "idle";d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
+      if result.cargo then
+        d.held={};for _,s in pairs(result.cargo) do d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
+      end
+      if d.state=="held" then
+        local pending=false;for _,job in pairs(jobs) do if not job.finished and job.opts.drone==d.name then pending=true;break end end
+        if not pending then event.push("logistics_held",d.name) end
+      end
     elseif d.trip==id and d.job then
       if result.state=="charging" then d.state="charging";return end
       local job=jobs[d.job];local assigned=job and job.active[id];if not assigned then return end
-      if result.state=="progress" then assigned.progress=result;return end
+      if result.state=="progress" then assigned.progress=result;save(job);return end
       if result.state=="blocked" then
         local link=result.link
         if type(link)~="table" or not map.node(link.a) or not map.node(link.b) or not map.node(result.to) then return end
@@ -352,10 +368,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         job.reason="blocked link "..link.a.." -> "..link.b
         job.blockedReports=job.blockedReports or {};job.blockedReports[#job.blockedReports+1]={link=affected[1] or link,leg=link,links=affected,offset=result.offset,stalledSeconds=result.stalledSeconds}
         if job.action and job.action.kind=="test" and result.candidate then
-          job.test="blocked";send(d,"navigation",id,serialization.serialize({reason=job.reason},false));return
+          job.test="blocked";save(job);send(d,"navigation",id,serialization.serialize({reason=job.reason},false));return
         end
         local alternative=planned(link.a,result.to,job.avoid)
-        send(d,"navigation",id,serialization.serialize({route=alternative and points(alternative),reason=job.reason},false))
+        save(job);send(d,"navigation",id,serialization.serialize({route=alternative and points(alternative),reason=job.reason},false))
         return
       end
       if assigned.timing then assigned.timing.finishedAt=uptime() end;job.active[id]=nil
@@ -394,7 +410,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           job.shortfalls=job.shortfalls+1
           if result.refused or result.state=="held" or job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason end
         end
-        if complete and not job.blocked and not next(job.active) then finish(job,"done") else wakeScheduler() end
+        if complete and not job.blocked and not next(job.active) then finish(job,"done") else save(job);wakeScheduler() end
         return
       end
       job.moved=job.moved+(result.moved or 0);job.remaining=job.requested-job.moved;job.trips=job.trips+1
@@ -417,7 +433,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         if job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason or "source shortfall" end
         end
       end
-      wakeScheduler()
+      save(job);wakeScheduler()
     end
   end
 end
@@ -425,7 +441,7 @@ function M.release(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
   if d.state~="held" then return nil,"drone is not held" end
   if d.release then return nil,"release already pending" end
-  nextTrip=nextTrip+1;d.release=nextTrip;d.cargo=nil;send(d,"release",d.release)
+  nextTrip=nextTrip+1;saveIds();state_store:flush();d.release=nextTrip;d.cargo=nil;send(d,"release",d.release)
   local computer=require("computer");local deadline=computer.uptime()+5
   while d.release and computer.uptime()<deadline do event.pull(math.max(0,deadline-computer.uptime())) end
   if d.release then d.release=nil;return nil,"cargo report timeout" end
@@ -491,7 +507,7 @@ function M.transfer(item,count,from,to,opts)
   nextJob=nextJob+1;job.id=nextJob;job.queuedAt=uptime();jobs[nextJob]=job
   local ok,err=pcall(function() job.from=endpoint(from);job.to=endpoint(to);if opts.overflow then job.opts.overflow=endpoint(opts.overflow) end end)
   if not ok then finish(job,"failed",tostring(err)) else
-    mutation(job,{job.from,job.to});queue[#queue+1]=job.id;wakeScheduler()
+    mutation(job,{job.from,job.to});queue[#queue+1]=job.id;save(job);wakeScheduler()
   end
   return job.id
 end
@@ -540,7 +556,7 @@ local function action(kind,a,b)
   if not map.node(a) or (kind=="test" and (a==b or not map.node(b))) then finish(job,"failed","unknown/same action node")
   else
     job.action=kind=="scan" and {kind=kind,node=a} or {kind=kind,a=a,b=b}
-    queue[#queue+1]=id;wakeScheduler()
+    queue[#queue+1]=id;save(job);wakeScheduler()
   end
   return id
 end
@@ -590,7 +606,7 @@ function M.job(steps,opts)
       if step.read then reads[#reads+1]=step.read end
     end
     mutation(job,endpoints);observeSubmission(job,reads,readObservers)
-    queue[#queue+1]=id;wakeScheduler()
+    queue[#queue+1]=id;save(job);wakeScheduler()
   end
   return id
 end
@@ -605,4 +621,21 @@ function M.cancel(id)
   local job=jobs[id];if not job or job.state~="queued" then return false,"only queued jobs can be cancelled" end
   finish(job,"failed","cancelled");return true
 end
+local records=state_store:load()
+if records.ids then nextJob,nextTrip=records.ids.job,records.ids.trip end
+for key,job in pairs(records) do
+  if key~="ids" then
+    jobs[job.id]=job;job.avoid={}
+    local list=job.finished and finished or queue;list[#list+1]=job.id
+    if not job.finished then
+      for trip,a in pairs(job.active) do
+        local d=fleet[a.drone];d.trip=trip;d.job=job.id;d.state="working"
+        for _,t in ipairs(job.tripTimings or {}) do if t.trip==trip then a.timing=t;break end end
+        if a.timing then a.timing.startedAt=nil end
+      end
+    end
+  end
+end
+table.sort(finished);table.sort(queue)
+for _,d in pairs(fleet) do send(d,"status") end
 return M

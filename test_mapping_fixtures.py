@@ -27,7 +27,7 @@ class MappingFixturesTests(unittest.TestCase):
                 else:
                     self.assertEqual((source/'drone/loader.lua').read_bytes(),(root/'loader.lua').read_bytes())
                     self.assertLessEqual((root/'loader.lua').stat().st_size,4096)
-                    for path in ('lib/logistics.lua','drone/agent.lua'):
+                    for path in ('lib/logistics.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua'):
                         self.assertEqual((source/path).read_bytes(),(root/'program'/path).read_bytes())
 
 

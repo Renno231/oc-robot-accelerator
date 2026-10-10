@@ -23,7 +23,7 @@ class LogisticsFixturesTests(unittest.TestCase):
             with self.subTest(name=name):
                 root = Path('examples/logistics') / name
                 self.assertEqual(loader, (root / 'loader.lua').read_bytes())
-                for path in ('lib/map.lua', 'lib/logistics.lua', 'bin/logistics.lua'):
+                for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/cbor.lua', 'lib/store.lua', 'bin/logistics.lua'):
                     self.assertEqual((source / path).read_bytes(), (root / 'program' / path).read_bytes())
                 agent = (root / 'program/drone/agent.lua').read_bytes()
                 if name == 'security':
