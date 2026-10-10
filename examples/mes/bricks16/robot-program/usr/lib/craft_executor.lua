@@ -41,7 +41,7 @@ function executor.verifyReturned(side,outputs,reserved)
     for item,qty in pairs(needed) do
         if (counts[item] or 0)<qty then return false,"Returned output or external reservation missing from storage: "..item end
     end
-    return true
+    return true,counts
 end
 
 function executor.dumpInventory(side)
@@ -187,10 +187,11 @@ function executor.executePlan(plan, options)
     -- COMPLETE is permitted only after both quantity verification and return.
     local returned, returnError = executor.dumpInventory(side)
     if not returned then return false, returnError end
-    local stored,storageError=executor.verifyReturned(side,assert(require("craft_plan").outputs(plan)))
-    if not stored then return false,storageError end
+    local stored,counts=executor.verifyReturned(side,assert(require("craft_plan").outputs(plan)))
+    if not stored then return false,counts end
     progress("Requested output verified and returned to storage.")
-    return true
+    -- The robot just read its buffer; report it so nothing has to look again.
+    return true,nil,counts
 end
 
 return executor

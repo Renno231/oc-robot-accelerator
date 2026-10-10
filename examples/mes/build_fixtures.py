@@ -189,6 +189,10 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
         main = main.replace(f'batch={OCPARTS_BATCH}', 'batch=64')
         (program / 'main.lua').write_text(main + CONCURRENT_RUN)
         (program / 'recipe-provenance.json').unlink()
+    entry = program / 'main.lua'
+    newline = '\r\n' if b'\r\n' in entry.read_bytes() else '\n'
+    main = entry.read_text()
+    entry.write_text(main.replace('result.droneBusy=busy', TRIP_KINDS + '\n  result.droneBusy=busy'), newline=newline)
     return target / 'scenario.json'
 
 
@@ -253,7 +257,7 @@ local function saveProgress()
   -- serializing a second copy of them on the T3 controller just for progress.
   local summary={}
   for _,key in ipairs({'case','status','submitterExit','componentCalls','mesTripWindow',
-    'mesTrips','harnessTrips','trips','droneBusy','robotIntervals','robotOverlap'}) do
+    'mesTrips','harnessTrips','trips','droneBusy','robotIntervals','robotOverlap','tripKinds'}) do
     summary[key]=result[key]
   end
   save('/home/mes-progress.lua',summary)
@@ -333,7 +337,7 @@ for _,stage in ipairs(outcome.stages) do if stage.kind=='machine' then
       if load.group==group then rows[#rows+1]=load end
     end
     assert(#rows==2 and rows[1].items==__BATCH__ and rows[2].items==__BATCH__,'PCB load ledger missing')
-    assert(rows[2].inputBefore>0 and rows[2].delivered<rows[1].collected,'PCB load did not top up while smelting')
+    assert(rows[2].delivered<rows[1].collected,'PCB load did not top up while smelting')
     result.topups[group]=rows
   end
 end end
@@ -374,6 +378,32 @@ print('MES verified',case,result.status,result.gameSeconds,result.trips)
 OCPARTS_RUN = (OCPARTS_RUN.replace('__QTY__', str(OCPARTS_QTY))
                .replace('__BATCH__', str(OCPARTS_BATCH))
                .replace('__GROUP__', str(OCPARTS_QTY // 2)))
+
+TRIP_KINDS = r"""
+  local kinds={movement=0,first=0,input=0,output=0,refusals={},jobs={}}
+  local roles,fed={},{};local map=require('map')
+  local function key(e) return e.node..':'..e.side end
+  for name,g in pairs(wh.groups()) do for role,storage in pairs(g.roles) do
+    roles[key(assert(map.storage(storage))) ]={role=role,group=name}
+  end end
+  if window then for id=window.first,window.last do
+    local j=assert(jobs[id]);local kind,group='input'
+    for _,s in ipairs(j.steps or {}) do
+      if s.take or s.put then kind='movement';local e=s.put or s.take;local r=roles[key(e)]
+        if r then group=r.group;if r.role=='buffer' then fed[key(e)]=s.put~=nil end end
+      elseif s.roleKey then kind='first'
+      elseif s.read then local r=roles[key(s.read)]
+        if r and r.role=='output' then kind='output'
+        elseif r and r.role=='buffer' then kind=fed[key(s.read)] and 'output' or 'first' end
+      end
+    end
+    kinds[kind]=kinds[kind]+(j.trips or 0)
+    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips}
+    if (j.refused or 0)>0 then kinds.refusals[#kinds.refusals+1]={job=id,group=group,refused=j.refused,items=j.perItem,finishedAt=j.finishedAt} end
+  end end
+  assert(kinds.movement+kinds.first+kinds.input+kinds.output==mesTrips,'trip kind accounting mismatch')
+  result.tripKinds=kinds
+"""
 
 CONCURRENT_RUN = r"""
 local result={case=case,status='running',runs={},robotIntervals={},furnaceLoads={}}

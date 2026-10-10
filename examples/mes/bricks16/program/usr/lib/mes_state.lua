@@ -30,15 +30,6 @@ local function item(id)
   local n, d = id:match('^(.*):(%d+)$')
   return { name = n or id, damage = tonumber(d) or 0 }
 end
-local function count(view, id)
-  local n = 0
-  for _, v in pairs(view.items or {}) do
-    if identity.stackName(v.item) == identity.canonical(id) then
-      n = n + v.count
-    end
-  end
-  return n
-end
 local function terminal(s)
   return s == 'done' or s == 'partial' or s == 'failed'
 end
@@ -108,15 +99,27 @@ local function action(run, kind, data)
   end
   return a
 end
--- The destination refused part of a delivery and every leftover item is back in
--- storage. Machine loads count what went in and retry the rest.
-local function cleanRefusal(job)
-  return (job.refused or 0) > 0 and not next(job.held or {})
+-- A job that moved less than asked and left nothing on a drone: a machine refused
+-- part of a delivery (the drone returned the rest), or a slot held fewer items
+-- than expected. Machine loads and collections count what moved.
+local function cleanPartial(job)
+  if next(job.held or {}) then
+    return false
+  end
+  if (job.refused or 0) > 0 then
+    return true
+  end
+  for _, s in ipairs(job.steps or {}) do
+    if s.short then
+      return true
+    end
+  end
+  return false
 end
--- Whether job id belongs to a delivery that may be refused (a machine load).
-local function refusable(run, id)
+-- Whether job id belongs to a machine load or collection, which may move less.
+local function partialOk(run, id)
   for _, a in pairs(run.actions) do
-    if a.refusable then
+    if a.partialOk then
       for _, j in ipairs(a.ids or {}) do
         if j == id then
           return true
@@ -136,7 +139,7 @@ function M.update(run, what, data)
   elseif what == 'job' then
     run.jobs[data.id] = copy(data.receipt)
     local r = data.receipt
-    if r and terminal(r.state) and r.state ~= 'done' and not (cleanRefusal(r) and refusable(run, data.id)) then
+    if r and terminal(r.state) and r.state ~= 'done' and not (cleanPartial(r) and partialOk(run, data.id)) then
       run.failureFacts[#run.failureFacts + 1] = r.reason or ('Logistics ' .. r.state)
     end
   elseif what == 'settled' then
@@ -261,7 +264,6 @@ function M.new(id, plan, cfg, opts, world, ports, now)
     sequence = 0,
     claims = {},
     fuelAvailable = {},
-    emptyBuffers = {},
     failureFacts = {},
   }
   for i, s in ipairs(run.stages) do
@@ -303,7 +305,7 @@ local function outcome(run, a)
   end
   for i, id in ipairs(a.ids) do
     local r = run.jobs[id]
-    if r and terminal(r.state) and r.state ~= 'done' and not (a.refusable and cleanRefusal(r)) then
+    if r and terminal(r.state) and r.state ~= 'done' and not (a.partialOk and cleanPartial(r)) then
       problem = problem or r.reason or ('Logistics ' .. r.state)
       stop(run, problem)
     end
@@ -325,17 +327,9 @@ local function outcome(run, a)
       run.jobs[id] = nil
       run.settled[id] = nil
     end
-    if a.kind:sub(1, 4) == 'scan' then
-      if a.kind == 'scanRoles' then
-        run.scans = run.scans or {}
-      end
-      for i, id in ipairs(a.ids) do
-        local r = receipts[i]
-        run.trips = run.trips + (r.trips or 0)
-        if a.kind == 'scanRoles' then
-          run.scans[#run.scans + 1] =
-            { job = id, state = r.state, reason = r.reason, trips = r.trips, settled = true }
-        end
+    if a.kind == 'scan' then
+      for i in ipairs(a.ids) do
+        run.trips = run.trips + (receipts[i].trips or 0)
       end
     end
   end
@@ -406,8 +400,8 @@ local function finishMany(run, bundle)
   for i, id in ipairs(a.ids) do
     local ledger = ledgers[i]
     local physical = bundle.physical[i]
-    if a.refusable and cleanRefusal(ledger) then
-      bundle.refused = true
+    if a.partialOk and cleanPartial(ledger) then
+      bundle.partial = true
     end
     physical.status = ledger.state == 'done' and 'complete' or ledger.state
     for _, k in ipairs({
@@ -491,7 +485,7 @@ local function finishMany(run, bundle)
     if r.physicalStatus then
       r.status = r.physicalStatus
     end
-    if r.shortfall > 0 and not bundle.refused then
+    if r.shortfall > 0 and not bundle.partial then
       r.reason = r.reason or errorText or 'Packed item shortfall'
       errorText = errorText or r.reason
     end
@@ -511,55 +505,6 @@ local function finishMany(run, bundle)
     stop(run, errorText)
   end
   return true, errorText
-end
-local function roleView(a, storage, slots)
-  local run = a.run
-  local ledgers, err = outcome(run, a)
-  if not ledgers then
-    return
-  end
-  if err then
-    return false, err
-  end
-  local step = ledgers[1] and ledgers[1].steps and ledgers[1].steps[1]
-  if not step then
-    return false, 'Role scan has no listing'
-  end
-  local v, e = run.ports.roleContents(storage, slots, step.listing, step.size)
-  return v or false, e
-end
-local function roleViews(a, mt, roles)
-  local run = a.run
-  local ledgers, err = outcome(run, a)
-  if not ledgers then
-    return
-  end
-  if err then
-    return false, err
-  end
-  local listings, sizes = {}, {}
-  for _, l in ipairs(ledgers) do
-    for _, s in ipairs(l.steps or {}) do
-      local role = s.roleKey
-      if not role then
-        return false, 'Role scan has no role key'
-      end
-      listings[role] = listings[role] or {}
-      sizes[role] = s.size or sizes[role]
-      for slot, stack in pairs(s.listing or {}) do
-        listings[role][slot] = stack
-      end
-    end
-  end
-  local views = {}
-  for role in pairs(listings) do
-    local v, e = run.ports.roleContents(roles[role], mt.roleSlots[role], listings[role], sizes[role])
-    if not v then
-      return false, e
-    end
-    views[role] = v
-  end
-  return views
 end
 local function release(run, s)
   local tools = run.world.toolReservations
@@ -727,13 +672,7 @@ local function acquireRobot(run, s)
       s.started = run.now
       s.status = 'running'
       changed(run, s, 'fetching', 'Preparing inputs')
-      if run.emptyBuffers[key] then
-        s.phase = 'robot_fetch'
-      else
-        s.phase = 'robot_scan'
-        s.scan = action(run, 'scan', { storage = c.buffer })
-      end
-      run.emptyBuffers[key] = nil
+      s.phase = 'robot_fetch'
       return true
     end
   end
@@ -743,24 +682,7 @@ local function acquireRobot(run, s)
   return false
 end
 local function robotAdvance(run, s)
-  if s.phase == 'robot_scan' then
-    local receipts, err = outcome(run, s.scan)
-    if not receipts then
-      return false
-    end
-    if err then
-      failStage(run, s, err)
-      return true
-    end
-    for _, v in pairs((run.ports.contents(s.buffer) or {}).items or {}) do
-      if v.count > 0 then
-        failStage(run, s, 'Crafter buffer is not empty')
-        return true
-      end
-    end
-    s.phase = 'robot_fetch'
-    return true
-  elseif s.phase == 'robot_fetch' then
+  if s.phase == 'robot_fetch' then
     if run.stopping then
       failStage(run, s, run.reason)
       return true
@@ -808,30 +730,18 @@ local function robotAdvance(run, s)
       failStage(run, s, result.message or 'Robot did not complete', result.status == 'unknown')
       return true
     end
-    changed(run, s, 'storing', 'Settling robot buffer')
-    s.scan = action(run, 'scan', { storage = s.buffer })
-    s.phase = 'robot_output_scan'
-    return true
-  elseif s.phase == 'robot_output_scan' then
-    local receipts, err = outcome(run, s.scan)
-    if not receipts then
-      return false
-    end
-    if err then
-      failStage(run, s, err)
-      return true
-    end
-    local outputs = {}
-    for _, v in pairs((run.ports.contents(s.buffer) or {}).items or {}) do
-      if v.count > 0 then
-        outputs[#outputs + 1] = { item = identity.stackName(v.item), count = v.count }
+    -- The robot read its buffer after crafting; take exactly what it reported.
+    changed(run, s, 'storing', 'Storing robot output')
+    local requests = {}
+    for _, id in ipairs(sorted(result.buffer or {})) do
+      if result.buffer[id] > 0 then
+        requests[#requests + 1] = { item = id, count = result.buffer[id] }
       end
     end
-    if #outputs == 0 then
-      run.emptyBuffers[s.bufferLock] = true
+    if #requests == 0 then
       completeStage(run, s)
     else
-      s.bundle = beginMany(run, s, 'store', outputs, s.buffer, true)
+      s.bundle = beginMany(run, s, 'collect', requests, s.buffer)
       s.phase = 'robot_storing'
     end
     return true
@@ -843,7 +753,6 @@ local function robotAdvance(run, s)
     if err then
       failStage(run, s, err)
     else
-      run.emptyBuffers[s.bufferLock] = true
       completeStage(run, s)
     end
     return true
@@ -897,16 +806,6 @@ local function donorFor(r)
       return v
     end
   end
-end
--- Group observations are owned by a run whose request they serve.
-local function owner(g)
-  for _, r in ipairs(g.pending) do
-    if hasWork(r) then
-      return r.run
-    end
-  end
-  local r = g.pending[1] or (g.loads[1] or {}).request
-  return r and r.run
 end
 local function startMachine(run, s)
   local mt = assert(run.cfg.machineTypes[s.machineType], 'Unknown machine type')
@@ -1031,6 +930,11 @@ local function startMachine(run, s)
         inputBackoff = BACKOFF,
         outputBackoff = BACKOFF,
       }
+      -- Fuel the MES has put in this machine and the inputs it has burned through
+      -- outlive any one request.
+      local resource = run.world.machines[name]
+      resource.fuel = resource.fuel or { credit = 0, admitted = 0 }
+      g.fuel = resource.fuel
       run.world.groups[name] = g
     end
     g.runs[run.id] = true
@@ -1039,40 +943,9 @@ local function startMachine(run, s)
   changed(run, s, 'processing', 'Machine processing')
   return true
 end
-local function scanInputs(w, g, observed)
-  g.observed = observed or {}
-  g.inputScans = {}
-  local run = owner(g)
-  g.observing = {}
-  for _, r in ipairs(g.pending) do
-    if hasWork(r) then
-      g.observing[r.stage] = true
-    end
-  end
-  for _, role in ipairs(g.mt.inputs) do
-    g.inputScans[role] = action(run, 'scanRole', { storage = g.roles[role], slots = g.mt.roleSlots[role] })
-  end
-  g.phase = 'inputs'
-end
-local function fits(run, g, r, ops)
-  for role, input in pairs(r.inputs) do
-    local needed = {}
-    for id, q in pairs(input.items) do
-      needed[id] = ops * q
-    end
-    if g.observed[role] then
-      local ok, e = run.ports.roleFits(g.observed[role], needed)
-      assert(ok ~= nil, e)
-      if not ok then
-        return false
-      end
-    end
-  end
-  return true
-end
 local function additional(g, r, n)
   local f = g.mt.fuel
-  return f and math.max(0, math.ceil(((g.inputsAdmitted or 0) + n * r.perOp) / f.per) - (g.fuelCredit or 0))
+  return f and math.max(0, math.ceil((g.fuel.admitted + n * r.perOp) / f.per) - g.fuel.credit)
     or 0
 end
 local function blocked(w, g)
@@ -1082,37 +955,20 @@ local function blocked(w, g)
 end
 local function admit(w, g)
   local mt = g.mt
-  local empty = true
-  for _, view in pairs(g.observed) do
-    for _, v in pairs(view.items) do
-      if v.count > 0 then
-        empty = false
-      end
-    end
-  end
+  -- The machine holds only what our own loads put in; once they are all
+  -- collected it is empty.
+  local empty = #g.loads == 0
   if empty then
     g.inputRecipe = nil
   end
   for position, r in ipairs(g.pending) do
     local donor = donorFor(r)
     local same = g.inputRecipe == r.recipe
-    if same then
-      for role, view in pairs(g.observed) do
-        for _, v in pairs(view.items) do
-          if v.count > 0 and not ((r.inputs[role] or {}).items or {})[identity.stackName(v.item)] then
-            same = false
-          end
-        end
-      end
-    end
     local ops = donor and math.min(donor.left, r.capacity) or 0
     -- After a refusal, or a blocking machine found holding other work, the
     -- machine takes nothing new until its next collection.
     if donor and not g.awaitCollection and (mt.blocking == false or empty or same) then
-      while ops > 0 and not fits(r.run, g, r, ops) do
-        ops = math.floor(ops / 2)
-      end
-      if ops > 0 and mt.fuel then
+      if mt.fuel then
         while ops > 0 and additional(g, r, ops) > (r.run.fuelAvailable[mt.fuel.item] or 0) do
           ops = math.floor(ops / 2)
         end
@@ -1134,23 +990,8 @@ local function admit(w, g)
           inputs = {},
           outputs = {},
           collectedItems = {},
-          inputHeldBefore = {},
-          inputBefore = 0,
           items = ops * r.perOp,
         }
-        for role, view in pairs(g.observed) do
-          for _, v in pairs(view.items) do
-            if v.count > 0 then
-              record.inputHeldBefore[#record.inputHeldBefore + 1] =
-                { storage = g.roles[role], role = role, item = identity.stackName(v.item), count = v.count }
-              record.inputBefore = record.inputBefore + v.count
-            end
-          end
-        end
-        if not next(g.observed) then
-          record.inputBefore = nil
-          record.inputHeldBefore = nil
-        end
         for id, n in pairs(r.outputs) do
           record.outputs[id] = ops * n
         end
@@ -1190,7 +1031,7 @@ local function admit(w, g)
           end
         end
         load.bundle = beginMany(r.run, r.stage, 'fetch', load.fetches, load.fetches[1].endpoint)
-        load.bundle.action.refusable = true
+        load.bundle.action.partialOk = true
         g.loading = load
         g.phase = 'loading'
         publish(w, g)
@@ -1209,7 +1050,7 @@ local function admit(w, g)
     end
   end
   -- A blocking machine that could take nothing waits for its next collection.
-  if mt.blocking ~= false and next(g.pending) then
+  if mt.blocking ~= false and next(g.pending) and #g.loads > 0 then
     g.awaitCollection = true
   end
   blocked(w, g)
@@ -1257,7 +1098,7 @@ local function finishLoad(w, g)
     table.remove(g.loads, #g.loads)
   elseif ops == 0 then
     if mt.fuel then
-      g.fuelCredit = g.fuelCredit + fuelMoved
+      g.fuel.credit = g.fuel.credit + fuelMoved
       r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
     end
     load.donor.left = load.donor.left + load.ops
@@ -1274,7 +1115,7 @@ local function finishLoad(w, g)
     changed(r.run, r.stage, nil, 'Machine ' .. g.name .. ' refused the load; retrying after collection')
   else
     if mt.fuel then
-      g.fuelCredit = g.fuelCredit + fuelMoved
+      g.fuel.credit = g.fuel.credit + fuelMoved
       r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
     end
     if ops < load.ops then
@@ -1294,11 +1135,10 @@ local function finishLoad(w, g)
     record.state = 'processing'
     record.started = w.now
     record.delivered = w.now
-    g.inputsAdmitted = (g.inputsAdmitted or 0) + record.items
+    g.fuel.admitted = g.fuel.admitted + record.items
     g.outputDue = math.min(g.outputDue, load.due)
     g.inputRecipe = r.recipe
     r.deadline = load.deadline
-    g.observed = {}
     r.stage.loadsDelivered = (r.stage.loadsDelivered or 0) + 1
     changed(r.run, r.stage, nil, 'Load ' .. r.stage.loadsDelivered .. ' delivered')
     for i, candidate in ipairs(g.pending) do
@@ -1349,61 +1189,45 @@ local function reap(w, g, collected)
   g.phase = 'idle'
   publish(w, g)
 end
-local function collect(w, g, contents)
-  local amounts = {}
-  for _, v in pairs(contents.items) do
-    local id = identity.stackName(v.item)
-    amounts[id] = (amounts[id] or 0) + v.count
-  end
+-- Take what our loads should have produced by now, without looking first. The
+-- receipt says how much was there; anything not ready is taken next time.
+local function collect(w, g)
   local requests, byItem = {}, {}
-  local fifo = {}
   for _, load in ipairs(g.loads) do
-    fifo[#fifo + 1] = load
-  end
-  for _, load in ipairs(g.quarantined) do
-    fifo[#fifo + 1] = load
-  end
-  table.sort(fifo, function(a, b)
-    return a.sequence < b.sequence
-  end)
-  for _, id in ipairs(sorted(amounts)) do
-    local available = amounts[id]
-    local allocations, total = {}, 0
-    for _, load in ipairs(fifo) do
-      if load.quarantined then
-        available = available - math.min(available, load.unresolved[id] or 0)
-      else
-        local n = math.min(available, load.remaining[id] or 0)
-        if n > 0 then
-          load.record.state = 'storing'
-          changed(load.request.run, load.request.stage, 'storing', 'Collecting machine output')
-          allocations[#allocations + 1] = { load = load, count = n }
-          total = total + n
-          available = available - n
+    for _, id in ipairs(sorted(load.remaining)) do
+      local n = load.remaining[id]
+      if n > 0 then
+        if not byItem[id] then
+          byItem[id] = {}
+          requests[#requests + 1] = { item = id, count = 0 }
+        end
+        local allocations = byItem[id]
+        allocations[#allocations + 1] = { load = load, count = n }
+        for _, q in ipairs(requests) do
+          if q.item == id then
+            q.count = q.count + n
+          end
         end
       end
-    end
-    if total > 0 then
-      requests[#requests + 1] = { item = id, count = total }
-      byItem[id] = allocations
     end
   end
   if #requests == 0 then
     reap(w, g, false)
     return
   end
-  local first = byItem[requests[1].item][1].load.request
+  local first = g.loads[1].request
   g.collection = {
     requests = requests,
     byItem = byItem,
     bundle = beginMany(
       first.run,
       first.stage,
-      'store',
+      'collect',
       requests,
       { storage = g.roles[g.mt.output], slots = g.mt.roleSlots[g.mt.output] }
     ),
   }
+  g.collection.bundle.action.partialOk = true
   g.phase = 'storing'
 end
 local function finishCollection(w, g)
@@ -1412,6 +1236,7 @@ local function finishCollection(w, g)
   if not done then
     return false
   end
+  local any = false
   for i, request in ipairs(c.requests) do
     local id = request.item
     local movement = c.bundle.records[i]
@@ -1419,10 +1244,9 @@ local function finishCollection(w, g)
     for _, allocation in ipairs(c.byItem[id]) do
       local load = allocation.load
       local r = load.request
-      local n = allocation.count
       load.record.storeJobs = load.record.storeJobs or {}
       r.stage.storeAllocations = r.stage.storeAllocations or {}
-      local left = n
+      local left, got = allocation.count, 0
       while left > 0 do
         local part = movement.allocations[partIndex]
         local quota = part and part.requested or left
@@ -1440,8 +1264,12 @@ local function finishCollection(w, g)
             slots = copy(movement.slots),
             status = moved == assigned and 'complete' or (part and 'partial' or 'not_submitted'),
           }
-          load.record.storeJobs[#load.record.storeJobs + 1] = link
-          r.stage.storeAllocations[#r.stage.storeAllocations + 1] = copy(link)
+          -- A collection that found nothing ready yet is not part of the load's record.
+          if moved > 0 or err then
+            load.record.storeJobs[#load.record.storeJobs + 1] = link
+            r.stage.storeAllocations[#r.stage.storeAllocations + 1] = copy(link)
+          end
+          got = got + moved
           left = left - assigned
           offset = offset + assigned
         end
@@ -1454,17 +1282,19 @@ local function finishCollection(w, g)
         bad(w, g, r, err, true)
         quarantine(w, g, load, 'failed')
         load.remaining = {}
-      else
-        load.remaining[id] = load.remaining[id] - n
-        load.record.collectedItems[id] = (load.record.collectedItems[id] or 0) + n
-        r.stage.done = r.stage.done + n
-        changed(r.run, r.stage, 'processing', 'Machine processing', r.stage.done)
+      elseif got > 0 then
+        -- What was not there yet stays expected and is taken next time.
+        any = true
+        load.remaining[id] = load.remaining[id] - got
+        load.record.collectedItems[id] = (load.record.collectedItems[id] or 0) + got
+        r.stage.done = r.stage.done + got
         load.record.state = 'processing'
+        changed(r.run, r.stage, 'processing', 'Machine processing', r.stage.done)
       end
     end
   end
   g.collection = nil
-  reap(w, g, true)
+  reap(w, g, any)
   return true
 end
 local function groupAdvance(w, g)
@@ -1482,15 +1312,9 @@ local function groupAdvance(w, g)
     end
   end
   if g.phase == 'idle' then
-    g.observing = nil
-    -- Output is independent of admission; scan only when due.
+    -- Output is collected when our loads should be done.
     if #g.loads > 0 and w.now >= g.outputDue then
-      g.scan = action(
-        g.loads[1].request.run,
-        'scanRole',
-        { storage = g.roles[mt.output], slots = mt.roleSlots[mt.output] }
-      )
-      g.phase = 'output'
+      collect(w, g)
       return true
     end
     local ready = false
@@ -1502,107 +1326,7 @@ local function groupAdvance(w, g)
     if not ready or w.now < g.inputDue then
       return false
     end
-    if not g.initialized then
-      local used = {}
-      for _, role in ipairs(mt.roles or {}) do
-        used[role] = true
-      end
-      for _, role in ipairs(mt.inputs) do
-        used[role] = true
-      end
-      used[mt.output] = true
-      if mt.fuel then
-        used[mt.fuel.role] = true
-      end
-      local requests = {}
-      for _, role in ipairs(sorted(used)) do
-        requests[#requests + 1] = {
-          storage = assert(g.roles[role], 'Missing machine role ' .. role),
-          slots = assert(mt.roleSlots[role], 'Missing role slots ' .. role),
-          key = role,
-        }
-      end
-      g.observing = {}
-      for _, r in ipairs(g.pending) do
-        if hasWork(r) then
-          g.observing[r.stage] = true
-        end
-      end
-      g.scan = action(owner(g), 'scanRoles', { requests = requests })
-      g.phase = 'preflight'
-      return true
-    end
-    if g.initialInputs then
-      g.observed = g.initialInputs
-      g.initialInputs = nil
-      g.phase = 'admit'
-    elseif mt.blocking == false or g.awaitCollection then
-      -- A non-blocking machine is sized by its first look until a load goes in;
-      -- after that each delivery reports what fit. A machine waiting for its
-      -- next collection is not looked at again before then.
-      g.phase = 'admit'
-    else
-      scanInputs(w, g)
-    end
-    return true
-  elseif g.phase == 'preflight' then
-    local views, err = roleViews(g.scan, mt, g.roles)
-    if views == nil then
-      return false
-    end
-    if views then
-      for _, v in pairs(views[mt.output].items) do
-        if v.count > 0 then
-          err = 'Machine output is not empty'
-          views = false
-          break
-        end
-      end
-    end
-    if not views then
-      for _, r in ipairs(g.pending) do
-        bad(w, g, r, err, true)
-      end
-      g.phase = 'idle'
-      g.initialized = true
-      return true
-    end
-    g.initialInputs = {}
-    for _, role in ipairs(mt.inputs) do
-      g.initialInputs[role] = views[role]
-    end
-    if mt.fuel then
-      g.fuelCredit = count(views[mt.fuel.role], mt.fuel.item)
-    end
-    g.initialized = true
-    g.phase = 'idle'
-    return true
-  elseif g.phase == 'inputs' then
-    local errorText
-    local done = true
-    for role, a in pairs(g.inputScans) do
-      local view, e = roleView(a, g.roles[role], mt.roleSlots[role])
-      if view == nil then
-        done = false
-      elseif view == false then
-        errorText = errorText or e
-      else
-        g.observed[role] = view
-      end
-    end
-    if not done then
-      return false
-    end
-    if errorText then
-      for _, r in ipairs(g.pending) do
-        bad(w, g, r, errorText, true)
-      end
-      g.phase = 'idle'
-    elseif not next(g.pending) then
-      g.phase = 'idle'
-    else
-      g.phase = 'admit'
-    end
+    g.phase = 'admit'
     return true
   elseif g.phase == 'admit' then
     if not next(g.pending) then
@@ -1612,24 +1336,6 @@ local function groupAdvance(w, g)
     return admit(w, g)
   elseif g.phase == 'loading' then
     return finishLoad(w, g)
-  elseif g.phase == 'output' then
-    local view, e = roleView(g.scan, g.roles[mt.output], mt.roleSlots[mt.output])
-    if view == nil then
-      return false
-    end
-    if not view then
-      for _, load in ipairs(g.loads) do
-        bad(w, g, load.request, e, true)
-        quarantine(w, g, load)
-        load.request.active = load.request.active - 1
-      end
-      g.loads = {}
-      g.phase = 'idle'
-      publish(w, g)
-    else
-      collect(w, g, view)
-    end
-    return true
   elseif g.phase == 'storing' then
     return finishCollection(w, g)
   end
@@ -1696,7 +1402,6 @@ local function finishRun(run)
   run.robotFacts = {}
   run.claims = {}
   run.fuelAvailable = {}
-  run.emptyBuffers = {}
   run.ports = nil
   run.world = nil
 end
@@ -1807,15 +1512,6 @@ function M.advance(run)
               pending = true
             end
             problem = problem or r.error
-          end
-          -- Also drain admission observations already submitted for this stage.
-          for _, g in pairs(w.groups) do
-            local observing = g.phase == 'preflight'
-              or g.phase == 'inputs'
-              or g.phase == 'admit'
-            if observing and g.observing and g.observing[s] then
-              pending = true
-            end
           end
           if not pending then
             if problem then

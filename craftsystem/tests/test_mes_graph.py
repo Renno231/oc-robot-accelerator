@@ -166,7 +166,7 @@ class MesGraphTests(LuaCase):
                     s=type(s)=='table' and s.storage or s
                     local id=require('item_identity').stackName(i)
                     if FAIL_STORAGE==s then return nil,'injected fetch failure' end
-                    assert(held('stock',id)>=n,'fetch before settled stock '..id)
+                    STOCK_OUT=STOCK_OUT or {};assert(held('stock',id)-(STOCK_OUT[id] or 0)>=n,'fetch before settled stock '..id)
                     -- A storage with a set CAPACITY refuses what doesn't fit; the
                     -- drone brings the rest back to stock.
                     local accept=n
@@ -175,20 +175,24 @@ class MesGraphTests(LuaCase):
                         for other,c in pairs(CONTENTS[s] or {}) do if other~=id then used=used+math.ceil(c/(MAXSTACK[other] or 64)) end end
                         accept=math.max(0,math.min(n,(CAPACITY[s]-used)*maximum-held(s,id)))
                     end
-                    put('stock',id,held('stock',id)-accept);put(s,id,held(s,id)+accept)
+                    -- Stock leaves the catalogue when the job settles, as in the warehouse.
+                    STOCK_OUT[id]=(STOCK_OUT[id] or 0)+accept;put(s,id,held(s,id)+accept)
                     MOVES[#MOVES+1]={kind='fetch',storage=s,item=id,count=accept,time=TIME,refused=n-accept}
                     process(s)
-                    if accept==n then return job() end
-                    local j=job(nil,accept>0 and 'partial' or 'failed')
+                    local settle=function() STOCK_OUT[id]=STOCK_OUT[id]-accept;put('stock',id,held('stock',id)-accept) end
+                    if accept==n then return job(settle) end
+                    local j=job(settle,accept>0 and 'partial' or 'failed')
                     JOBS[j].accepted=accept;JOBS[j].refused=n-accept;JOBS[j].held={};JOBS[j].reason='destination refused items'
                     return j
                 end,
                 store=function(i,n,s)
                     s=type(s)=='table' and s.storage or s
-                    local id=require('item_identity').stackName(i);assert(held(s,id)>=n,'store unavailable output')
-                    put(s,id,held(s,id)-n)
-                    local j=job(function() put('stock',id,held('stock',id)+n) end)
-                    MOVES[#MOVES+1]={kind='store',storage=s,item=id,count=n,time=TIME,job=j}
+                    -- A drone takes what is there; a short take is reported, not assumed.
+                    local id=require('item_identity').stackName(i);local take=math.min(n,held(s,id))
+                    put(s,id,held(s,id)-take)
+                    local j=job(function() put('stock',id,held('stock',id)+take) end,take<n and (take>0 and 'partial' or 'failed') or nil)
+                    if take<n then JOBS[j].accepted=take;JOBS[j].short=true end
+                    MOVES[#MOVES+1]={kind='store',storage=s,item=id,count=take,time=TIME,job=j}
                     return j
                 end
             } end
@@ -225,9 +229,10 @@ class MesGraphTests(LuaCase):
                         current.apply=function() for _,fn in ipairs(target.applies) do fn() end end
                         local moved=j.outcome and (j.accepted or 0) or n
                         if j.refused then current.refused=(current.refused or 0)+j.refused;current.held={} end
+                        if j.short then current.steps={{short=true}};current.held={} end
                         current.perItem[#current.perItem+1]={item=r.item,requestIndex=index,
                             requested=n,moved=moved,shortfall=n-moved,taken=n,returned=n-moved,overflow=0}
-                        current.moved=current.moved+n
+                        current.moved=current.moved+moved
                         for k=firstMove,#MOVES do
                             MOVES[k].job=current.id;MOVES[k].requestIndex=index
                             MOVES[k].slots=type(destination)=='table' and destination.slots or nil
@@ -238,6 +243,7 @@ class MesGraphTests(LuaCase):
                 return ids
             end
             wh.fetchMany=function(requests,to) return many(requests,to,false) end
+            wh.collect=function(from,requests) return many(requests,from,true) end
             wh.storeMany=function(from,opts)
                 local requests=opts and opts.requests
                 if not requests then
@@ -318,7 +324,9 @@ class MesGraphTests(LuaCase):
                     end end
                     put(buffer,t.item,held(buffer,t.item)+t.qty_produced)
                 end end
-                sink(token,'robot_terminal',{address=address,jobId=jobId,status=outcome,receipt={status=outcome,message='injected robot '..outcome},at=TIME})
+                local counts=nil
+                if outcome=='complete' then counts={};for id,n in pairs(CONTENTS[buffer] or {}) do if n>0 then counts[id]=n end end end
+                sink(token,'robot_terminal',{address=address,jobId=jobId,status=outcome,receipt={status=outcome,message='injected robot '..outcome,buffer=counts},at=TIME})
                 end)
                 return true
             end} end
@@ -362,7 +370,7 @@ class MesGraphTests(LuaCase):
             local r=M.wait(assert(M.run(assert(M.plan('t:metal',1,{config=CFG})),{config=CFG})))
             assert(r.status=='complete',r.reason)
             local stores=0;local job
-            for _,p in ipairs(r.stages[1].physicalJobs) do if p.kind=='store' then
+            for _,p in ipairs(r.stages[1].physicalJobs) do if p.kind=='collect' and (p.moved or 0)>0 then
                 stores=stores+1;job=p.job;assert(#p.perItem==2 and p.trips==1)
             end end
             for _,a in ipairs(r.stages[1].loadLedger[1].storeJobs) do assert(a.job==job and a.count==1) end
@@ -379,7 +387,7 @@ class MesGraphTests(LuaCase):
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',5)})
             assert(r.status=='complete',r.reason)
             local s=r.stages[1];local physical={};local linked={};local total=0
-            for _,p in ipairs(s.physicalJobs) do if p.kind=='store' then physical[p.job]=true end end
+            for _,p in ipairs(s.physicalJobs) do if p.kind=='collect' then physical[p.job]=true end end
             for _,a in ipairs(s.loadLedger[1].storeJobs) do
                 assert(physical[a.job] and a.count==a.moved and a.requested==a.moved and a.shortfall==0)
                 linked[a.job]=true;total=total+a.moved
@@ -392,8 +400,8 @@ class MesGraphTests(LuaCase):
         self.assertEqual(self.lua.execute('''
             put('stock','t:ore',2);CFG.machineTypes.furnace.batch=2
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
-            local wh=require('warehouse');local original=wh.storeMany
-            wh.storeMany=function(...)
+            local wh=require('warehouse');local original=wh.collect
+            wh.collect=function(...)
                 local ids=original(...);local j=JOBS[ids[1]]
                 j.outcome='partial';j.reason='injected packed shortfall'
                 j.perItem[1].moved=1;j.perItem[1].shortfall=1;j.perItem[1].returned=1
@@ -517,7 +525,7 @@ class MesGraphTests(LuaCase):
             resource.crafters.cpu1.state='modified'
             assert(M.resources{config=CFG}.crafters.cpu1.state=='idle')
             local beforeDue=0
-            for _,scan in ipairs(SCANS) do if scan.storage=='out1' and scan.time<s[2].loadLedger[1].delivered+4 then beforeDue=beforeDue+1 end end
+            for _,m in ipairs(MOVES) do if m.kind=='store' and m.storage=='out1' and m.time<s[2].loadLedger[1].delivered+4.5 then beforeDue=beforeDue+1 end end
             return held('stock','t:final'),beforeDue,M.status(999)==nil
         '''), (1, 1, True))
 
@@ -531,15 +539,14 @@ class MesGraphTests(LuaCase):
                 task('t:steel',{'t:iron','t:coal'},'steel',{'iron','coal'},'alloy')})
             assert(r.status=='complete',r.reason)
             local bronze=r.stages[1].loadLedger;local steel=r.stages[2].loadLedger[1]
-            assert(#bronze==2 and bronze[2].inputBefore>0)
-            assert(bronze[2].delivered<bronze[1].collected)
-            assert(steel.inputBefore==0 and steel.delivered>=bronze[1].collected) -- waits for the collection
+            assert(#bronze==2 and bronze[2].delivered<bronze[1].collected) -- same recipe tops up
+            assert(steel.delivered>=bronze[2].collected) -- another recipe waits until the machine is emptied
             local loads=M.resources{config=CFG}.machines.alloy.loads
             return held('stock','t:bronze'),held('stock','t:steel'),#loads
         '''), (2, 1, 0))
 
     def _sand_added_by_hand(self, slots):
-        # Someone puts sand in the furnace after the MES looked, before the load arrives.
+        # Someone puts sand in the furnace before the load arrives.
         self.lua.globals().SLOTS = slots
         return self.lua.execute('''
             CFG.machineTypes.furnace.batch=4;CAPACITY.in1=SLOTS;MAXSTACK['t:ore']=2
@@ -558,7 +565,7 @@ class MesGraphTests(LuaCase):
 
     def test_load_refused_with_nothing_to_collect_fails_at_the_input_deadline(self):
         self.assertEqual(self._sand_added_by_hand(1),
-            ('failed', 'kiln: Machine input deadline exceeded', 2, '', 0, 4))
+            ('failed', 'kiln: Machine input deadline exceeded', 4, '', 0, 4))
 
     def test_nonblocking_refused_load_returns_to_stock_and_retries_after_collection(self):
         self.assertEqual(self.lua.execute('''
@@ -676,14 +683,15 @@ class MesGraphTests(LuaCase):
             return held('stock','t:left'),M.status(id).status,INSTALLS,#TIMERS
         '''), (2, 'complete', 1, 1))
 
-    def test_output_due_then_exponential_backoff_not_fixed_two_second_reads(self):
+    def test_collection_at_output_due_then_exponential_backoff(self):
         self.assertEqual(self.lua.execute('''
             OUTPUT_DELAY=18;CFG.machineTypes.furnace.seconds=1
             put('stock','t:ore',1)
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace')})
             assert(r.status=='complete',r.reason)
-            local scans={};for _,s in ipairs(SCANS) do if s.storage=='out1' then scans[#scans+1]=s.time end end
+            -- Each collection attempt takes what is there; early ones find nothing.
+            local scans={};for _,m in ipairs(MOVES) do if m.kind=='store' and m.storage=='out1' then scans[#scans+1]=m.time end end
             assert(#scans<=8 and scans[2]>=r.stages[1].loadLedger[1].delivered+1)
             local first=scans[3]-scans[2];local last=scans[#scans]-scans[#scans-1]
             return #scans<10,last>first,held('stock','t:metal')
@@ -745,16 +753,18 @@ class MesGraphTests(LuaCase):
             return MAX_CLIENTS,held('stock','t:tool:9'),held('stock','t:left'),held('stock','t:right')
         '''), (1, 1, 1, 1))
 
-    def test_capacity_accounts_multiple_ingredients_sharing_one_role(self):
+    def test_ingredients_that_cannot_share_one_slot_are_refused_and_reported(self):
         self.assertEqual(self.lua.execute('''
             CFG.machineTypes.alloy.inputs={'a'};CFG.machineTypes.alloy.roles={'a','output'}
             CFG.machineTypes.alloy.roleSlots={a={1},output={1,2,3,4}}
             GROUPS.alloy.roles.b=nil
-            put('stock','t:copper',1);put('stock','t:tin',1)
+            CAPACITY.aa=1;put('stock','t:copper',1);put('stock','t:tin',1)
             local r=run({task('t:bronze',{'t:copper','t:tin'},'bronze',{'copper','tin'},'alloy')})
             assert(r.status=='failed' and r.reason:find('input deadline'))
-            return #MOVES,held('stock','t:copper'),held('stock','t:tin')
-        '''), (0, 1, 1))
+            -- The one slot takes copper and refuses tin; the failure reports where the copper is.
+            local where={};for _,w in ipairs(r.where or {}) do where[#where+1]=w.storage..':'..w.item..'='..w.count end
+            return held('aa','t:copper'),held('stock','t:tin'),table.concat(where,',')
+        '''), (1, 1, 'aa:t:copper=1'))
 
     def _two_group_store_receipts(self, partial):
         self.lua.globals().PARTIAL_STORE = partial
@@ -780,7 +790,7 @@ class MesGraphTests(LuaCase):
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',4)})
             local records={};local stores={}
             for _,v in ipairs(r.stages[1].loadLedger) do records[v.group]=v end
-            for _,v in ipairs(r.stages[1].itemsMoved) do if v.kind=='store' then stores[v.storage]=v end end
+            for _,v in ipairs(r.stages[1].itemsMoved) do if v.kind=='collect' then stores[v.storage]=v end end
             local a=records.kiln.storeJobs[1];local b=records.kiln2.storeJobs[1]
             assert(a.job~=b.job and a.job==stores.out1.job and b.job==stores.out2.job)
             assert(a.storage=='out1' and b.storage=='out2')
@@ -814,7 +824,8 @@ class MesGraphTests(LuaCase):
             assert(resource.loads[1].run==first.id and resource.loads[1].state=='unknown')
             CFG.machineTypes.furnace.seconds=150;OUTPUT_DELAY=500
             local second=run({task('t:metal',{'t:ore'},'b',{'ore'},'furnace')})
-            assert(second.status=='failed' and #MOVES==1 and held('stock','t:metal')==0)
+            local fetches=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' then fetches=fetches+1 end end
+            assert(second.status=='failed' and fetches==1 and held('stock','t:metal')==0)
             assert(#ACTIONS==1) -- old physical work is still scheduled; never claimed settled
             resource.loads[1].recipe='changed'
             return M.resources{config=CFG}.machines.kiln.state,held('stock','t:ore'),second.reason
@@ -848,30 +859,17 @@ class MesGraphTests(LuaCase):
             return MAX_CLIENTS,held('stock','t:left'),held('stock','t:right')
         '''), (1, 1, 1))
 
-    def test_any_admission_moves_unloaded_work_to_eligible_group(self):
-        self.assertEqual(self.lua.execute('''
-            GROUPS.alloy2={type='alloy',roles={a='a2',b='b2',output='o2'}}
-            MEMBERS.a2={};MEMBERS.b2={};MEMBERS.o2={}
-            put('aa','t:foreign',1)
-            put('stock','t:copper',1);put('stock','t:tin',1)
-            MACHINE_RECIPES.alloy2={{inputs={a={['t:copper']=1},b={['t:tin']=1}},outputs={['t:bronze']=1}}}
-            local r=run({task('t:bronze',{'t:copper','t:tin'},'bronze',{'copper','tin'},'alloy')})
-            assert(r.status=='complete',r.reason)
-            assert(r.stages[1].loadLedger[1].group=='alloy2')
-            for _,m in ipairs(MOVES) do assert(m.storage~='aa' and m.storage~='ab') end
-            return held('stock','t:bronze'),held('aa','t:foreign')
-        '''), (1, 1))
-
     def test_one_group_choice_does_not_escape_admission_boundary(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.alloy2={type='alloy',roles={a='a2',b='b2',output='o2'}}
             MEMBERS.a2={};MEMBERS.b2={};MEMBERS.o2={}
-            put('aa','t:foreign',1);put('stock','t:copper',1);put('stock','t:tin',1)
+            put('stock','t:copper',1);put('stock','t:tin',1)
             MACHINE_RECIPES.alloy2={{inputs={a={['t:copper']=1},b={['t:tin']=1}},outputs={['t:bronze']=1}}}
             local r=run({task('t:bronze',{'t:copper','t:tin'},'bronze',{'copper','tin'},'alloy')},
                 {machines={alloy='alloy'}})
-            return r.status,#MOVES,held('stock','t:bronze')
-        '''), ('failed', 0, 0))
+            for _,m in ipairs(MOVES) do assert(m.storage~='a2' and m.storage~='b2' and m.storage~='o2') end
+            return r.status,held('stock','t:bronze')
+        '''), ('failed', 0))
 
     def test_busy_recipe_group_does_not_pin_another_ready_step(self):
         self.assertEqual(self.lua.execute('''
@@ -931,37 +929,6 @@ class MesGraphTests(LuaCase):
             return fuel,loads.kiln,loads.kiln2,held('stock','t:metal')
         '''), (2, 8, 8, 16))
 
-    def test_failed_batched_scan_drains_every_submitted_job_before_terminal_event(self):
-        self.assertEqual(self.lua.execute('''
-            local wh=require('warehouse');local original=wh.scanRoles
-            wh.scanRoles=function(requests)
-                local ids=original(requests)
-                JOBS[ids[1]].outcome='failed';JOBS[ids[1]].reason='first role scan failed'
-                JOBS[ids[2]].finish=TIME+10;JOBS[ids[2]].settle=TIME+10.2;LATE_SCAN=ids[2]
-                return ids
-            end
-            put('stock','t:ore',1)
-            local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace')})
-            assert(r.status=='failed' and r.reason:find('first role scan failed'))
-            assert(JOBS[LATE_SCAN].settled and r.finished>=JOBS[LATE_SCAN].settle)
-            assert(r.scans[1].state=='failed' and r.scans[2].state=='done')
-            local e=EVENTS[#EVENTS]
-            return e[2],e[4],#MOVES
-        '''), ('done', 'failed', 0))
-
-    def test_partial_scan_submission_drains_returned_receipts(self):
-        self.assertEqual(self.lua.execute('''
-            local wh=require('warehouse');local original=wh.scanRoles
-            wh.scanRoles=function(requests)
-                local ids=original(requests);LAST_SUBMITTED=ids[#ids]
-                JOBS[LAST_SUBMITTED].finish=TIME+5;JOBS[LAST_SUBMITTED].settle=TIME+5.2
-                return nil,'later role submission failed',ids
-            end
-            put('stock','t:ore',1)
-            local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace')})
-            return r.status,JOBS[LAST_SUBMITTED].settled,r.finished>=JOBS[LAST_SUBMITTED].settle,#r.scans
-        '''), ('failed', True, True, 2))
-
     def test_robot_inputs_enqueued_fairly_before_any_fetch_wait(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:a',1);put('stock','t:b',1);put('stock','t:c',1);put('stock','t:d',1)
@@ -991,7 +958,7 @@ class MesGraphTests(LuaCase):
             return r.stages[1].itemsMoved[1].status,r.stages[1].itemsMoved[2].status,r.reason
         '''), ('partial', 'complete', 'first bulk input partial'))
 
-    def test_cold_fuel_plan_does_not_overdeliver_existing_role_fuel(self):
+    def test_fuel_already_in_a_machine_is_not_counted(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
             local mt=CFG.machineTypes.furnace;mt.batch=4;mt.fuel={role='fuel',item='t:fuel',per=8}
@@ -1002,7 +969,7 @@ class MesGraphTests(LuaCase):
             assert(r.status=='complete' and r.stages[1].fuel.need==2,r.reason)
             local fuel=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' and m.item=='t:fuel' then fuel=fuel+m.count end end
             return fuel,held('stock','t:fuel'),held('fuel1','t:fuel'),held('stock','t:metal')
-        '''), (0, 2, 0, 12))
+        '''), (2, 0, 2, 12))
 
     def test_fuel_is_counted_from_the_first_read_plus_deliveries(self):
         self.assertEqual(self.lua.execute('''
@@ -1068,34 +1035,26 @@ class MesGraphTests(LuaCase):
             DISCOVERED={{address='robot1',busy=false}}
             M.robots(0,{config=CFG})
             assert(M.resources{config=CFG}.crafters.cpu2.state=='idle')
+            -- The leftover is not looked for; the robot's report after its next craft
+            -- lists everything in the buffer and all of it goes back to stock.
             local fourth=run({task('t:right',{'t:raw'})},{crafter='cpu2'})
-            assert(fourth.status=='failed' and fourth.reason:find('buffer is not empty'))
-            assert(#CLIENTS==1 and held('stock','t:right')==0)
-            return held('buf2','t:left'),held('stock','t:raw'),M.crafters{config=CFG}.cpu2.status==nil
-        '''), (1, 2, True))
+            assert(fourth.status=='complete',fourth.reason)
+            return held('buf2','t:left'),held('stock','t:left'),held('stock','t:right'),held('stock','t:raw')
+        '''), (0, 1, 1, 1))
 
-    def test_failure_during_input_read_prevents_new_load_but_settles_old_load(self):
+    def test_failure_prevents_new_load_but_settles_old_load(self):
         self.assertEqual(self.lua.execute('''
             local mt=CFG.machineTypes.furnace;mt.batch=1;mt.blocking=true
             put('stock','t:ore',3);put('stock','t:raw',1);OUTCOMES.robot1='failed'
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
-            local wh=require('warehouse');local scan=wh.scanRole;local reads=0
-            wh.scanRole=function(storage,slots)
-                local id=scan(storage,slots)
-                if storage=='in1' then
-                    reads=reads+1
-                    if reads==2 then JOBS[id].finish=TIME+10;JOBS[id].settle=TIME+10.2;DELAYED_READ=id end
-                end
-                return id
-            end
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',3),
                 task('t:robot',{'t:raw'},'robot',{'raw'})},{crafter='cpu1'})
             assert(r.status=='failed' and r.reason=='injected robot failed')
-            assert(JOBS[DELAYED_READ].settled and r.finished>=JOBS[DELAYED_READ].settle)
-            assert(#r.stages[1].loadLedger==1 and r.stages[1].loadLedger[1].state=='done')
+            for _,l in ipairs(r.stages[1].loadLedger) do assert(l.state=='done') end
             local failureAt=r.stages[2].craftFinished
             for _,m in ipairs(MOVES) do if m.kind=='fetch' then assert(m.time<failureAt,'new input delivery after failure') end end
-            assert(held('stock','t:metal')==1 and held('stock','t:ore')==2)
+            local loads=#r.stages[1].loadLedger
+            assert(held('stock','t:metal')==loads and held('stock','t:ore')==3-loads)
             local resource=M.resources{config=CFG}.machines.kiln
             return resource.state,#resource.loads
         '''), ('idle', 0))

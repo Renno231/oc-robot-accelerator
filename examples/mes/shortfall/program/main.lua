@@ -71,6 +71,31 @@ local function finishTripAccounting(result)
       end
     end
   end end
+  
+  local kinds={movement=0,first=0,input=0,output=0,refusals={},jobs={}}
+  local roles,fed={},{};local map=require('map')
+  local function key(e) return e.node..':'..e.side end
+  for name,g in pairs(wh.groups()) do for role,storage in pairs(g.roles) do
+    roles[key(assert(map.storage(storage))) ]={role=role,group=name}
+  end end
+  if window then for id=window.first,window.last do
+    local j=assert(jobs[id]);local kind,group='input'
+    for _,s in ipairs(j.steps or {}) do
+      if s.take or s.put then kind='movement';local e=s.put or s.take;local r=roles[key(e)]
+        if r then group=r.group;if r.role=='buffer' then fed[key(e)]=s.put~=nil end end
+      elseif s.roleKey then kind='first'
+      elseif s.read then local r=roles[key(s.read)]
+        if r and r.role=='output' then kind='output'
+        elseif r and r.role=='buffer' then kind=fed[key(s.read)] and 'output' or 'first' end
+      end
+    end
+    kinds[kind]=kinds[kind]+(j.trips or 0)
+    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips}
+    if (j.refused or 0)>0 then kinds.refusals[#kinds.refusals+1]={job=id,group=group,refused=j.refused,items=j.perItem,finishedAt=j.finishedAt} end
+  end end
+  assert(kinds.movement+kinds.first+kinds.input+kinds.output==mesTrips,'trip kind accounting mismatch')
+  result.tripKinds=kinds
+
   result.droneBusy=busy
 end
 local function mesTiming(outcome)

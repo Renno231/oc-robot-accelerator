@@ -20,7 +20,7 @@ function receipts.new(options)
     local jobs,terminal,bytes={},{},0
     local registry={}
     local function view(job)
-        return {jobId=job.id,status=job.status,message=job.message,receipt=true}
+        return {jobId=job.id,status=job.status,message=job.message,buffer=job.buffer,receipt=true}
     end
     local function trim()
         while #terminal>limit or bytes>maxBytes do
@@ -50,11 +50,12 @@ function receipts.new(options)
         bytes=bytes+#request+#jobs[id].message;trim()
         return true,view(jobs[id])
     end
-    function registry.finish(id,status,message)
+    -- buffer: what the robot read in its buffer after crafting (item -> count).
+    function registry.finish(id,status,message,buffer)
         local job=assert(jobs[id],"Unknown active job.")
         assert(job.status=="RUNNING" and (status=="COMPLETE" or status=="FAILED"),"Invalid receipt transition.")
         local oldMessage=#(job.message or "")
-        job.status=status;job.message=message and tostring(message):sub(1,2048) or nil
+        job.status=status;job.message=message and tostring(message):sub(1,2048) or nil;job.buffer=buffer
         bytes=bytes+#(job.message or "")-oldMessage
         local result=view(job);terminal[#terminal+1]=id;trim();return result
     end

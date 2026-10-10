@@ -942,6 +942,30 @@ function M.fetchMany(requests,to,opts)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)
 end
+-- Stock storages that can take item i coming from `from`, best first.
+local function storeTargets(stock,i,from,source,maximum,planned)
+  local candidates={}
+  for _,faces in pairs(stock) do for _,face in ipairs(faces) do
+    local entry=face.entry;local accept=accepts(face.settings,i)
+    if accept~=false and entry and not entry.capacityUnknown and not sameInventory(face.storage,from) then
+      local held=quantity(entry,i);local room,occupied=0,0
+      for _,v in pairs(entry.items) do occupied=occupied+v.count;if matches(v.item,i) then room=room+v.room end end
+      local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
+      local capacity=entry.full and entry.full[itemKey(i)] and 0 or math.max(0,
+        entry.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum,planned))
+      if tier and capacity>0 and distance(source,face.storage)<math.huge then
+        candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,
+          priority=face.settings.priority or 0,capacity=capacity}
+      end
+    end
+  end end
+  table.sort(candidates,function(a,b)
+    if a.tier~=b.tier then return a.tier<b.tier end
+    if a.priority~=b.priority then return a.priority>b.priority end
+    return a.storage<b.storage
+  end)
+  return candidates
+end
 function M.storeMany(from,opts)
   local ok,jobs=pcall(function()
     syncMapRevision();assert(opts==nil or type(opts)=="table","options required")
@@ -983,26 +1007,7 @@ function M.storeMany(from,opts)
       local remaining=math.min(r.count,available);missing[index]=r.count-remaining
       if remaining>0 then
         assert(maximum,"unknown stack limit for "..limitKey(i).."; scan item first")
-        local candidates={}
-        for _,faces in pairs(stock) do for _,face in ipairs(faces) do
-          local entry=face.entry;local accept=accepts(face.settings,i)
-          if accept~=false and entry and not entry.capacityUnknown and not sameInventory(face.storage,from) then
-            local held=quantity(entry,i);local room,occupied=0,0
-            for _,v in pairs(entry.items) do occupied=occupied+v.count;if matches(v.item,i) then room=room+v.room end end
-            local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
-            local capacity=entry.full and entry.full[itemKey(i)] and 0 or math.max(0,
-              entry.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum,planned))
-            if tier and capacity>0 and distance(source,face.storage)<math.huge then
-              candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,
-                priority=face.settings.priority or 0,capacity=capacity}
-            end
-          end
-        end end
-        table.sort(candidates,function(a,b)
-          if a.tier~=b.tier then return a.tier<b.tier end
-          if a.priority~=b.priority then return a.priority>b.priority end
-          return a.storage<b.storage
-        end)
+        local candidates=storeTargets(stock,i,from,source,maximum,planned)
         table.sort(stackSlots);local cursor=1
         local skipped=manyReserved(sourceKey,i,'take',planned);local offset=0
         while cursor<=#stackSlots and skipped>=stackRows[stackSlots[cursor]].size do
@@ -1031,6 +1036,35 @@ function M.storeMany(from,opts)
     end
     assert(#pieces>0 or #requests==0,"requested source items unavailable")
     return packedJobs(requests,pieces,missing,slots,opts)
+  end)
+  if not ok then return nil,jobs,{} end
+  return submitPacked(jobs)
+end
+-- Take up to the expected count of each item from a machine role or robot buffer
+-- (a storage name, or {storage,slots}) and put it in stock, without looking
+-- first: the MES knows what should be there. Each item's receipt says how many
+-- were actually taken.
+function M.collect(from,requests,opts)
+  local ok,jobs=pcall(function()
+    syncMapRevision();if type(from)=="string" then from={storage=from} end
+    assert(type(from)=="table" and from.storage,"source storage required")
+    assert(endpoint(from),"unknown source");requests=manyRequests(requests)
+    local stock=entries();local source=node(from);local planned,pieces={},{}
+    for index,r in ipairs(requests) do
+      -- An item never seen yet is planned at 64; the drone's report teaches the real limit.
+      local i=r.item;local maximum=limits[limitKey(i)] or 64;local remaining=r.count
+      for _,c in ipairs(storeTargets(stock,i,from,source,maximum,planned)) do
+        if remaining==0 then break end
+        local n=math.min(remaining,c.capacity)
+        local put={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
+        planned[#planned+1]=put
+        addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=from.slots},c.storage,nil,put)
+        remaining=remaining-n
+      end
+      assert(remaining==0,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i))
+    end
+    local o=copy(opts or {});o.retries=0
+    return packedJobs(requests,pieces,{},cargoSlots(),o)
   end)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)

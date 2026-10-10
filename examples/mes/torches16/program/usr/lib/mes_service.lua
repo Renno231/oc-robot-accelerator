@@ -67,18 +67,10 @@ local function dispatch(a, run)
       o.requests = a.requests
     end
     ok, ids, err, partial = pcall(wh.storeMany, a.endpoint, o)
+  elseif a.kind == 'collectMany' then
+    ok, ids, err, partial = pcall(wh.collect, a.endpoint, a.requests, options)
   elseif a.kind == 'scan' then
     ok, ids, err, partial = pcall(wh.scan, a.storage)
-  elseif a.kind == 'scanRole' then
-    ok, ids, err, partial = pcall(wh.scanRole, a.storage, a.slots)
-    if ok and ids then
-      ids = { ids }
-    end
-    if ok and partial and type(partial) ~= 'table' then
-      partial = { partial }
-    end
-  elseif a.kind == 'scanRoles' then
-    ok, ids, err, partial = pcall(wh.scanRoles, a.requests)
   else
     ok = false
     ids = 'Unknown MES action ' .. tostring(a.kind)
@@ -244,9 +236,6 @@ function M.submit(plan, cfg, opts)
       event.push('mes', ...)
     end,
     contents = wh.contents,
-    roleContents = wh.roleContents,
-    roleFits = wh.roleFits,
-    stackSize = wh.stackSize,
     crafters = function()
       return crafters(cfg)
     end,
