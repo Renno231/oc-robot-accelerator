@@ -494,6 +494,14 @@ function handle(e)
   elseif name=="logistics_announce" or name=="mes_robot_announce" then
     -- The open Fleet screen re-reads them itself.
     if stack[1].tab~="fleet" then ui.newHardware() end;signal(name,table.unpack(e,2))
+  elseif name=="logistics_released" then
+    -- The open Fleet screen shows the listing; elsewhere one footer line.
+    local n,who=0,tostring(e[2])
+    if stack[1].tab~="fleet" and e[3]=="ok" then
+      for _,d in ipairs(require("logistics").drones()) do if d.name==e[2] then for _ in pairs(d.cargo or {}) do n=n+1 end end end
+      ui.ok(n>0 and who.." holds "..n.." stack"..(n==1 and "" or "s") or who.." is empty")
+    elseif stack[1].tab~="fleet" then ui.fail(who..": cargo report timeout") end
+    signal(name,table.unpack(e,2))
   elseif name=="station" then
     -- One line wherever the user is; the station was started async.
     local st=e[3];if st=="ready" then ui.ok("Station "..e[2].." ready") elseif st=="failed" then ui.fail("Station "..e[2].." failed: see Setup") elseif st=="removed" then ui.ok("Station "..e[2].." removed") end

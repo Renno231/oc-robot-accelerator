@@ -19,7 +19,7 @@ class LogisticsRestartTests(unittest.TestCase):
         lua.globals().LOGISTICS = Path('drone-logistics/lib/logistics.lua').read_text()
         lua.globals().WAREHOUSE = Path('drone-logistics/lib/warehouse.lua').read_text()
         lua.execute('''
-          variant(MODE);TIME=10;LISTEN={};EVENTS={};SENT={}
+          variant(MODE);TIME=10;LISTEN={};EVENTS={};SENT={};TIMERS={}
           FAKE={cargo={},stock=10,dest=0,working=false}
           item={name=ITEM_NAME,damage=0,label='Stock'}
           package.loaded.map=map
@@ -32,6 +32,7 @@ class LogisticsRestartTests(unittest.TestCase):
           files['/etc/warehouse.cfg']=require('serialization').serialize({members={stock={}},groups={}})
           package.loaded.computer={uptime=function() return TIME end}
           package.loaded.event={
+            timer=function(seconds,fn) TIMERS[#TIMERS+1]={at=TIME+seconds,fn=fn};return #TIMERS end,
             listen=function(name,fn) LISTEN[name]=LISTEN[name] or {};table.insert(LISTEN[name],fn) end,
             push=function(...) EVENTS[#EVENTS+1]={...} end}
           function emit(name,...)
@@ -39,6 +40,17 @@ class LogisticsRestartTests(unittest.TestCase):
           end
           function drain()
             while #EVENTS>0 do local e=table.remove(EVENTS,1);emit(table.unpack(e)) end
+          end
+          function advance(seconds)
+            TIME=TIME+seconds
+            for _,t in ipairs(TIMERS) do if not t.fired and TIME>=t.at then t.fired=true;t.fn() end end
+          end
+          package.loaded.event.pull=function(filter)
+            assert(filter=='logistics_released','release must not pull events')
+            while true do
+              for i,e in ipairs(EVENTS) do if e[1]==filter then table.remove(EVENTS,i);return table.unpack(e) end end
+              advance(5)
+            end
           end
           function report(id,result)
             result.energy=5000;result.position={x=0,y=0,z=0};result.cargoSlots=4
@@ -52,14 +64,16 @@ class LogisticsRestartTests(unittest.TestCase):
               FAKE.task=require('serialization').unserialize(payload);FAKE.last=nil
             elseif kind=='release' then
               FAKE.last=nil
-              emit('modem_message','local','remote',port,0,token,'cargo',id,
-                require('serialization').serialize(FAKE.cargo))
+              if not FAKE.releaseSilent then
+                emit('modem_message','local','remote',port,0,token,'cargo',id,
+                  require('serialization').serialize(FAKE.cargo))
+              end
             end
           end
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
           package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
           function reload()
-            LISTEN={};EVENTS={};SENT={}
+            LISTEN={};EVENTS={};SENT={};TIMERS={}
             package.loaded.logistics=nil;package.loaded.warehouse=nil
             lg=require('logistics');wh=require('warehouse')
             assert(#SENT==1 and SENT[1].kind=='status')
@@ -217,6 +231,68 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(FAKE.stock==9 and wh.count(item)==9 and FAKE.held==0)
                 ''')
 
+    def test_release_returns_before_report_and_signals_listing(self):
+        self.start('log').execute('''
+          FAKE.held=3;FAKE.cargo={{name=item.name,damage=0,size=3,maxSize=64}}
+          ready();EVENTS={};FAKE.releaseSilent=true
+          local before=TIME;assert(lg.release('d1')==true and TIME==before)
+          assert(lg.drones()[1].releasePending and lg.drones()[1].cargo==nil)
+          local id=SENT[#SENT].id
+          emit('modem_message','local','remote',27103,0,'secret','cargo',id,
+            require('serialization').serialize(FAKE.cargo))
+          local _,name,state=require('event').pull('logistics_released')
+          assert(name=='d1' and state=='ok' and lg.drones()[1].cargo[1].size==3)
+          assert(not lg.drones()[1].releasePending)
+          EVENTS={};advance(5);assert(#EVENTS==0)
+        ''')
+
+    def test_release_timeout_late_report_and_second_release(self):
+        self.start('log').execute('''
+          FAKE.held=1;FAKE.cargo={{name=item.name,damage=0,size=1,maxSize=64}}
+          ready();EVENTS={};FAKE.releaseSilent=true
+          assert(lg.release('d1'));local old=SENT[#SENT].id
+          local ok,err=lg.release('d1');assert(not ok and err=='release already pending')
+          advance(4.9);assert(lg.drones()[1].releasePending and #EVENTS==0)
+          advance(.1);assert(not lg.drones()[1].releasePending)
+          local _,name,state=require('event').pull('logistics_released');assert(name=='d1' and state=='timeout')
+          emit('modem_message','local','remote',27103,0,'secret','cargo',old,
+            require('serialization').serialize(FAKE.cargo))
+          assert(lg.drones()[1].cargo==nil and #EVENTS==0)
+          assert(lg.release('d1'));assert(SENT[#SENT].id==old+1)
+          emit('modem_message','local','remote',27103,0,'secret','cargo',old,
+            require('serialization').serialize(FAKE.cargo))
+          assert(lg.drones()[1].releasePending and lg.drones()[1].cargo==nil and #EVENTS==0)
+        ''')
+
+    def test_release_cli_prints_listing_and_timeout(self):
+        lua=self.start('log')
+        lua.globals().CLI=Path('drone-logistics/bin/logistics.lua').read_text()
+        lua.execute(r'''
+          FAKE.held=3;FAKE.cargo={{name=item.name,damage=0,size=3,maxSize=64}}
+          ready();EVENTS={};PRINTED={};print=function(s) PRINTED[#PRINTED+1]=s end
+          EVENTS[1]={'logistics_released','other','timeout'}
+          assert(load(CLI))('release','d1')
+          assert(require('serialization').unserialize(PRINTED[1])[1].size==3)
+          assert(TIME==10)
+          EVENTS={};FAKE.releaseSilent=true;local err
+          io.stderr={write=function(_,...) err=table.concat({...}) end}
+          assert(load(CLI))('release','d1')
+          assert(err=='cargo report timeout\n' and #PRINTED==1 and TIME==15)
+        ''')
+
+    def test_pending_release_restart_uses_fresh_boot_cargo_without_reusing_id(self):
+        for mode in ('log','files'):
+            with self.subTest(mode=mode):
+                self.start(mode).execute('''
+                  FAKE.held=3;FAKE.cargo={{name=item.name,damage=0,size=3,maxSize=64}}
+                  ready();EVENTS={};FAKE.releaseSilent=true
+                  assert(lg.release('d1'));local old=SENT[#SENT].id
+                  reload();assert(not lg.drones()[1].releasePending and lg.drones()[1].state=='booting')
+                  FAKE.held=2;FAKE.cargo[1].size=2;answerStatus()
+                  assert(lg.drones()[1].state=='held' and lg.drones()[1].held[1].count==2)
+                  EVENTS={};assert(lg.release('d1'));assert(SENT[#SENT].id==old+1)
+                ''')
+
     def test_job_and_trip_ids_continue_without_reuse(self):
         for mode in ('log', 'files'):
             with self.subTest(mode=mode):
@@ -226,7 +302,9 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(b==a+1 and FAKE.trip==first+1);finishPhysical(true)
                   FAKE.held=1;FAKE.cargo={{name=item.name,damage=0,size=1,maxSize=64}}
                   ready() -- Don't drain the held notification; exercise the explicit release path.
-                  local listing=assert(lg.release('d1'));assert(listing[1].size==1)
+                  assert(lg.release('d1')==true)
+                  local _,name,state=require('event').pull('logistics_released');assert(name=='d1' and state=='ok')
+                  local listing=lg.drones()[1].cargo;assert(listing[1].size==1)
                   local released=SENT[#SENT].id;FAKE.held=0;FAKE.cargo={}
                   reload();answerStatus();drain()
                   local c=lg.scan('home');drain();assert(c==b+1 and FAKE.trip==released+1)

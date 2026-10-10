@@ -31,10 +31,22 @@ function M.register(address,name,home)
   table.sort(D.drones,function(a,b) return a.name<b.name end)
   return true
 end
+-- Returns at once; logistics_released follows: "ok" after 3 s (listing in
+-- drones() cargo; empty when M.labReleaseEmpty), or "timeout" after 5 s
+-- when M.labReleaseTimeout is set.
 function M.release(name)
   local d=drone(name);if not d then return nil,"unknown drone" end
   if d.state~="held" then return nil,"drone is not held" end
-  local got=copy(d.cargo or {});d.cargo=nil;d.held=nil;d.state="idle";return got
+  if d.releasePending then return nil,"release already pending" end
+  local got=d.cargo or {};d.releasePending=true;d.cargo=nil
+  local function done()
+    d.releasePending=nil
+    if M.labReleaseTimeout then d.cargo=got;event.push("logistics_released",name,"timeout");return end
+    -- As the real one: the listing is what it still holds; empty means idle.
+    if M.labReleaseEmpty then got={} end
+    d.cargo=got;if not next(got) then d.held=nil;d.state="idle" end;event.push("logistics_released",name,"ok")
+  end
+  event.timer(M.labReleaseTimeout and 5 or 3,done);return true
 end
 function M.found(name)
   local d=drone(name);if not d then return nil,"unknown drone" end
