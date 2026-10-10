@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from build_machine_comparisons import prepare
 from compare_machine_jobs import read_job
@@ -36,6 +37,12 @@ def acceptance_error(row):
             size, limit = payload.get('packetBytes'), payload.get('packetLimit')
             if type(size) is not int or type(limit) is not int or size <= 0 or limit <= 0 or size > limit:
                 return 'ocparts craft packet exceeds or lacks observed modem limit'
+    if row['case'] == 'concurrent':
+        runs = row.get('runs', [])
+        if len(runs) != 2 or any(r.get('status') != 'complete' for r in runs):
+            return 'concurrent requires two completed runs'
+        if row.get('sameRobotOverlap') is not False:
+            return 'concurrent requires measured same-robot exclusion'
     return None
 
 
@@ -59,6 +66,9 @@ def summarize_job(state, command_exit, jobs_root, source, case, mode):
         if case == 'torches16':
             row['t11MesTrips'] = T11_TORCH_MES_TRIPS
         row['mesStatus'] = result.get('status') or (result.get('mes') or {}).get('status')
+        if case == 'concurrent':
+            for key in ('runs', 'combinedGameSeconds', 'furnaceLoads', 'sameRobotOverlap', 'robotOverlapSeconds', 'afterScan'):
+                row[key] = result.get(key)
     except (ValueError, OSError, KeyError):
         pass
     error = acceptance_error(row)
@@ -111,17 +121,35 @@ def run(args):
                                     '--jobs-root', str(args.jobs_root)],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, creationflags=NO_WINDOW)
+        marks = {}
+        # Native files are flushed by the program at submission and the MES
+        # done event. Host-monotonic observation measures wall time, not uptime.
+        homes = None
+        heartbeat = time.monotonic()
         while True:
+            if case == 'concurrent':
+                if homes is None:
+                    homes = list(args.jobs_root.glob('*/runtime/world/opencomputers/*/home')) or None
+                for home in homes or []:
+                    for marker in ('submit1', 'submit2', 'done1', 'done2'):
+                        if marker not in marks and (home / ('concurrent-' + marker)).is_file():
+                            marks[marker] = time.monotonic()
             try:
-                stdout, stderr = process.communicate(timeout=240)
+                stdout, stderr = process.communicate(timeout=0.05 if case == 'concurrent' else 240)
                 break
             except subprocess.TimeoutExpired:
-                communicate(args)
+                if time.monotonic() - heartbeat >= 240:
+                    communicate(args);heartbeat = time.monotonic()
         (destination / 'native-command.log').write_text(stdout + '\n' + stderr)
         state = json.loads(stdout.strip().splitlines()[-1])
         if 'jobId' not in state:
             raise RuntimeError('Runner admission failed before job creation: ' + json.dumps(state))
         row = summarize_job(state, process.returncode, args.jobs_root, source, case, mode)
+        if case == 'concurrent':
+            row['wallObservation'] = {'pollSeconds': 0.05, 'basis': 'host monotonic observation of native flushed submit/done markers', 'markers': marks}
+            if len(marks) == 4:
+                row['runWallSeconds'] = [marks['done'+str(i)]-marks['submit'+str(i)] for i in (1, 2)]
+                row['combinedWallSeconds'] = max(marks['done1'], marks['done2'])-marks['submit1']
         rows.append(row)
         record.write_text(json.dumps(rows, indent=2) + '\n')
         print(json.dumps(row), flush=True)
