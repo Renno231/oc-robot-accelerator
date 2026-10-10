@@ -28,6 +28,24 @@ def fleet(count):
 
 
 class DroneScenarioTests(unittest.TestCase):
+    def test_fixture_move_drone_requires_declared_entity_and_controller(self):
+        value = valid()
+        value['computer'] = {'position': [-1, 65, 0],
+            'hardware': {'tier': 3, 'cpu': 'cpu3', 'memory': ['ram6'],
+                         'cards': ['wlancard2'], 'storage': ['hdd3'], 'bootDrive': 0},
+            'program': {'directory': 'program', 'entry': 'main.lua'}}
+        value['droneActions'] = [{'action': 'move_drone', 'drone': 0, 'to': [0, 65, 0],
+            'request': {'computer': 0, 'marker': 'home/carry-home', 'signal': 'drone_home'}}]
+        normalized = scenario.normalize(value)
+        self.assertEqual(normalized, scenario.normalize(normalized))
+        for key, bad in [('action', 'invented'), ('drone', 1), ('to', [99, 65, 0])]:
+            invalid = copy.deepcopy(value); invalid['droneActions'][0][key] = bad
+            with self.assertRaises(ValueError): scenario.normalize(invalid)
+        invalid = copy.deepcopy(value); invalid.pop('computer')
+        with self.assertRaises(ValueError): scenario.normalize(invalid)
+        invalid = copy.deepcopy(value); invalid['droneActions'][0]['request']['marker'] = '../escape'
+        with self.assertRaises(ValueError): scenario.normalize(invalid)
+
     def test_six_and_sixteen_drones_and_expected_rows(self):
         for count in (6, 16):
             with self.subTest(count=count):

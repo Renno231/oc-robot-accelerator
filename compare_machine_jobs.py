@@ -2,6 +2,7 @@
 import argparse
 import json
 from pathlib import Path
+from native_store_evidence import enrich
 
 def additional_files(runtime):
     """Read non-serialized mapping files from each real, identifiable case HDD."""
@@ -25,6 +26,7 @@ def read_job(root,job):
     files=list((directory/'runtime/world/opencomputers').glob('*/home/equivalence.json'))
     evidence=json.loads(files[0].read_text()) if files else None
     if len(files)>1: raise ValueError('ambiguous evidence disks')
+    if evidence is not None: enrich(evidence,files[0].parent.parent)
     return state,result,evidence
 
 

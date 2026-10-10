@@ -48,6 +48,19 @@ public class RunnerDroneScenarioTest {
         JsonArray expected=value.getAsJsonObject("expect").getAsJsonArray("drones");
         expected.add(new JsonParser().parse(expected.get(0).toString()));rejects(value);
     }
+    @Test public void fixtureRelocationIsStrictAndRequiresExistingDroneAndController() throws Exception {
+        JsonObject value=fixture();
+        JsonObject computer=new JsonParser().parse("{\"position\":[-1,65,0],\"hardware\":{\"tier\":3,\"cpu\":\"cpu3\",\"memory\":[\"ram6\"],\"cards\":[\"wlancard2\"],\"storage\":[\"hdd3\"],\"bootDrive\":0},\"program\":{\"directory\":\"program\",\"entry\":\"main.lua\"}}").getAsJsonObject();
+        value.add("computer",computer);
+        value.add("droneActions",new JsonParser().parse("[{\"action\":\"move_drone\",\"drone\":0,\"to\":[0,65,0],\"request\":{\"computer\":0,\"marker\":\"home/carry-home\",\"signal\":\"drone_home\"}}]"));
+        assertEquals(1,RunnerScenario.parse(value.toString()).v4.droneActions.size());
+        JsonObject action=value.getAsJsonArray("droneActions").get(0).getAsJsonObject();
+        action.addProperty("drone",1);rejects(value);action.addProperty("drone",0);
+        action.addProperty("action","invented");rejects(value);action.addProperty("action","move_drone");
+        action.getAsJsonObject("request").addProperty("marker","../escape");rejects(value);
+        action.getAsJsonObject("request").addProperty("marker","home/carry-home");
+        value.remove("computer");rejects(value);
+    }
     @Test public void nativeDroneContract() throws Exception {
         RunnerScenario spec=RunnerScenario.parse(fixture().toString());assertEquals(1,spec.v4.drones.size());assertNull(spec.hardware);assertEquals("baseline",spec.mode);
     }

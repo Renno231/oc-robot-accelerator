@@ -153,12 +153,10 @@ for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones
   local f=io.open(path,'r')
   if f then local s=f:read('*a');f:close();data.files[path]=assert(serialization.unserialize(s)) end
 end
-local journal=io.open('/etc/warehouse.db','r')
-if journal then
-  local catalogue={};for line in journal:lines() do local r=assert(serialization.unserialize(line));catalogue[r.key]=r.value end
-  journal:close();data.files['/etc/warehouse.db']=catalogue
-end
+-- Binary store.lua records are decoded from the final native HDD in Python
+-- (native_store_evidence), never interpreted as OpenOS serialization lines.
 -- Stream through OpenOS's bounded file buffer, not one large recursively
 -- concatenated JSON string competing with the loaded controller libraries.
+data.storeMeasurements=package.loaded.runner_store_measurements
 local out=assert(io.open('/home/equivalence.json','w'));json(out,data);out:close()
 if not ok then error(err,0) end

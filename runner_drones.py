@@ -109,7 +109,7 @@ def normalize(value):
     from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
                                  _component_name, relative, normalize as old, normalized_bytes)
     _object(value, ['schemaVersion', 'id', 'program', 'world', 'robot', 'drones', 'containers',
-                    'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits'], ['schemaVersion', 'id', 'world'])
+                    'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions'], ['schemaVersion', 'id', 'world'])
     if 'secondComputer' in value and 'computer' not in value: raise ValueError('secondComputer requires computer')
     if ('robot' in value) == ('drones' in value or 'computer' in value): raise ValueError('v4 requires robot or drones/computer exclusively')
     drone_mode = 'drones' in value or 'computer' in value
@@ -117,7 +117,7 @@ def normalize(value):
     if drone_mode and 'program' in value: raise ValueError('drone scenarios use EEPROM, not program')
     surrogate = deepcopy(value)
     surrogate['schemaVersion'] = 3
-    for key in ('drones', 'containers', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits'): surrogate.pop(key, None)
+    for key in ('drones', 'containers', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions'): surrogate.pop(key, None)
     extended = _object(value.get('expect', {}), ['position', 'blocks', 'inventory', 'containers', 'drones', 'robots'])
     if 'robots' in extended and 'robots' not in value: raise ValueError('robot expectations require robots')
     if drone_mode and any(k in extended for k in ('position', 'inventory')):
@@ -227,6 +227,20 @@ def normalize(value):
                 entry['request'] = {'computer': index, 'marker': relative(req['marker']),
                                     'signal': _text(req['signal'], PROPERTY, 64)}
             result['containerEdits'].append(entry)
+    if 'droneActions' in value:
+        if not drone_mode: raise ValueError('drone actions require drone mode')
+        result['droneActions'] = []
+        for action in _array(value['droneActions'], 64):
+            _object(action, ['action', 'drone', 'to', 'request'], ['action', 'drone', 'to', 'request'])
+            if action['action'] != 'move_drone': raise ValueError('unknown drone action')
+            req = _object(action['request'], ['computer', 'marker', 'signal'], ['computer', 'marker', 'signal'])
+            index = _integer(req['computer'], 0, 1)
+            if ('computer' if index == 0 else 'secondComputer') not in value: raise ValueError('drone action computer absent')
+            result['droneActions'].append({'action': 'move_drone',
+                'drone': _integer(action['drone'], 0, len(drones) - 1),
+                'to': _inside(action['to'], region),
+                'request': {'computer': index, 'marker': relative(req['marker']),
+                            'signal': _text(req['signal'], PROPERTY, 64)}})
     result['expect']['containers'] = []
     for c in _array(extended.get('containers', []), 128):
         _object(c, ['position', 'slots'], ['position', 'slots'])

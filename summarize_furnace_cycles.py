@@ -3,6 +3,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from native_store_evidence import enrich
 
 
 def summarize(root,jobs):
@@ -12,7 +13,7 @@ def summarize(root,jobs):
         runtime=jobs/run['jobId']/'runtime'
         result=json.loads((runtime/'result.json').read_text())
         evidence=list(runtime.glob('world/opencomputers/*/home/equivalence.json'));assert len(evidence)==1
-        data=json.loads(evidence[0].read_text());assert data['returned']
+        data=enrich(json.loads(evidence[0].read_text()),evidence[0].parent.parent);assert data['returned']
         streams={}
         with (runtime/'route-observations.ndjson').open() as file:
             for line in file:
