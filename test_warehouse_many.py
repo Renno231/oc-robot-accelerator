@@ -78,7 +78,7 @@ class WarehouseManyTests(unittest.TestCase):
             end
             local delivered=0
             for _,s in ipairs(job.submitted) do
-              local r={item=clone(s.item),maxSize=s.maxSize,expectedIndex=s.expectedIndex}
+              local r={item=clone(s.item),count=s.count,maxSize=s.maxSize,expectedIndex=s.expectedIndex}
               local key=s.item.name..':'..s.item.damage
               if s.take then
                 local n=s.item.name==shortItem and math.min(s.count,shortCount or 0) or s.count
@@ -173,6 +173,22 @@ class WarehouseManyTests(unittest.TestCase):
           assert(#jobs[ids[1]].opts.expectedItems==2)
           deliver(ids[1]);assert(jobs[ids[1]].state=='partial')
         ''')
+
+    def test_short_take_from_a_known_slot_lowers_the_catalogue(self):
+        self.assertEqual(self.lua.execute('''
+          observe('stock',{stack('mod:a',32)})
+          local ids=assert(wh.fetchMany({{item={name='mod:a'},count=32}},'buffer'))
+          local slotted=false;for _,s in ipairs(jobs[ids[1]].submitted) do if s.take and s.take.slots then slotted=true end end
+          deliver(ids[1],'mod:a',16)
+          return slotted,wh.count({name='mod:a'})
+        '''), (True, 0))
+
+    def test_consumed_lowers_a_machine_inventory(self):
+        self.assertEqual(self.lua.execute('''
+          observe('stock',{stack('mod:a',5)})
+          wh.consumed('stock',{name='mod:a'},3)
+          return wh.count({name='mod:a'})
+        '''), 2)
 
     def test_collect_takes_expected_items_without_looking_and_counts_what_was_there(self):
         self.lua.execute('''

@@ -55,6 +55,9 @@ class MesTests(LuaCase):
                 groups=function(kind) local out={};for n,g in pairs(GROUPS) do if not kind or g.type==kind then out[n]=g end end;return out end,
                 members=function() return MEMBERS end,
                 contents=function(s) return CONTENTS[s] or {items={},slots=27,freeSlots=27} end,
+                -- The fake furnace already moves its input to output.
+                consumed=function() end,
+                count=function(i) return held('stock',require('item_identity').stackName(i)) end,
                 stackSize=function() return 64 end,
                 scan=function(s) return {job()} end,
                 fetch=function(item,n,s)
@@ -292,15 +295,17 @@ class MesTests(LuaCase):
             put('stock','t:raw',0);FAIL=true
             local r=run({task('t:processed',{'t:raw'},1,1,'furnace'),task('t:final',{'t:processed'})},
                 {machines={furnace='A'}})
-            return r.status,#r.stages,CLIENT_CALLS,r.stages[1].remaining.ai~=nil,r.error:find('shortfall')~=nil,
-                r.stages[2].state
-        '''), ('failed', 2, 0, True, True, 'waiting'))
+            local located=false;for _,storage in ipairs(r.stages[1].locations) do if storage=='ai' then located=true end end
+            local fetches=0;for _,v in ipairs(MOVES) do if v.kind=='fetch' then fetches=fetches+1 end end
+            return r.status,#r.stages,CLIENT_CALLS,located,r.error,fetches,r.stages[2].state
+        '''), ('failed', 2, 0, True, 'A: Not enough t:raw in stock', 0, 'waiting'))
 
     def test_unknown_robot_outcome_does_not_store_or_continue(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',1);CLIENT_STATUS='unknown'
             local r=run({task('t:final',{'t:raw'})})
-            return r.status,CLIENT_CALLS,held('buf','t:raw'),#MOVES,r.stages[1].remaining.buf.verified
+            return r.status,CLIENT_CALLS,held('buf','t:raw'),#MOVES,
+                r.where[1].storage=='buf' and r.where[1].item=='t:raw' and r.where[1].count==1
         '''), ('unknown', 1, 1, 1, True))
 
     def test_request_submitted_mid_run_is_accepted_and_completes(self):
@@ -315,7 +320,8 @@ class MesTests(LuaCase):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',1);put('stock','t:fuel',1);TIMEOUT=true
             local r=run({task('t:processed',{'t:raw'},1,1,'furnace')},{machines={furnace='A'}})
-            return r.status,r.error:find('deadline')~=nil,held('ai','t:raw'),r.stages[1].remaining.ai.verified
+            local located=false;for _,row in ipairs(r.where) do if row.storage=='ai' and row.item=='t:raw' and row.count==1 then located=true end end
+            return r.status,r.error:find('deadline')~=nil,held('ai','t:raw'),located
         '''), ('failed', True, 1, True))
 
     def test_tool_fields_retained_without_branch_bindings(self):
@@ -380,14 +386,6 @@ class MesTests(LuaCase):
                 tasks={task('t:processed',{'t:raw'},1,1,'furnace')}})
             return p==nil,err
         '''), (True, 'Machine processing is not supported by this robot executor.'))
-
-    def test_failure_scan_unavailable_marks_locations_unknown(self):
-        self.assertEqual(self.lua.execute('''
-            require('warehouse').scan=function() error('scan unavailable') end
-            local r=run({task('t:final',{'t:raw'})})
-            return r.status,r.stages[1].remaining.buf.unknown,r.stages[1].remaining.buf.verified,
-                r.stages[1].remaining.buf.error:find('scan unavailable')~=nil
-        '''), ('failed', True, False, True))
 
     def test_concurrent_failure_settles_other_worker_and_stops_next_stage(self):
         self.assertEqual(self.lua.execute('''

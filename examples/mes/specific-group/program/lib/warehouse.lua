@@ -501,7 +501,9 @@ local function finished(_,id)
         local storage=at(step.take);adjust(storage,step.item,-(step.taken or 0)+(step.returned or 0),step.maxSize,touched)
         -- A full-face short reports observed remaining stock, not necessarily
         -- zero (e.g. unmergeable NBT variants filled the drone's cargo slots).
-        if step.short and not step.take.slots then short(storage,step.item,step.found or 0,touched) end
+        -- A single-slot short shows that slot held less than planned.
+        if step.short and not step.take.slots then short(storage,step.item,step.found or 0,touched)
+        elseif step.short and step.count then adjust(storage,step.item,-math.max(0,step.count-(step.taken or 0)-(step.found or 0)),nil,touched) end
         adjust(at(s.overflowEndpoint),step.item,step.overflow or 0,step.maxSize,touched)
       elseif step.put then
         mutationKeys({step.put})
@@ -545,6 +547,12 @@ end
 local function distance(a,b)
   local ok,path=pcall(logistics.plan,a,b);if not ok then return math.huge end
   local d=0;for k=2,#path do local p,q=path[k-1],path[k];d=d+math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2) end;return d
+end
+-- A machine used up n of an item it was given (known from the output collected).
+function M.consumed(storage,i,n)
+  local touched={};adjust(storage,item(i),-n,nil,touched)
+  for key in pairs(touched) do if db[key] then saveInventory(key) end end
+  if next(touched) then changed() end
 end
 function M.fetch(i,n,to,opts)
   i=item(i);positive(n);local candidates,total={},0
