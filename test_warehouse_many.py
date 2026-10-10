@@ -142,42 +142,6 @@ class WarehouseManyTests(unittest.TestCase):
           deliver(ids[1]);assert(jobs[ids[1]].state=='partial')
         ''')
 
-    def test_store_many_full_source_shared_capacity_and_whitelist(self):
-        self.lua.execute('''
-          observe('stock',{},4)
-          observe('buffer',{stack('mod:a',3),stack('mod:b',4),stack('mod:c',5),stack('mod:d',6)})
-          local ids=assert(wh.storeMany('buffer'));assert(#ids==1 and #wh.inflight()==8)
-          local job=jobs[ids[1]];assert(#job.submitted==8 and job.opts.requests==nil)
-          for _,s in ipairs(job.submitted) do if s.take then
-            assert(s.take.storage=='buffer' and #s.take.slots==1)
-          end end
-          local again=wh.storeMany('buffer');assert(again==nil) -- pending invalidation
-          deliver(ids[1]);assert(wh.settled(ids[1]) and #wh.inflight()==0)
-          assert(wh.count({name='mod:d'})==6)
-          observe('stock',{},4);observe('buffer',{stack('mod:a',3),stack('mod:wrong',10)})
-          local opts={requests={{item={name='mod:a'},count=2}},retries=0}
-          ids=assert(wh.storeMany('buffer',opts));assert(#ids==1)
-          assert(opts.requests and opts.requests[1].count==2 and jobs[ids[1]].opts.requests==nil)
-          assert(#jobs[ids[1]].opts.expectedItems==1 and jobs[ids[1]].submitted[1].count==2)
-          deliver(ids[1]);assert(wh.count({name='mod:wrong'})==0)
-        ''')
-
-    def test_store_many_exact_scoped_source_never_collects_undeclared_fuel(self):
-        self.lua.execute('''
-          observe('stock',{},3)
-          local id=assert(wh.scanRole('buffer',{7}))
-          jobs[id]={state='done',steps={{read={node='buffer',side=0,slots={7}},size=27,
-            listing={[7]=stack('mod:output',2),[9]=stack('mod:fuel',60)}}}}
-          listener('logistics',id)
-          assert(wh.storeMany('buffer')==nil) -- partial read is not a full source observation
-          local ids=assert(wh.storeMany({storage='buffer',slots={7}}));assert(#ids==1)
-          for _,s in ipairs(jobs[ids[1]].submitted) do
-            assert(s.item.name=='mod:output')
-            if s.take then assert(s.take.storage=='buffer' and s.take.slots[1]==7) end
-          end
-          assert(wh.storeMany({storage='buffer',slots={9}})==nil)
-        ''')
-
     def test_collect_takes_expected_items_without_looking_and_counts_what_was_there(self):
         self.lua.execute('''
           observe('stock',{},3)
@@ -191,18 +155,6 @@ class WarehouseManyTests(unittest.TestCase):
           end
           deliver(ids[1],'mod:output',2)
           assert(wh.count({name='mod:output'})==2)
-        ''')
-
-    def test_store_many_does_not_reuse_shared_empty_slots(self):
-        self.lua.execute('''
-          observe('stock',{},1);observe('buffer',{stack('mod:a',1),stack('mod:b',1)})
-          local before=#jobs;local ids,err=wh.storeMany('buffer')
-          assert(ids==nil and err:find('capacity') and #jobs==before and #wh.inflight()==0)
-          observe('stock',{},2)
-          ids=assert(wh.storeMany('buffer'));assert(#ids==1)
-          assert(wh.store({name='mod:a'},64,'buffer')==nil) -- other incoming type owns the second slot
-          jobs[ids[1]]={state='partial',steps={}};listener('logistics',ids[1])
-          assert(#wh.inflight()==0)
         ''')
 
     def test_validation_unknown_limits_fleet_and_later_failure_ids(self):
@@ -274,8 +226,6 @@ class WarehouseManyTests(unittest.TestCase):
           deliver(ids[1]);local missing
           for _,r in ipairs(jobs[ids[1]].perItem) do if r.requestIndex==2 then missing=r end end
           assert(missing.shortfall==3 and jobs[ids[1]].state=='partial')
-          observe('buffer',{stack('mod:a',1)});before=#jobs
-          assert(wh.storeMany('buffer',{requests=false})==nil and #jobs==before)
         ''')
 
     def test_packed_metadata_survives_real_router_normalization(self):
@@ -308,13 +258,7 @@ class WarehouseManyTests(unittest.TestCase):
         fixture.load('warehouse', 'wh')
         lua.execute('''
           wh.add('stock')
-          local read=assert(wh.scanRole('stock',{1,2}));local status=lg.status
-          lg.status=function(id)
-            if id==read then return {state='done',steps={{read={node='stock',side=0,slots={1,2}},size=2,
-              listing={{name='mod:input',size=2,maxSize=16},{name='mod:fuel',size=3,maxSize=64}}}}} end
-            return status(id)
-          end
-          listener('logistics',read)
+          local status=lg.status
           -- A real full read must populate the ordinary catalogue first.
           local full=lg.job({{read='stock'}})
           lg.status=function(id)

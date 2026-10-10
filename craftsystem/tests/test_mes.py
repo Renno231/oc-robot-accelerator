@@ -37,33 +37,6 @@ class MesTests(LuaCase):
             end
             function held(s,id) return CONTENTS[s] and CONTENTS[s].items[id] and CONTENTS[s].items[id].count or 0 end
             function job() NEXT=NEXT+1;JOBS[NEXT]={state='queued',moved=1};return NEXT end
-            local function roleListing(s)
-                local out={};local keys={}
-                for id,v in pairs((CONTENTS[s] or {}).items or {}) do if v.count>0 then keys[#keys+1]=id end end
-                table.sort(keys)
-                for _,id in ipairs(keys) do
-                    local v=CONTENTS[s].items[id];local left=v.count
-                    while left>0 do
-                        local n=math.min(64,left)
-                        out[#out+1]={name=v.item.name,damage=v.item.damage,size=n,maxSize=64};left=left-n
-                    end
-                end
-                return out
-            end
-            local function roleContents(storage,slots,listing,size)
-                local out={items={},slots=#slots,freeSlots=#slots}
-                for _,slot in ipairs(slots) do
-                    assert(slot<=size)
-                    local v=listing[slot]
-                    if v and v.size>0 then
-                        local id=require('item_identity').stackName(v)
-                        local row=out.items[id] or {item={name=v.name,damage=v.damage or 0},count=0,maxSize=64,room=0,stacks=0}
-                        row.count=row.count+v.size;row.room=row.room+64-v.size;row.stacks=row.stacks+1
-                        out.items[id]=row;out.freeSlots=out.freeSlots-1
-                    end
-                end
-                return out
-            end
             package.preload.logistics=function() return {status=function(id)
                 local j=JOBS[id]; if j.state=='queued' then j.state='waiting';return j end
                 if j.state=='waiting' then
@@ -84,30 +57,6 @@ class MesTests(LuaCase):
                 contents=function(s) return CONTENTS[s] or {items={},slots=27,freeSlots=27} end,
                 stackSize=function() return 64 end,
                 scan=function(s) return {job()} end,
-                scanRole=function(s,slots)
-                    local id=job();JOBS[id].steps={{listing=roleListing(s),size=27,read={storage=s,slots=slots}}};return id
-                end,
-                scanRoles=function(requests)
-                    local id=job();local steps={}
-                    for _,r in ipairs(requests) do
-                        steps[#steps+1]={listing=roleListing(r.storage),size=27,
-                            roleKey=r.key or r.storage,read={storage=r.storage,slots=r.slots}}
-                    end
-                    JOBS[id].steps=steps;return {id}
-                end,
-                roleContents=roleContents,
-                roleCapacity=function(contents,item)
-                    local id=require('item_identity').stackName(item)
-                    return contents.freeSlots*64+((contents.items[id] or {}).room or 0)
-                end,
-                roleFits=function(contents,quantities)
-                    local free=contents.freeSlots
-                    for id,n in pairs(quantities) do
-                        local room=(contents.items[id] or {}).room or 0
-                        free=free-math.ceil(math.max(0,n-room)/64)
-                    end
-                    return free>=0
-                end,
                 fetch=function(item,n,s)
                     s=type(s)=='table' and s.storage or s
                     local id=require('item_identity').stackName(item)
@@ -158,18 +107,6 @@ class MesTests(LuaCase):
             end
             wh.fetchMany=function(requests,to) return many(requests,to,false) end
             wh.collect=function(from,requests) return many(requests,from,true) end
-            wh.storeMany=function(from,opts)
-                local storage=type(from)=='table' and from.storage or from
-                local requests=opts and opts.requests
-                if not requests then
-                    requests={}
-                    for _,v in pairs((CONTENTS[storage] or {}).items or {}) do
-                        if v.count>0 then requests[#requests+1]={item=v.item,count=v.count} end
-                    end
-                    table.sort(requests,function(a,b) return require('item_identity').stackName(a.item)<require('item_identity').stackName(b.item) end)
-                end
-                return many(requests,from,true)
-            end
             CLIENT_STATUS='complete'; CLIENT_CALLS=0
             package.preload.map=function() return {} end
             PREPARED={}

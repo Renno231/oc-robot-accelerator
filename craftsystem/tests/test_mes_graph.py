@@ -120,48 +120,6 @@ class MesGraphTests(LuaCase):
                 contents=listing,stackSize=function(i) return MAXSTACK[require('item_identity').stackName(i)] or 64 end,
                 settled=function(id) return JOBS[id].settled==true end,
                 scan=function(s) SCANS[#SCANS+1]={storage=s,time=TIME};return {job()} end,
-                scanRole=function(s,slots)
-                    SCANS[#SCANS+1]={storage=s,time=TIME,slots=slots}
-                    local stacks={};local index=0;local ids={}
-                    for id in pairs(CONTENTS[s] or {}) do ids[#ids+1]=id end;table.sort(ids)
-                    local selected={};for _,slot in ipairs(slots) do selected[slot]=true end
-                    for _,id in ipairs(ids) do
-                        local n=held(s,id);local maximum=MAXSTACK[id] or 64
-                        local name,damage=id:match('^(.*):(%d+)$')
-                        while n>0 do
-                            index=index+1
-                            if selected[index] then stacks[index]={name=name or id,damage=tonumber(damage) or 0,size=math.min(n,maximum),maxSize=maximum} end
-                            n=n-maximum
-                        end
-                    end
-                    local j=job();JOBS[j].steps={{listing=stacks,size=CAPACITY[s] or 4}};return j
-                end,
-                roleContents=function(s,slots,stacks,size)
-                    local view={items={},slots=#slots,freeSlots=#slots}
-                    for _,slot in ipairs(slots) do
-                        assert(slot<=size,'role slot outside inventory')
-                        local stack=stacks[slot]
-                        if stack then
-                            local id=require('item_identity').stackName(stack)
-                            local v=view.items[id] or {item={name=stack.name,damage=stack.damage},count=0,room=0,stacks=0,maxSize=stack.maxSize}
-                            v.count=v.count+stack.size;v.room=v.room+stack.maxSize-stack.size;v.stacks=v.stacks+1
-                            view.items[id]=v;view.freeSlots=view.freeSlots-1
-                        end
-                    end
-                    return view
-                end,
-                roleCapacity=function(view,i)
-                    local id=require('item_identity').stackName(i);local maximum=MAXSTACK[id] or 64
-                    return view.freeSlots*maximum+(view.items[id] and view.items[id].room or 0)
-                end,
-                roleFits=function(view,quantities)
-                    local free=view.freeSlots
-                    for id,n in pairs(quantities) do
-                        local maximum=MAXSTACK[id] or 64;local room=view.items[id] and view.items[id].room or 0
-                        free=free-math.ceil(math.max(0,n-room)/maximum)
-                    end
-                    return free>=0
-                end,
                 fetch=function(i,n,s)
                     s=type(s)=='table' and s.storage or s
                     local id=require('item_identity').stackName(i)
@@ -244,27 +202,6 @@ class MesGraphTests(LuaCase):
             end
             wh.fetchMany=function(requests,to) return many(requests,to,false) end
             wh.collect=function(from,requests) return many(requests,from,true) end
-            wh.storeMany=function(from,opts)
-                local requests=opts and opts.requests
-                if not requests then
-                    requests={}
-                    local storage=type(from)=='table' and from.storage or from
-                    local ids={};for id,n in pairs(CONTENTS[storage] or {}) do if n>0 then ids[#ids+1]=id end end
-                    table.sort(ids)
-                    for _,id in ipairs(ids) do
-                        local name,damage=id:match('^(.*):(%d+)$')
-                        requests[#requests+1]={item={name=name or id,damage=tonumber(damage) or 0},count=held(storage,id)}
-                    end
-                end
-                return many(requests,from,true)
-            end
-            wh.scanRoles=function(requests)
-                local ids={}
-                for _,r in ipairs(requests) do
-                    local id=wh.scanRole(r.storage,r.slots);JOBS[id].steps[1].roleKey=r.key;ids[#ids+1]=id
-                end
-                return ids
-            end
             package.preload.recipes=function() return {getAll=function(id) return DB[id] end} end
             package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
             package.preload.craft_tools=function() return {list=function() return {} end} end
@@ -888,29 +825,23 @@ class MesGraphTests(LuaCase):
             return held('stock','t:bronze'),held('stock','t:steel')
         '''), (1, 1))
 
-    def test_fuel_plan_requires_authoritative_declared_role_observation(self):
+    def test_fuel_plan_uses_what_the_mes_delivered(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
-            CFG.machineTypes.furnace.fuel={role='fuel',item='t:fuel',per=8}
-            CFG.machineTypes.furnace.roles={'input','fuel','output'};CFG.machineTypes.furnace.roleSlots.fuel={1}
-            put('fuel1','a:foreign',1);put('fuel1','t:fuel',1);put('stock','t:ore',1)
+            local mt=CFG.machineTypes.furnace;mt.batch=4;mt.fuel={role='fuel',item='t:fuel',per=8}
+            mt.roles={'input','fuel','output'};mt.roleSlots.fuel={1}
+            -- Fuel the MES did not deliver is not credited.
+            put('fuel1','t:fuel',5);put('stock','t:ore',30);put('stock','t:fuel',4)
             DB['t:metal']={{'t:ore',qty=1,isProcessing=true,machineType='furnace'}}
-            local p=assert(M.plan('t:metal',1,{config=CFG}))
-            assert(not p.craftable and #p.missing==1 and p.stages[1].fuel.need==1)
-            -- A valid observation of the declared slot does not credit slot2.
-            local wh=require('warehouse');local id=wh.scanRole('fuel1',{1});local step=JOBS[id].steps[1]
-            wh.cachedRoleContents=function(s,slots)
-                if s=='fuel1' then return wh.roleContents(s,slots,step.listing,step.size) end
-            end
-            local scoped=assert(M.plan('t:metal',1,{config=CFG}))
-            assert(not scoped.craftable and scoped.missing[1].item=='t:fuel')
-            -- Genuine in-role fuel is credited with no plan-triggered physical scan.
-            put('fuel1','a:foreign',0)
-            local good=wh.scanRole('fuel1',{1});step=JOBS[good].steps[1]
-            local scans=#SCANS
-            local credited=assert(M.plan('t:metal',1,{config=CFG}))
-            return credited.craftable,credited.stages[1].fuel.need,#SCANS==scans
-        '''), (True, 0, True))
+            local before=assert(M.plan('t:metal',1,{config=CFG})).stages[1].fuel.need
+            MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
+            local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',12)})
+            assert(r.status=='complete',r.reason)
+            -- 2 fuel delivered for 12 inputs covers 4 more; 8 more needs one.
+            local four=assert(M.plan('t:metal',4,{config=CFG})).stages[1].fuel.need
+            local eight=assert(M.plan('t:metal',8,{config=CFG})).stages[1].fuel.need
+            return before,four,eight
+        '''), (1, 0, 1))
 
     def test_load_redistribution_does_not_overspend_planned_fuel(self):
         self.assertEqual(self.lua.execute('''
@@ -971,7 +902,7 @@ class MesGraphTests(LuaCase):
             return fuel,held('stock','t:fuel'),held('fuel1','t:fuel'),held('stock','t:metal')
         '''), (2, 0, 2, 12))
 
-    def test_fuel_is_counted_from_the_first_read_plus_deliveries(self):
+    def test_fuel_added_outside_the_mes_is_not_counted(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
             local mt=CFG.machineTypes.furnace;mt.batch=4;mt.fuel={role='fuel',item='t:fuel',per=8}

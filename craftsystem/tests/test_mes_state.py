@@ -36,13 +36,7 @@ class MesStateTests(LuaCase):
             dispatch=function(a) ACTIONS[#ACTIONS+1]=a end,
             emit=function(...) EMITTED[#EMITTED+1]={...} end,
             contents=function(storage) return view(storage) end,
-            roleContents=function(storage,slots,listing,size) return S.copy(listing) end,
             stackSize=function() return 64 end,
-            roleFits=function(v,quantities)
-              local free=v.freeSlots
-              for id,n in pairs(quantities) do local r=v.items[id] or {};free=free-math.ceil(math.max(0,n-(r.room or 0))/(r.maxSize or 64)) end
-              return free>=0
-            end,
             crafters=function() return CF end,
             groups=function(kind) local o={};for n,g in pairs(GROUPS) do if not kind or g.type==kind then o[n]=g end end;return o end,
             bufferIdentity=function(storage) return ALIAS or storage end,
@@ -75,9 +69,7 @@ class MesStateTests(LuaCase):
           function submit(a,ids,err) fact('action_submitted',{token=a.token,ids=ids,error=err}) end
           function receipt(a,id,state,why,moved)
             local l={state=state or 'done',reason=why,trips=1,tripTimings={{queuedAt=TIME,finishedAt=TIME}},steps={},perItem={}}
-            if a.kind=='scanRoles' then for _,r in ipairs(a.requests) do l.steps[#l.steps+1]={roleKey=r.key,listing=S.copy(view(r.storage)),size=2} end
-            elseif a.kind=='scanRole' then l.steps={{listing=S.copy(view(a.storage)),size=2}}
-            else for i,r in ipairs(a.requests or {}) do
+            for i,r in ipairs(a.requests or {}) do
               local n=moved and moved[i] or r.count
               -- A collection takes what is there.
               if a.kind=='collectMany' then
@@ -85,7 +77,7 @@ class MesStateTests(LuaCase):
                 if n<r.count then l.steps[#l.steps+1]={short=true};l.held={} end
               end
               l.perItem[#l.perItem+1]={item=r.item,requestIndex=i,requested=r.count,moved=n,shortfall=r.count-n,taken=r.count,returned=r.count-n}
-            end end
+            end
             fact('job',{id=id,receipt=l});return l
           end
           function finish(a,state,why,moved)
@@ -109,7 +101,7 @@ class MesStateTests(LuaCase):
               receipt={status=status or 'complete',message='robot '..(status or 'complete'),buffer=buffer}});advance()
           end
           function loaded(stages,opts)
-            new(stages,opts);drain('scanRoles');drain('fetchMany')
+            new(stages,opts);drain('fetchMany')
           end
         ''')
 
@@ -305,10 +297,9 @@ class MesStateTests(LuaCase):
           while #actions('fetchMany')>0 do drain('fetchMany') end
           -- Same recipe tops up; the other recipe waits. Nothing is looked at.
           assert(#RUN.stages[1].loadLedger==4 and RUN.stages[2].loadLedger==nil)
-          assert(#actions('scanRole')==0 and #actions('scanRoles')==0 and #actions('fetchMany')==0)
+          assert(#actions('fetchMany')==0)
           put('mx','t:bronze',4);tick(5);drain('collectMany')
           assert(RUN.stages[1].state=='done' and #RUN.stages[2].loadLedger==1)
-          assert(#actions('scanRole')==0 and #actions('scanRoles')==0)
         ''')
 
     def test_machine_fifo_packed_store_allocates_real_split_ids_and_byproducts(self):
@@ -348,5 +339,4 @@ class MesStateTests(LuaCase):
           local fuel=0;for _,a in ipairs(ACTIONS) do if a.kind=='fetchMany' then for _,v in ipairs(a.requests) do if v.item.name=='t:fuel' then fuel=fuel+v.count end end end end
           local f=WORLD.machines.kiln.fuel
           assert(#RUN.stages[1].loadLedger==2 and fuel==2 and f.credit==2 and f.admitted==4,fuel..' '..f.credit..' '..f.admitted)
-          assert(#actions('scanRoles')==0 and #actions('scanRole')==0)
         ''')
