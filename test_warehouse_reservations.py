@@ -2,6 +2,7 @@
 from pathlib import Path
 import unittest
 from lupa.lua53 import LuaRuntime
+from test_store import install_store
 
 
 class ReservationTests(unittest.TestCase):
@@ -33,6 +34,7 @@ class ReservationTests(unittest.TestCase):
           end
           os.rename=function() return true end
         ''')
+        install_store(self.lua, preserve_io=True)
         self.lua.globals().SOURCE = Path('drone-logistics/lib/warehouse.lua').read_text()
         self.lua.execute('''wh=assert(load(SOURCE))();item={name='minecraft:clay_ball',damage=0}
           function scan(storage,n,size)
@@ -48,6 +50,17 @@ class ReservationTests(unittest.TestCase):
           a=assert(wh.fetch(item,64,'buffer'));b=assert(wh.fetch(item,64,'buffer'))
           local c,e=wh.fetch(item,1,'buffer');assert(c==nil and e:find('available 0'))
           assert(jobs[a].submitted[1].count==64 and jobs[b].submitted[1].count==64)
+        ''')
+
+    def test_catalogue_survives_reload_and_forces_log_variant(self):
+        self.lua.execute('''
+          variant('files')
+          local before=wh.count(item)
+          wh.observed('stock',{{item=item,count=37}})
+          assert(wh.count(item)==37)
+          wh=assert(load(SOURCE))()
+          assert(wh.count(item)==37 and before==128)
+          assert(disk['/etc/warehouse.db'] and not dirs['/etc/warehouse.db'])
         ''')
 
     def test_group_inventory_aliases_never_count_as_stock(self):

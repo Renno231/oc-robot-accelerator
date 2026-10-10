@@ -10,7 +10,8 @@ local function read(path,default)
   local t=serialization.unserialize(f:read("*a"));f:close();assert(type(t)=="table","invalid "..path);return t
 end
 local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
-local db={}
+local db_store=require("store").open("/etc/warehouse.db","log")
+local db=db_store:load()
 -- Reservations belong to warehouse-submitted jobs, not the logistics router.
 -- Inventory aliases share a key, so two faces cannot reserve the same stock.
 local inFlight={}
@@ -36,15 +37,6 @@ local function saveLimits()
   if not limitsDirty then return end
   local f=assert(io.open("/etc/warehouse.stacks","w"));f:write(serialization.serialize(limits));f:close();limitsDirty=false
 end
-local rows,keys,staging=0,{},nil
-local keySet={}
-local function track(key) if not keySet[key] then keySet[key]=true;keys[#keys+1]=key end end
--- Append one inventory record, not the entire catalogue, on an observation.
--- Replay streams the journal; memory remains proportional to current inventory types.
-do local f=io.open("/etc/warehouse.db","r");if f then
-  for line in f:lines() do local r=assert(serialization.unserialize(line),"invalid warehouse journal");db[r.key]=r.value;rows=rows+1 end
-  f:close()
-end end
 for _,e in pairs(db) do for _,v in pairs(e.items or {}) do learn(v.item,v.maxSize) end end
 local function saveConfig()
   local f=assert(io.open("/etc/warehouse.cfg","w"));f:write(serialization.serialize(cfg));f:close()
@@ -60,33 +52,7 @@ local function syncMapRevision()
 end
 function M.revision() syncMapRevision();return revision end
 local function saveInventory(key)
-  local line=serialization.serialize({key=key,value=db[key]},false).."\n"
-  local f=assert(io.open("/etc/warehouse.db","a"));f:write(line);f:close();rows=rows+1
-  if staging then staging.file:write(line);staging.rows=staging.rows+1 end
-end
-local function compact()
-  if staging then staging.file:close();staging=nil end
-  local tmp="/etc/warehouse.db.new";local f=assert(io.open(tmp,"w"))
-  rows=0;for key,value in pairs(db) do f:write(serialization.serialize({key=key,value=value},false),"\n");rows=rows+1 end
-  f:close();assert(os.rename(tmp,"/etc/warehouse.db"))
-end
--- Event-driven incremental compaction: copy at most one inventory per finished
--- job. New observations go to both files while copying; a rename commits the
--- complete snapshot. A reboot during copying still replays the intact old log.
--- Journal/replay work is O(inventories * bounded endpoints per job), not uptime.
-local function maintain()
-  if not staging and rows>math.max(8,2*#keys) then
-    staging={file=assert(io.open("/etc/warehouse.db.new","w")),cursor=1,rows=0}
-  end
-  if not staging then return end
-  local key=keys[staging.cursor]
-  if key and db[key] then
-    staging.file:write(serialization.serialize({key=key,value=db[key]},false),"\n");staging.rows=staging.rows+1
-  end
-  staging.cursor=staging.cursor+1
-  if staging.cursor>#keys then
-    staging.file:close();assert(os.rename("/etc/warehouse.db.new","/etc/warehouse.db"));rows=staging.rows;staging=nil
-  end
+  db_store:put(key,db[key])
 end
 local function item(i)
   assert(type(i)=="table" and type(i.name)=="string" and (i.label==nil or type(i.label)=="string"),"item required")
@@ -226,13 +192,6 @@ local function grouped(storage)
     if (inventory(s) or s)==key then return true end
   end end
 end
-local function rebuildKeys()
-  keys={};keySet={}
-  for storage in pairs(cfg.members) do track(inventory(storage)) end
-  for key in pairs(db) do track(key) end
-  table.sort(keys)
-end
-rebuildKeys()
 local function entries()
   local out={}
   for s,settings in pairs(cfg.members) do if not grouped(s) and map.storage(s) then
@@ -242,9 +201,9 @@ local function entries()
   return out
 end
 local function prune()
-  local used={};for s in pairs(cfg.members) do used[inventory(s)]=true end
-  for key in pairs(db) do if not used[key] and not map.storage(key) then db[key]=nil end end
-  compact();rebuildKeys()
+  local used,removed={},false;for s in pairs(cfg.members) do used[inventory(s)]=true end
+  for key in pairs(db) do if not used[key] and not map.storage(key) then db[key]=nil;db_store:delete(key);removed=true end end
+  if removed then db_store:flush() end
 end
 function M.add(storage,settings)
   assert(map.storage(storage),"unknown storage");settings=copy(settings or {})
@@ -416,7 +375,6 @@ local function observe(storage,step)
   for k,v in pairs(db[key] and db[key].items or {}) do if not e.items[k] then
     e.items[k]={item=v.item,count=0,maxSize=v.maxSize,stacks=0,room=0}
   end end
-  track(key)
   db[key]=e;saveInventory(key);return true
 end
 local endpointStorages
@@ -434,14 +392,14 @@ function M.scan(storages)
   if type(storages)=="string" then storages={storages} end
   if storages then for _,s in ipairs(storages) do assert(map.storage(s),"unknown storage");list[#list+1]=s end
   else for _,faces in pairs(entries()) do list[#list+1]=faces[1].storage end end
-  table.sort(list);compact();local ids,seen={},{}
+  table.sort(list);local ids,seen={},{}
   for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
   return ids
 end
 local function adjust(storage,i,delta,maximum,touched)
   if not storage or delta==0 then return end
   local key=inventory(storage) or storage;local e=db[key];touched[key]=storage
-  if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
   local function change(k,v,n)
     v.maxSize=maximum or v.maxSize
     if not v.maxSize then
@@ -469,14 +427,14 @@ local function adjust(storage,i,delta,maximum,touched)
 end
 local function short(storage,i,returned,touched)
   if not storage then return end
-  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
   local n=quantity(e,i);adjust(storage,i,-n,nil,touched)
   if returned>0 then adjust(storage,i,returned,nil,touched) end
   touched[key]=storage
 end
 local function full(storage,i,touched)
   if not storage then return end
-  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e;track(key) end
+  local key=inventory(storage) or storage;local e=db[key];if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
   e.full=e.full or {};e.full[itemKey(i)]=true;e.freeSlots=0
   for _,v in pairs(e.items) do if matches(v.item,i) then v.room=0 end end
   e.estimated=true;touched[key]=storage
@@ -557,7 +515,7 @@ local function finished(_,id)
   -- Release only after the final ledger has been incorporated in the catalogue.
   inFlight[id]=nil
   pendingCatalogue[id]=nil
-  maintain()
+  if observed or next(touched) then db_store:flush() end
   local learned=limitsDirty;saveLimits()
   if observed or next(touched) or learned then changed() end
   endpointStorages=nil
@@ -578,13 +536,13 @@ function M.observed(storage,counts)
   for _,v in pairs(db[key] and db[key].items or {}) do short(storage,v.item,0,touched) end
   for _,c in ipairs(counts) do short(storage,item(c.item),c.count,touched) end
   for k in pairs(touched) do if db[k] then saveInventory(k) end end
-  if next(touched) then changed() end
+  if next(touched) then db_store:flush();changed() end
 end
 -- A machine used up n of an item it was given (known from the output collected).
 function M.consumed(storage,i,n)
   local touched={};adjust(storage,item(i),-n,nil,touched)
   for key in pairs(touched) do if db[key] then saveInventory(key) end end
-  if next(touched) then changed() end
+  if next(touched) then db_store:flush();changed() end
 end
 function M.fetch(i,n,to,opts)
   i=item(i);positive(n);local candidates,total={},0

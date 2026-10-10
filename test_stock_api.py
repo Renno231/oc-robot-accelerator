@@ -4,6 +4,7 @@ import unittest
 
 from lupa.lua53 import LuaRuntime
 import test_warehouse_reservations as reservations
+from test_store import install_store
 
 
 class WarehouseApiTests(unittest.TestCase):
@@ -107,6 +108,8 @@ class LibraryApiTests(unittest.TestCase):
         ''')
 
     def load(self, library, variable):
+        if library == 'warehouse':
+            install_store(self.lua, preserve_io=True)
         self.lua.globals().SOURCE = Path(f'drone-logistics/lib/{library}.lua').read_text()
         self.lua.execute(f'{variable}=assert(load(SOURCE))()')
 
