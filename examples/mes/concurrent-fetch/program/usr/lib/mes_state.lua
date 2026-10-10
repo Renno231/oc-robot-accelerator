@@ -1213,8 +1213,9 @@ end
 local function collect(w, g)
   local requests, byItem, first = {}, {}, nil
   for _, load in ipairs(g.loads) do
-    -- A load still processing has nothing to take yet.
-    for _, id in ipairs(w.now >= load.due and sorted(load.remaining) or {}) do
+    -- The trip is made for the due loads; output of later loads that is already
+    -- finished comes along at no cost. Items are credited oldest load first.
+    for _, id in ipairs(sorted(load.remaining)) do
       local n = load.remaining[id]
       if n > 0 then
         if not byItem[id] then
