@@ -7,9 +7,9 @@ local computer=require('computer')
 local world=state.world()
 local queue,head={},1
 local installed,pumping=false,false
-local history,current,nextRun={}, {status='idle',stages={},active={}},0
+local history,active,nextRun,none={}, {},0,{status='idle',stages={},active={}}
 local wh,lg,client,prepareRobot
-local watched={}
+local watched={} -- logistics job id -> owning run id
 local function enqueue(id,what,data) queue[#queue+1]={id=id,what=what,data=data} end
 M.enqueue=enqueue
 function M.guarded() return pumping end
@@ -20,10 +20,10 @@ local function observeJobs()
   for id in pairs(watched) do
     local r=lg.status(id)
     if r then
-      enqueue(nil,'job',{id=id,receipt=r})
+      enqueue(watched[id],'job',{id=id,receipt=r})
       local done=r.state=='done' or r.state=='failed' or r.state=='partial'
-      if done and wh.settled(id)==true then enqueue(nil,'settled',{id=id});watched[id]=nil end
-    else enqueue(nil,'job_missing',{id=id,reason='Missing logistics job '..tostring(id)}) end
+      if done and wh.settled(id)==true then enqueue(watched[id],'settled',{id=id});watched[id]=nil end
+    else enqueue(watched[id],'job_missing',{id=id,reason='Missing logistics job '..tostring(id)}) end
   end
 end
 local function dispatch(a,run)
@@ -49,9 +49,21 @@ local function dispatch(a,run)
   local submitted=ok and (ids or partial) or {}
   if type(submitted)~='table' then submitted={} end
   if ok and ids and a.kind=='scan' and #submitted==0 then ids=nil;err='Warehouse scan submitted no jobs' end
-  for _,id in ipairs(submitted) do watched[id]=true end
+  for _,id in ipairs(submitted) do watched[id]=run.id end
   enqueue(run.id,'action_submitted',{token=a.token,ids=submitted,error=not ok and tostring(ids) or not ids and tostring(err) or nil})
   return ok and ids,not ok and tostring(ids) or not ids and tostring(err) or nil
+end
+-- Facts carry their run id, a robot token "<run>:<n>" or job id "mes-<run>-<stage>"; the rest are world facts.
+local function owner(f)
+  local d=type(f.data)=='table' and f.data or {}
+  local n=type(d.token)=='string' and d.token:match('^(%d+):') or type(d.jobId)=='string' and d.jobId:match('^mes%-(%d+)%-')
+  local run=history[f.id or tonumber(n or '')]
+  return run and run.status=='running' and run
+end
+-- Least recently served run decides first, so no request starves.
+local function order()
+  table.sort(active,function(a,b) if (a.served or 0)~=(b.served or 0) then return (a.served or 0)<(b.served or 0) end;return a.id<b.id end)
+  return {table.unpack(active)}
 end
 function M.pump()
   if pumping or not installed then return end
@@ -66,15 +78,20 @@ function M.pump()
         f.data.now=computer.uptime();observeJobs()
       elseif f.what=='observe_jobs' then observeJobs()
       end
-      -- The public API admits one run at a time. Historical ledgers must not
-      -- make every service tick progressively more expensive.
-      if current.status=='running' and (not f.id or current.id==f.id) then state.update(current,f.what,f.data)
+      -- Finished runs are not visited, so history never slows a tick.
+      local run=owner(f)
+      if f.what=='tick' then for _,r in ipairs(active) do state.update(r,'tick',f.data) end
+      elseif run then state.update(run,f.what,f.data)
       else state.updateWorld(world,f.what,f.data) end
       -- Drain nested facts together before decisions, preserving first-known
       -- failures and preventing any policy execution in transport callbacks.
       if head>#queue then
         state.advanceWorld(world,dispatch,M.clientOptions)
-        if head>#queue and current.status=='running' then state.update(current,'tick',{now=computer.uptime()});state.advance(current) end
+        if head>#queue then
+          local now=computer.uptime()
+          for _,r in ipairs(order()) do if r.status=='running' then state.update(r,'tick',{now=now});state.advance(r) end end
+          for i=#active,1,-1 do if active[i].status~='running' then table.remove(active,i) end end
+        end
       end
     end
     queue={};head=1
@@ -108,20 +125,23 @@ local function crafters(cfg)
 end
 local function bufferIdentity(storage) local member=wh.members()[storage];return member and member.inventory or storage end
 function M.submit(plan,cfg,opts)
-  if current.status=='running' then return nil,'busy' end
   nextRun=nextRun+1
   local ports={dispatch=dispatch,emit=function(...) event.push('mes',...) end,contents=wh.contents,roleContents=wh.roleContents,roleFits=wh.roleFits,stackSize=wh.stackSize,
     crafters=function() return crafters(cfg) end,groups=wh.groups,bufferIdentity=bufferIdentity,prepareRobot=prepareRobot}
-  local run=state.new(nextRun,plan,cfg,opts,world,ports,computer.uptime());history[nextRun]=run;current=run
+  local run=state.new(nextRun,plan,cfg,opts,world,ports,computer.uptime());history[nextRun]=run;active[#active+1]=run
   enqueue(run.id,'advance',{});M.pump();return run.id
 end
-local internal={plan=true,cfg=true,opts=true,world=true,ports=true,now=true,actions=true,jobs=true,settled=true,robotFacts=true,sequence=true,groups=true,toolReservations=true,fuelAvailable=true,emptyBuffers=true,advancing=true,onStage=true,failureFacts=true}
+local internal={plan=true,cfg=true,opts=true,world=true,ports=true,now=true,actions=true,jobs=true,settled=true,robotFacts=true,sequence=true,groups=true,toolReservations=true,claims=true,served=true,yielded=true,fuelAvailable=true,emptyBuffers=true,advancing=true,onStage=true,failureFacts=true}
 local function snapshot(run)
   if not run then return end
   local o={};for k,v in pairs(run) do if k~='stages' and not internal[k] then o[k]=state.copy(v) end end;o.stages={}
   for i,s in ipairs(run.stages) do o.stages[i]=state.stageSnapshot(s) end;return o
 end
-function M.status(id) if id~=nil then return snapshot(history[id]) end;return snapshot(current) end
+function M.status(id) if id~=nil then return snapshot(history[id]) end;return snapshot(history[nextRun] or none) end
+-- Raw stock still claimed by running requests; planning withholds it.
+function M.claims()
+  local o={};for _,r in ipairs(active) do for id,n in pairs(r.claims or {}) do o[id]=(o[id] or 0)+n end end;return o
+end
 function M.wait(id)
   local run=history[id];if not run then return nil,'Unknown run' end
   while run.status=='running' do event.pull(0.2) end

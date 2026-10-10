@@ -18,7 +18,7 @@ local function changed(run,s,state,detail,done)
 end
 local function action(run,kind,data)
   run.sequence=run.sequence+1;local token=tostring(run.id)..':'..run.sequence
-  local a=data or {};a.kind=kind;a.token=token;a.ids={};run.actions[token]=a
+  local a=data or {};a.kind=kind;a.token=token;a.ids={};a.run=run;run.actions[token]=a
   local _,err=run.ports.dispatch(a,run)
   if err then stop(run,err) end
   return a
@@ -48,7 +48,8 @@ function M.update(run,what,data)
   elseif what=='reconcile' then M.updateWorld(run.world,what,data)
   end
 end
-function M.world() return {robots={},buffers={},machines={},facts={}} end
+-- Shared by all runs: robots, buffers and machine groups are scheduled across requests.
+function M.world() return {robots={},buffers={},machines={},facts={},groups={},toolReservations={},waiting={},serves=0,now=0} end
 function M.confirmIdle(world,address)
   local r=world.robots[address]
   if r and r.state=='busy' and r.run then return end
@@ -82,12 +83,14 @@ end
 function M.new(id,plan,cfg,opts,world,ports,now)
   local run={id=id,item=plan.requestItem,qty=plan.requestQuantity,status='running',stages=copy(plan.stages),active={},started=now,trips=0,
     plan=plan,cfg=cfg,opts=opts,world=world,ports=ports,now=now,onStage=opts.onStage,actions={},jobs={},settled={},robotFacts={},sequence=0,
-    groups={},toolReservations={},fuelAvailable={},emptyBuffers={},failureFacts={}}
+    claims={},fuelAvailable={},emptyBuffers={},failureFacts={}}
   for i,s in ipairs(run.stages) do
     s.index=i;s.state='waiting';s.status='waiting';s.done=0;s.total=0;s.detail='Waiting for inputs';s.itemsMoved={};s.firstTask=s.taskIndices[1]
     for _,v in ipairs(s.outputs) do s.total=s.total+v.qty end
-    if s.fuel then run.fuelAvailable[s.fuel.item]=(run.fuelAvailable[s.fuel.item] or 0)+s.fuel.need end
+    if s.fuel then run.fuelAvailable[s.fuel.item]=(run.fuelAvailable[s.fuel.item] or 0)+s.fuel.need;run.claims[s.fuel.item]=(run.claims[s.fuel.item] or 0)+s.fuel.need end
   end
+  -- Raw inputs taken from stock stay claimed until fetched or the run ends.
+  for id,n in pairs(plan.inventory_needed or {}) do id=identity.canonical(id);run.claims[id]=(run.claims[id] or 0)+n end
   return run
 end
 local function outcome(run,a)
@@ -123,7 +126,7 @@ local function beginMany(run,stage,kind,requests,endpoint,autoStore)
   end end
   if #payload==0 then bundle.action={kind=kind..'Many',token='empty:'..run.id,submitted=true,ids={}}
   else bundle.action=action(run,kind..'Many',{requests=payload,endpoint=endpoint,autoStore=autoStore}) end
-  bundle.stage=stage;return bundle
+  bundle.stage=stage;bundle.run=run;return bundle
 end
 local function finishMany(run,bundle)
   local a=bundle.action;local stage=bundle.stage
@@ -163,17 +166,18 @@ local function finishMany(run,bundle)
     if r.physicalStatus then r.status=r.physicalStatus end
     if r.shortfall>0 then r.reason=r.reason or errorText or 'Packed item shortfall';errorText=errorText or r.reason end;r.accounted=nil
   end
+  if bundle.kind=='fetch' then for _,r in ipairs(bundle.records) do local c=run.claims[r.item];if c then c=c-math.min(c,r.moved);run.claims[r.item]=c>0 and c or nil end end end
   bundle.error=errorText;if errorText then stop(run,errorText) end;return true,errorText
 end
-local function roleView(run,a,storage,slots)
-  local ledgers,err=outcome(run,a);if not ledgers then return end
+local function roleView(a,storage,slots)
+  local run=a.run;local ledgers,err=outcome(run,a);if not ledgers then return end
   if err then return false,err end
   local step=ledgers[1] and ledgers[1].steps and ledgers[1].steps[1]
   if not step then return false,'Role scan has no listing' end
   local v,e=run.ports.roleContents(storage,slots,step.listing,step.size);return v or false,e
 end
-local function roleViews(run,a,mt,roles)
-  local ledgers,err=outcome(run,a);if not ledgers then return end;if err then return false,err end
+local function roleViews(a,mt,roles)
+  local run=a.run;local ledgers,err=outcome(run,a);if not ledgers then return end;if err then return false,err end
   local listings,sizes={},{}
   for _,l in ipairs(ledgers) do for _,s in ipairs(l.steps or {}) do
     local role=s.roleKey;if not role then return false,'Role scan has no role key' end
@@ -183,9 +187,10 @@ local function roleViews(run,a,mt,roles)
   return views
 end
 local function release(run,s)
-  for id,n in pairs(s.toolReservations or {}) do run.toolReservations[id]=run.toolReservations[id]-n;if run.toolReservations[id]==0 then run.toolReservations[id]=nil end end;s.toolReservations=nil
+  local tools=run.world.toolReservations
+  for id,n in pairs(s.toolReservations or {}) do tools[id]=tools[id]-n;if tools[id]==0 then tools[id]=nil end end;s.toolReservations=nil
   if s.robotLock then
-    local state=s.status=='unknown' and 'unknown' or 'idle';local r=run.world.robots[s.robotLock];r.state=state;r.run=nil;r.step=nil
+    local state=s.status=='unknown' and 'unknown' or 'idle';local r=run.world.robots[s.robotLock];r.state=state;r.run=nil;r.step=nil;r.last=run.id
     local b=run.world.buffers[s.bufferLock];b.state=state;b.run=nil;b.step=nil;if state=='idle' then b.owner=nil end
     if s.status=='complete' then s.released=run.now end
   end
@@ -232,17 +237,22 @@ local function robotFacts(run)
 end
 local function acquireRobot(run,s)
   local crafters=run.ports.crafters();local names=s.crafter and {s.crafter} or sorted(crafters)
+  local w=run.world;local tools=w.toolReservations
+  -- A run that just released a robot lets another waiting run have it first.
+  local function wanted(name) for id,want in pairs(w.waiting) do if id~=run.id and (want.any or want[name]) then return true end end end
   for _,name in ipairs(names) do
     local c=assert(crafters[name],'Unknown crafter '..tostring(name));assert(c.robot and c.buffer,'Crafter needs a robot and warehouse buffer')
     local r=run.world.robots[c.robot] or {state='unknown'};run.world.robots[c.robot]=r
     local key=run.ports.bufferIdentity(c.buffer);local b=run.world.buffers[key] or {state='idle'};run.world.buffers[key]=b
     local allowed=true
     if run.opts.isCrafterIdle then allowed=run.opts.isCrafterIdle(name,copy(c))==true;if allowed and not r.run then M.confirmIdle(run.world,c.robot);r=run.world.robots[c.robot] end end
-    if allowed and r.state=='idle' and b.state=='idle' then
-      local sub,err,withdrawals=run.ports.prepareRobot(run,s,run.toolReservations)
-      if not sub then if next(run.toolReservations) then return false end;error(err,0) end
+    local yield=r.last==run.id and wanted(name);if yield then run.yielded=true end
+    if allowed and r.state=='idle' and b.state=='idle' and not yield then
+      local sub,err,withdrawals=run.ports.prepareRobot(run,s,tools)
+      if not sub then if next(tools) then return false end;error(err,0) end
       s.prepared=sub;s.toolWithdrawals=withdrawals;s.toolReservations=withdrawals
-      for id,n in pairs(withdrawals) do run.toolReservations[id]=(run.toolReservations[id] or 0)+n end
+      for id,n in pairs(withdrawals) do tools[id]=(tools[id] or 0)+n end
+      w.waiting[run.id]=nil;w.serves=w.serves+1;run.served=w.serves;r.last=nil
       r.state='busy';r.run=run.id;r.step=s.index;b.state='busy';b.owner=c.robot;b.run=run.id;b.step=s.index
       s.crafter=name;s.robotLock=c.robot;s.bufferLock=key;s.buffer=c.buffer;s.locations={c.buffer};s.assigned=run.now;s.started=run.now;s.status='running'
       changed(run,s,'fetching','Preparing inputs')
@@ -250,6 +260,7 @@ local function acquireRobot(run,s)
       run.emptyBuffers[key]=nil;return true
     end
   end
+  local want=w.waiting[run.id] or {};w.waiting[run.id]=want;want[s.crafter or 'any']=true
   return false
 end
 local function robotAdvance(run,s)
@@ -287,24 +298,29 @@ local function robotAdvance(run,s)
   end
   return false
 end
-local function publish(run,g)
-  local resource=run.world.machines[g.name];resource.loads={}
+local function publish(w,g)
+  local resource=w.machines[g.name];resource.loads={}
   for _,load in ipairs(g.loads) do resource.loads[#resource.loads+1]=copy(load.record) end
   for _,load in ipairs(g.quarantined) do resource.loads[#resource.loads+1]=copy(load.record) end
   if resource.state~='unknown' then resource.state=#g.loads>0 and 'busy' or 'idle' end
 end
-local function bad(run,g,r,err,unknown)
-  r.error=g.name..': '..tostring(err);r.left=0;stop(run,r.error)
-  if unknown then run.world.machines[g.name].state='unknown' end
+local function bad(w,g,r,err,unknown)
+  r.error=g.name..': '..tostring(err);r.left=0;stop(r.run,r.error)
+  if unknown then w.machines[g.name].state='unknown' end
 end
-local function quarantine(run,g,load,state)
+local function quarantine(w,g,load,state)
   if not load.quarantined then load.quarantined=true;load.unresolved=copy(load.remaining);g.quarantined[#g.quarantined+1]=load end
-  load.record.state=state or 'unknown';run.world.machines[g.name].state='unknown'
+  load.record.state=state or 'unknown';w.machines[g.name].state='unknown'
 end
 local function hasWork(r) for _,v in ipairs(r.work.requests) do if v.left>0 then return true end end;return false end
 local function donorFor(r)
   if r.left>0 then return r end
   for _,v in ipairs(r.work.requests) do if v.left>0 and v.blocked and not v.admitting then return v end end
+end
+-- Group observations are owned by a run whose request they serve.
+local function owner(g)
+  for _,r in ipairs(g.pending) do if hasWork(r) then return r.run end end
+  local r=g.pending[1] or (g.loads[1] or {}).request;return r and r.run
 end
 local function startMachine(run,s)
   local mt=assert(run.cfg.machineTypes[s.machineType],'Unknown machine type');local available=run.ports.groups(s.machineType)
@@ -340,7 +356,7 @@ local function startMachine(run,s)
       for _,slot in ipairs(mt.roleSlots[role] or {}) do occupied[storage]=occupied[storage] or {};assert(not occupied[storage][slot],'Overlapping machine role slots');occupied[storage][slot]=true end
     end
     assert(roles[mt.output],'Missing output role')
-    local r={stage=s,left=math.floor(operations/#free)+(i<=operations%#free and 1 or 0),capacity=math.floor(mt.batch/perOp),perOp=perOp,outputs=outputs,recipe=table.concat(signature,';'),inputs={},deadline=run.now+60,work=work,active=0}
+    local r={run=run,stage=s,left=math.floor(operations/#free)+(i<=operations%#free and 1 or 0),capacity=math.floor(mt.batch/perOp),perOp=perOp,outputs=outputs,recipe=table.concat(signature,';'),inputs={},deadline=run.now+60,work=work,active=0}
     local order=0
     for _,slot in ipairs(slots) do if t.recipe[slot]~='minecraft:air' then
       order=order+1;local role=mt.inputs[math.min(order,#mt.inputs)];local storage=assert(roles[role],'Missing input role '..role);local id=identity.canonical(t.recipe[slot])
@@ -348,8 +364,9 @@ local function startMachine(run,s)
       r.inputs[role].items[id]=(r.inputs[role].items[id] or 0)+(quantities[slot] or 1)
     end end
     work.requests[#work.requests+1]=r
-    local g=run.groups[name]
-    if not g then g={name=name,mt=mt,roles=roles,pending={},loads={},quarantined={},phase='idle',inputDue=0,outputDue=math.huge,inputBackoff=run.opts.machineBackoffSeconds or 0.5,outputBackoff=run.opts.machineBackoffSeconds or 0.5};run.groups[name]=g end
+    local g=run.world.groups[name]
+    if not g then g={name=name,mt=mt,roles=roles,runs={},opts=run.opts,pending={},loads={},quarantined={},phase='idle',inputDue=0,outputDue=math.huge,inputBackoff=run.opts.machineBackoffSeconds or 0.5,outputBackoff=run.opts.machineBackoffSeconds or 0.5};run.world.groups[name]=g end
+    g.runs[run.id]=true
     g.pending[#g.pending+1]=r
   end
   changed(run,s,'processing','Machine processing');return true
@@ -362,9 +379,9 @@ local function occupy(run,view,id,n)
   stack.room=stack.room or 0;stack.stacks=stack.stacks or math.ceil(stack.count/stack.maxSize)
   local slots=math.ceil(math.max(0,n-stack.room)/stack.maxSize);view.freeSlots=view.freeSlots-slots;stack.count=stack.count+n;stack.stacks=stack.stacks+slots;stack.room=stack.room+slots*stack.maxSize-n
 end
-local function scanInputs(run,g,observed)
-  g.observed=observed or {};g.inputScans={}
-  g.observing={};for _,r in ipairs(g.pending) do if hasWork(r) then g.observing[r.stage.index]=true end end
+local function scanInputs(w,g,observed)
+  g.observed=observed or {};g.inputScans={};local run=owner(g)
+  g.observing={};for _,r in ipairs(g.pending) do if hasWork(r) then g.observing[r.stage]=true end end
   for _,role in ipairs(g.mt.inputs) do g.inputScans[role]=action(run,'scanRole',{storage=g.roles[role],slots=g.mt.roleSlots[role]}) end
   g.phase='inputs'
 end
@@ -375,10 +392,10 @@ local function fits(run,g,r,ops)
   return true
 end
 local function additional(g,r,n) local f=g.mt.fuel;return f and math.max(0,math.ceil(((g.inputsAdmitted or 0)+n*r.perOp)/f.per)-(g.fuelCredit or 0)) or 0 end
-local function blocked(run,g)
-  g.cachedInputs=nil;g.inputDue=run.now+g.inputBackoff;g.inputBackoff=math.min(g.inputBackoff*2,run.opts.machineMaxBackoffSeconds or 8);g.phase='idle'
+local function blocked(w,g)
+  g.cachedInputs=nil;g.inputDue=w.now+g.inputBackoff;g.inputBackoff=math.min(g.inputBackoff*2,g.opts.machineMaxBackoffSeconds or 8);g.phase='idle'
 end
-local function admit(run,g)
+local function admit(w,g)
   local mt=g.mt;local empty=true
   for _,view in pairs(g.observed) do for _,v in pairs(view.items) do if v.count>0 then empty=false end end end
   if empty then g.inputRecipe=nil end
@@ -387,17 +404,17 @@ local function admit(run,g)
     if same then for role,view in pairs(g.observed) do for _,v in pairs(view.items) do if v.count>0 and not ((r.inputs[role] or {}).items or {})[identity.stackName(v.item)] then same=false end end end end
     local ops=donor and math.min(donor.left,r.capacity) or 0
     if donor and (mt.blocking==false or empty or same) then
-      while ops>0 and not fits(run,g,r,ops) do ops=math.floor(ops/2) end
+      while ops>0 and not fits(r.run,g,r,ops) do ops=math.floor(ops/2) end
       if ops>0 and mt.fuel then
         if additional(g,r,ops)>0 and not g.fuelPreflightFresh then
-          g.observing={[r.stage.index]=true};g.fuelCandidate={r=r,donor=donor,position=position,ops=ops};g.fuelScan=action(run,'scanRole',{storage=g.roles[mt.fuel.role],slots=mt.roleSlots[mt.fuel.role]});g.phase='fuel';return true
+          g.observing={[r.stage]=true};g.fuelCandidate={r=r,donor=donor,position=position,ops=ops};g.fuelScan=action(r.run,'scanRole',{storage=g.roles[mt.fuel.role],slots=mt.roleSlots[mt.fuel.role]});g.phase='fuel';return true
         end
-        while ops>0 and additional(g,r,ops)>(run.fuelAvailable[mt.fuel.item] or 0) do ops=math.floor(ops/2) end
+        while ops>0 and additional(g,r,ops)>(r.run.fuelAvailable[mt.fuel.item] or 0) do ops=math.floor(ops/2) end
       end
-      if ops>0 and not run.stopping then
+      if ops>0 and not r.run.stopping then
         donor.left=donor.left-ops;r.blocked=false;r.admitting=true
-        local fuelAdditional=additional(g,r,ops);if mt.fuel then run.fuelAvailable[mt.fuel.item]=run.fuelAvailable[mt.fuel.item]-fuelAdditional end
-        local record={run=run.id,step=r.stage.index,group=g.name,recipe=r.recipe,state='fetching',inputs={},outputs={},collectedItems={},inputHeldBefore={},inputBefore=0,inputVerified=g.verified,items=ops*r.perOp}
+        local fuelAdditional=additional(g,r,ops);if mt.fuel then r.run.fuelAvailable[mt.fuel.item]=r.run.fuelAvailable[mt.fuel.item]-fuelAdditional end
+        local record={run=r.run.id,step=r.stage.index,group=g.name,recipe=r.recipe,state='fetching',inputs={},outputs={},collectedItems={},inputHeldBefore={},inputBefore=0,inputVerified=g.verified,items=ops*r.perOp}
         for role,view in pairs(g.observed) do for _,v in pairs(view.items) do if v.count>0 then record.inputHeldBefore[#record.inputHeldBefore+1]={storage=g.roles[role],role=role,item=identity.stackName(v.item),count=v.count};record.inputBefore=record.inputBefore+v.count end end end
         if not g.verified then record.inputBefore=nil;record.inputHeldBefore=nil end
         for id,n in pairs(r.outputs) do record.outputs[id]=ops*n end
@@ -406,44 +423,44 @@ local function admit(run,g)
         r.stage.loadLedger=r.stage.loadLedger or {};r.stage.loadLedger[#r.stage.loadLedger+1]=record
         if mt.fuel then load.fetches[#load.fetches+1]={item=mt.fuel.item,count=fuelAdditional,endpoint={storage=g.roles[mt.fuel.role],slots=mt.roleSlots[mt.fuel.role]},fuel=true} end
         for _,role in ipairs(sorted(r.inputs)) do local input=r.inputs[role];for _,id in ipairs(sorted(input.items)) do load.fetches[#load.fetches+1]={item=id,count=ops*input.items[id],endpoint={storage=input.storage,slots=input.slots},role=role} end end
-        load.bundle=beginMany(run,r.stage,'fetch',load.fetches,load.fetches[1].endpoint);g.loading=load;g.phase='loading';publish(run,g);return true
+        load.bundle=beginMany(r.run,r.stage,'fetch',load.fetches,load.fetches[1].endpoint);g.loading=load;g.phase='loading';publish(w,g);return true
       end
     end
-    if donor then r.blocked=true;if run.now>=r.deadline then bad(run,g,r,'Machine input deadline exceeded',false) end end
+    if donor then r.blocked=true;if w.now>=r.deadline then bad(w,g,r,'Machine input deadline exceeded',false) end end
   end
-  blocked(run,g);return true
+  blocked(w,g);return true
 end
-local function finishLoad(run,g)
-  local load=g.loading;local done,err=finishMany(run,load.bundle);if not done then return false end
+local function finishLoad(w,g)
+  local load=g.loading;local done,err=finishMany(load.bundle.run,load.bundle);if not done then return false end
   local r=load.request;local mt=g.mt;local record=load.record
   for _,fetch in ipairs(load.fetches) do if not fetch.fuel and fetch.receipt then record.inputs[#record.inputs+1]={item=fetch.item,count=fetch.receipt.moved or 0,wanted=fetch.count,storage=fetch.endpoint.storage,role=fetch.role,slots=copy(fetch.endpoint.slots),job=fetch.receipt.job,status=fetch.receipt.status} end end
   r.admitting=false
   if err then
-    bad(run,g,r,err,true);quarantine(run,g,load,'failed');r.active=r.active-1;table.remove(g.loads,#g.loads)
+    bad(w,g,r,err,true);quarantine(w,g,load,'failed');r.active=r.active-1;table.remove(g.loads,#g.loads)
   else
     if mt.fuel then g.fuelCredit=g.fuelCredit+load.fuelAdditional;g.fuelObserved=(g.fuelObserved or 0)+load.fuelAdditional end
-    local duration=load.ops*r.perOp*mt.seconds;load.due=math.max(run.now,g.lastExpectedDue or run.now)+duration;g.lastExpectedDue=load.due;load.deadline=load.due+duration+60
-    record.state='processing';record.started=run.now;record.delivered=run.now;g.inputsAdmitted=(g.inputsAdmitted or 0)+record.items;g.fuelPreflightFresh=false
+    local duration=load.ops*r.perOp*mt.seconds;load.due=math.max(w.now,g.lastExpectedDue or w.now)+duration;g.lastExpectedDue=load.due;load.deadline=load.due+duration+60
+    record.state='processing';record.started=w.now;record.delivered=w.now;g.inputsAdmitted=(g.inputsAdmitted or 0)+record.items;g.fuelPreflightFresh=false
     g.outputDue=math.min(g.outputDue,load.due);g.inputRecipe=r.recipe;r.deadline=load.deadline;g.cachedInputs=copy(g.observed)
-    for role,input in pairs(r.inputs) do for id,q in pairs(input.items) do occupy(run,g.cachedInputs[role],id,load.ops*q) end end
-    r.stage.loadsDelivered=(r.stage.loadsDelivered or 0)+1;changed(run,r.stage,nil,'Load '..r.stage.loadsDelivered..' delivered')
+    for role,input in pairs(r.inputs) do for id,q in pairs(input.items) do occupy(r.run,g.cachedInputs[role],id,load.ops*q) end end
+    r.stage.loadsDelivered=(r.stage.loadsDelivered or 0)+1;changed(r.run,r.stage,nil,'Load '..r.stage.loadsDelivered..' delivered')
     for i,candidate in ipairs(g.pending) do if candidate==r then table.remove(g.pending,i);break end end
-    if hasWork(r) and not run.stopping then g.pending[#g.pending+1]=r end
+    if hasWork(r) and not r.run.stopping then g.pending[#g.pending+1]=r end
   end
-  g.loading=nil;g.phase='idle';g.inputDue=run.now;g.inputBackoff=run.opts.machineBackoffSeconds or 0.5;publish(run,g);return true
+  g.loading=nil;g.phase='idle';g.inputDue=w.now;g.inputBackoff=g.opts.machineBackoffSeconds or 0.5;publish(w,g);return true
 end
-local function reap(run,g,collected)
+local function reap(w,g,collected)
   g.outputDue=math.huge
   for i=#g.loads,1,-1 do local load=g.loads[i];local n=0;for _,q in pairs(load.remaining) do n=n+q end
-    if n==0 or run.now>=load.deadline then
-      if n>0 then bad(run,g,load.request,'Machine output deadline exceeded',true);quarantine(run,g,load)
-      elseif load.record.state~='failed' then load.record.state='done';load.record.collected=run.now;g.inputsCompleted=(g.inputsCompleted or 0)+load.record.items end
-      load.record.finished=run.now;load.request.active=load.request.active-1;table.remove(g.loads,i)
-    else load.due=math.max(load.due,run.now+g.outputBackoff);g.outputDue=math.min(g.outputDue,load.due) end
+    if n==0 or w.now>=load.deadline then
+      if n>0 then bad(w,g,load.request,'Machine output deadline exceeded',true);quarantine(w,g,load)
+      elseif load.record.state~='failed' then load.record.state='done';load.record.collected=w.now;g.inputsCompleted=(g.inputsCompleted or 0)+load.record.items end
+      load.record.finished=w.now;load.request.active=load.request.active-1;table.remove(g.loads,i)
+    else load.due=math.max(load.due,w.now+g.outputBackoff);g.outputDue=math.min(g.outputDue,load.due) end
   end
-  g.outputBackoff=collected and (run.opts.machineBackoffSeconds or 0.5) or math.min(g.outputBackoff*2,run.opts.machineMaxBackoffSeconds or 8);g.phase='idle';publish(run,g)
+  g.outputBackoff=collected and (g.opts.machineBackoffSeconds or 0.5) or math.min(g.outputBackoff*2,g.opts.machineMaxBackoffSeconds or 8);g.phase='idle';publish(w,g)
 end
-local function collect(run,g,contents)
+local function collect(w,g,contents)
   local amounts={};for _,v in pairs(contents.items) do local id=identity.stackName(v.item);amounts[id]=(amounts[id] or 0)+v.count end
   local requests,byItem={},{}
   local fifo={};for _,load in ipairs(g.loads) do fifo[#fifo+1]=load end;for _,load in ipairs(g.quarantined) do fifo[#fifo+1]=load end;table.sort(fifo,function(a,b) return a.sequence<b.sequence end)
@@ -451,17 +468,17 @@ local function collect(run,g,contents)
     for _,load in ipairs(fifo) do
       if load.quarantined then available=available-math.min(available,load.unresolved[id] or 0)
       else local n=math.min(available,load.remaining[id] or 0);if n>0 then
-        load.record.state='storing';changed(run,load.request.stage,'storing','Collecting machine output');allocations[#allocations+1]={load=load,count=n};total=total+n;available=available-n
+        load.record.state='storing';changed(load.request.run,load.request.stage,'storing','Collecting machine output');allocations[#allocations+1]={load=load,count=n};total=total+n;available=available-n
       end end
     end
     if total>0 then requests[#requests+1]={item=id,count=total};byItem[id]=allocations end
   end
-  if #requests==0 then reap(run,g,false);return end
-  local owner=byItem[requests[1].item][1].load.request.stage
-  g.collection={requests=requests,byItem=byItem,bundle=beginMany(run,owner,'store',requests,{storage=g.roles[g.mt.output],slots=g.mt.roleSlots[g.mt.output]})};g.phase='storing'
+  if #requests==0 then reap(w,g,false);return end
+  local first=byItem[requests[1].item][1].load.request
+  g.collection={requests=requests,byItem=byItem,bundle=beginMany(first.run,first.stage,'store',requests,{storage=g.roles[g.mt.output],slots=g.mt.roleSlots[g.mt.output]})};g.phase='storing'
 end
-local function finishCollection(run,g)
-  local c=g.collection;local done,err=finishMany(run,c.bundle);if not done then return false end
+local function finishCollection(w,g)
+  local c=g.collection;local done,err=finishMany(c.bundle.run,c.bundle);if not done then return false end
   for i,request in ipairs(c.requests) do
     local id=request.item;local movement=c.bundle.records[i];local partIndex,offset=1,0
     for _,allocation in ipairs(c.byItem[id]) do
@@ -477,64 +494,64 @@ local function finishCollection(run,g)
         end
         if not part or offset>=quota then partIndex=partIndex+1;offset=0 end
       end
-      if err then bad(run,g,r,err,true);quarantine(run,g,load,'failed');load.remaining={}
-      else load.remaining[id]=load.remaining[id]-n;load.record.collectedItems[id]=(load.record.collectedItems[id] or 0)+n;r.stage.done=r.stage.done+n;changed(run,r.stage,'processing','Machine processing',r.stage.done);load.record.state='processing' end
+      if err then bad(w,g,r,err,true);quarantine(w,g,load,'failed');load.remaining={}
+      else load.remaining[id]=load.remaining[id]-n;load.record.collectedItems[id]=(load.record.collectedItems[id] or 0)+n;r.stage.done=r.stage.done+n;changed(r.run,r.stage,'processing','Machine processing',r.stage.done);load.record.state='processing' end
     end
   end
-  g.collection=nil;reap(run,g,true);return true
+  g.collection=nil;reap(w,g,true);return true
 end
-local function groupAdvance(run,g)
+local function groupAdvance(w,g)
   local mt=g.mt
-  if run.stopping then for _,r in ipairs(g.pending) do r.left=0 end;g.pending={} end
+  for i=#g.pending,1,-1 do local r=g.pending[i];if r.run.stopping then r.left=0;table.remove(g.pending,i) end end
   for i=#g.pending,1,-1 do if not hasWork(g.pending[i]) and not g.pending[i].admitting then table.remove(g.pending,i) end end
   if g.phase=='idle' then
     g.observing=nil
     -- Output is independent of admission; scan only when due.
-    if #g.loads>0 and run.now>=g.outputDue then g.scan=action(run,'scanRole',{storage=g.roles[mt.output],slots=mt.roleSlots[mt.output]});g.phase='output';return true end
+    if #g.loads>0 and w.now>=g.outputDue then g.scan=action(g.loads[1].request.run,'scanRole',{storage=g.roles[mt.output],slots=mt.roleSlots[mt.output]});g.phase='output';return true end
     local ready=false;for _,r in ipairs(g.pending) do if donorFor(r) then ready=true end end
-    if not ready or run.stopping or run.now<g.inputDue then return false end
+    if not ready or w.now<g.inputDue then return false end
     if not g.initialized then
       local used={};for _,role in ipairs(mt.roles or {}) do used[role]=true end;for _,role in ipairs(mt.inputs) do used[role]=true end;used[mt.output]=true;if mt.fuel then used[mt.fuel.role]=true end
       local requests={};for _,role in ipairs(sorted(used)) do requests[#requests+1]={storage=assert(g.roles[role],'Missing machine role '..role),slots=assert(mt.roleSlots[role],'Missing role slots '..role),key=role} end
-      g.observing={};for _,r in ipairs(g.pending) do if hasWork(r) then g.observing[r.stage.index]=true end end
-      g.scan=action(run,'scanRoles',{requests=requests});g.phase='preflight';return true
+      g.observing={};for _,r in ipairs(g.pending) do if hasWork(r) then g.observing[r.stage]=true end end
+      g.scan=action(owner(g),'scanRoles',{requests=requests});g.phase='preflight';return true
     end
     if g.initialInputs then g.observed=g.initialInputs;g.initialInputs=nil;g.verified=true;g.phase='admit'
-    elseif mt.blocking==false and not run.opts.verifyTopups and g.cachedInputs then g.observed=copy(g.cachedInputs);g.verified=false;g.phase='admit'
-    else g.verified=true;scanInputs(run,g) end;return true
+    elseif mt.blocking==false and not g.opts.verifyTopups and g.cachedInputs then g.observed=copy(g.cachedInputs);g.verified=false;g.phase='admit'
+    else g.verified=true;scanInputs(w,g) end;return true
   elseif g.phase=='preflight' then
-    local views,err=roleViews(run,g.scan,mt,g.roles);if views==nil then return false end
+    local views,err=roleViews(g.scan,mt,g.roles);if views==nil then return false end
     if views then for _,v in pairs(views[mt.output].items) do if v.count>0 then err='Machine output is not empty';views=false;break end end end
-    if not views then for _,r in ipairs(g.pending) do bad(run,g,r,err,true) end;g.phase='idle';g.initialized=true;return true end
+    if not views then for _,r in ipairs(g.pending) do bad(w,g,r,err,true) end;g.phase='idle';g.initialized=true;return true end
     g.initialInputs={};for _,role in ipairs(mt.inputs) do g.initialInputs[role]=views[role] end
     if mt.fuel then g.fuelCredit=count(views[mt.fuel.role],mt.fuel.item);g.fuelObserved=g.fuelCredit;g.fuelPreflightFresh=true end
     g.initialized=true;g.phase='idle';return true
   elseif g.phase=='inputs' or g.phase=='fuel_inputs' then
     local errorText;local done=true
-    for role,a in pairs(g.inputScans) do local view,e=roleView(run,a,g.roles[role],mt.roleSlots[role]);if view==nil then done=false elseif view==false then errorText=errorText or e else g.observed[role]=view end end
+    for role,a in pairs(g.inputScans) do local view,e=roleView(a,g.roles[role],mt.roleSlots[role]);if view==nil then done=false elseif view==false then errorText=errorText or e else g.observed[role]=view end end
     if not done then return false end
-    if errorText then for _,r in ipairs(g.pending) do bad(run,g,r,errorText,true) end;g.phase='idle'
-    elseif run.stopping then g.phase='idle'
+    if errorText then for _,r in ipairs(g.pending) do bad(w,g,r,errorText,true) end;g.phase='idle'
+    elseif not next(g.pending) then g.phase='idle'
     elseif g.phase=='fuel_inputs' then g.verified=true;g.phase='fuel_credit'
     else g.phase='admit' end;return true
-  elseif g.phase=='admit' then if run.stopping then g.phase='idle';return true end;return admit(run,g)
+  elseif g.phase=='admit' then if not next(g.pending) then g.phase='idle';return true end;return admit(w,g)
   elseif g.phase=='fuel' then
-    local view,e=roleView(run,g.fuelScan,g.roles[mt.fuel.role],mt.roleSlots[mt.fuel.role]);if view==nil then return false end
-    if not view then bad(run,g,g.fuelCandidate.r,e,true);g.phase='idle'
-    elseif run.stopping then g.phase='idle'
-    else g.freshFuel=count(view,mt.fuel.item);if not g.verified then scanInputs(run,g,g.observed);g.phase='fuel_inputs' else g.phase='fuel_credit' end end;return true
+    local view,e=roleView(g.fuelScan,g.roles[mt.fuel.role],mt.roleSlots[mt.fuel.role]);if view==nil then return false end
+    if not view then bad(w,g,g.fuelCandidate.r,e,true);g.phase='idle'
+    elseif not next(g.pending) then g.phase='idle'
+    else g.freshFuel=count(view,mt.fuel.item);if not g.verified then scanInputs(w,g,g.observed);g.phase='fuel_inputs' else g.phase='fuel_credit' end end;return true
   elseif g.phase=='fuel_credit' then
-    if run.stopping then g.phase='idle';return true end
+    if not next(g.pending) then g.phase='idle';return true end
     local held=0;for _,view in pairs(g.observed) do for _,v in pairs(view.items) do held=held+v.count end end
     local consumed=math.max(g.inputsCompleted or 0,math.max(0,(g.inputsAdmitted or 0)-held));g.fuelBurnedMinimum=math.max(g.fuelBurnedMinimum or 0,math.ceil(consumed/mt.fuel.per))
     local accounted=math.max(0,g.fuelCredit-g.fuelBurnedMinimum);local unaccounted=math.max(0,g.freshFuel-accounted,g.freshFuel-(g.fuelObserved or 0))
     g.fuelCredit=g.fuelCredit+unaccounted;g.fuelObserved=g.freshFuel;g.fuelPreflightFresh=true;g.phase='admit';return true
-  elseif g.phase=='loading' then return finishLoad(run,g)
+  elseif g.phase=='loading' then return finishLoad(w,g)
   elseif g.phase=='output' then
-    local view,e=roleView(run,g.scan,g.roles[mt.output],mt.roleSlots[mt.output]);if view==nil then return false end
-    if not view then for _,load in ipairs(g.loads) do bad(run,g,load.request,e,true);quarantine(run,g,load);load.request.active=load.request.active-1 end;g.loads={};g.phase='idle';publish(run,g)
-    else collect(run,g,view) end;return true
-  elseif g.phase=='storing' then return finishCollection(run,g) end
+    local view,e=roleView(g.scan,g.roles[mt.output],mt.roleSlots[mt.output]);if view==nil then return false end
+    if not view then for _,load in ipairs(g.loads) do bad(w,g,load.request,e,true);quarantine(w,g,load);load.request.active=load.request.active-1 end;g.loads={};g.phase='idle';publish(w,g)
+    else collect(w,g,view) end;return true
+  elseif g.phase=='storing' then return finishCollection(w,g) end
   return false
 end
 local function finishRun(run)
@@ -550,12 +567,15 @@ local function finishRun(run)
   run.finished=run.now;run.active={};run.stage=nil;run.onStage=nil;run.stopping=nil;run.uncertain=nil;run.ports.emit('done',run.id,run.status)
   -- Retain public ledgers, not planner blueprints and transient action graphs.
   for _,s in ipairs(run.stages) do for key in pairs(stageInternal) do s[key]=nil end end
-  run.plan=nil;run.cfg=nil;run.opts=nil;run.actions={};run.jobs={};run.settled={};run.groups={};run.robotFacts={};run.toolReservations={};run.fuelAvailable={};run.emptyBuffers={}
+  -- A machine group outlives a run only while another run still uses it.
+  local w=run.world;w.waiting[run.id]=nil
+  for name,g in pairs(w.groups) do g.runs[run.id]=nil;if not next(g.runs) then w.groups[name]=nil end end
+  run.plan=nil;run.cfg=nil;run.opts=nil;run.actions={};run.jobs={};run.settled={};run.robotFacts={};run.claims={};run.fuelAvailable={};run.emptyBuffers={}
   run.ports=nil;run.world=nil
 end
 function M.advance(run)
   if run.status~='running' then return end
-  assert(not run.advancing,'MES advance reentry');run.advancing=true
+  assert(not run.advancing,'MES advance reentry');run.advancing=true;run.yielded=nil;local w=run.world;w.now=math.max(w.now,run.now or 0)
   local ok,err=pcall(function()
     -- Every known failure is applied in arrival order before *any* dispatch,
     -- even when its robot has a later stage index than a newly ready sibling.
@@ -592,21 +612,21 @@ function M.advance(run)
           local good,result=pcall(robotAdvance,run,s);if not good then failStage(run,s,result);progressed=true elseif result then progressed=true end
         end
       end
-      for _,name in ipairs(sorted(run.groups)) do
-        local g=run.groups[name];local good,result=pcall(groupAdvance,run,g)
+      for _,name in ipairs(sorted(w.groups)) do
+        local g=w.groups[name];local good,result=pcall(groupAdvance,w,g)
         if not good then
           -- Unanticipated adapter/validation failure retains unresolved ownership.
-          for _,r in ipairs(g.pending) do bad(run,g,r,result,true) end;g.pending={}
-          for _,load in ipairs(g.loads) do bad(run,g,load.request,result,true);quarantine(run,g,load);load.request.active=load.request.active-1 end;g.loads={};g.phase='idle';publish(run,g);progressed=true
+          for _,r in ipairs(g.pending) do bad(w,g,r,result,true) end;g.pending={}
+          for _,load in ipairs(g.loads) do bad(w,g,load.request,result,true);quarantine(w,g,load);load.request.active=load.request.active-1 end;g.loads={};g.phase='idle';publish(w,g);progressed=true
         elseif result then progressed=true end
       end
       for _,s in ipairs(run.stages) do if s.phase=='machine' then
         local pending=false;local problem
         for _,r in ipairs(s.machineWork.requests) do if r.left>0 or r.active>0 then pending=true end;problem=problem or r.error end
         -- Also drain admission observations already submitted for this stage.
-        for _,g in pairs(run.groups) do
+        for _,g in pairs(w.groups) do
           local observing=g.phase=='preflight' or g.phase=='inputs' or g.phase=='fuel' or g.phase=='fuel_inputs' or g.phase=='fuel_credit' or g.phase=='admit'
-          if observing and g.observing and g.observing[s.index] then pending=true end
+          if observing and g.observing and g.observing[s] then pending=true end
         end
         if not pending then
           if problem then failStage(run,s,problem)
@@ -617,10 +637,13 @@ function M.advance(run)
     end
     local active=false;local waiting=false;local initialPending=false
     for _,s in ipairs(run.stages) do if s.phase and s.phase~='closed' then active=true end;if s.state=='waiting' then waiting=true end end
-    for _,r in pairs(run.world.robots) do if r.pending then initialPending=true end end
+    -- Resources held by other runs will be released; wait for them.
+    local held=run.yielded
+    for _,r in pairs(w.robots) do if r.pending then initialPending=true end;if r.run then held=true end end
+    for _,g in pairs(w.groups) do if #g.pending>0 or #g.loads>0 then held=true end end
     for _,a in pairs(run.actions) do if a.kind~='robot_begin' and not outcome(run,a) then active=true end end
     if not active then
-      if waiting and not run.stopping and not initialPending then stop(run,'No idle resources for ready steps') end
+      if waiting and not run.stopping and not initialPending and not held then stop(run,'No idle resources for ready steps') end
       if not waiting or run.stopping then finishRun(run) end
     end
   end)

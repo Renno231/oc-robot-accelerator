@@ -70,7 +70,7 @@ function M.plan(id,qty,opts)
   opts=opts or {}
   local ok,p,err=pcall(function()
     assert(positive(qty),'Quantity must be a positive integer');start(opts)
-    local snapshot=require('craft_plans').inventory{inventory=stockSnapshot()};local all={}
+    local snapshot=require('craft_plans').inventory{inventory=stockSnapshot(service.claims())};local all={}
     for i=1,snapshot:getInventorySize() do all[i]=snapshot:getItemInSlot(i) end
     local planner=require('craftingv4_4')
     local result=planner.calculateCraftingPlan(identity.canonical(id),qty,{getAllStacks=function() return {getAll=function() return all end} end},0,true,{toolProfiles=opts.toolProfiles})
@@ -131,6 +131,8 @@ function M.graph(plan,cfg,opts)
   for _,s in ipairs(sorted(members)) do local key=members[s].inventory or s
     if not grouped[key] and not seen[key] then seen[key]=true;for _,v in pairs((wh.contents(s) or {}).items or {}) do local id=identity.stackName(v.item);stock[id]=(stock[id] or 0)+v.count end end
   end
+  -- Stock claimed by running requests is not available to this plan.
+  for id,n in pairs(service.claims()) do stock[id]=math.max(0,(stock[id] or 0)-n) end
   local fuelBudgets={}
   for index,stage in ipairs(stages) do
     local after={};for _,i in ipairs(stage.taskIndices) do for dep in pairs(deps[i]) do local s=indices[owner(dep)];if s~=index then after[s]=true end end end;stage.after=sorted(after)
@@ -193,7 +195,7 @@ function M.choose(plan,index,choice,opts)
   if not ok then return nil,tostring(err) end;return true
 end
 function M.run(plan,opts)
-  if service.status().status=='running' then return nil,'busy' end;opts=copy(opts or {})
+  opts=copy(opts or {})
   local ok,result,cfg=pcall(function()
     if type(plan)=='string' then
       if plan:find('/',1,true) or plan:sub(-5)=='.plan' then local f=assert(io.open(plan,'r'));local text=f:read('*a');f:close();plan=assert(require('serialization').unserialize(text),'Invalid saved plan')

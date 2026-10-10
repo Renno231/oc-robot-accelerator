@@ -359,13 +359,13 @@ class MesTests(LuaCase):
             return r.status,CLIENT_CALLS,held('buf','t:raw'),#MOVES,r.stages[1].remaining.buf.verified
         '''), ('unknown', 1, 1, 1, True))
 
-    def test_busy_guard_and_release(self):
+    def test_request_submitted_mid_run_is_accepted_and_completes(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',2);BUSY_PROBE=true
             local r=run({task('t:final',{'t:raw'})});BUSY_PROBE=false
-            local second=run({task('t:final',{'t:raw'})})
-            return r.status,BUSY_RESULT==nil,BUSY_ERROR,second.status,M.status().status
-        '''), ('complete', True, 'busy', 'complete', 'complete'))
+            local second=M.wait(BUSY_RESULT)
+            return r.status,type(BUSY_RESULT),BUSY_ERROR,second.status,held('stock','t:final')
+        '''), ('complete', 'number', None, 'complete', 2))
 
     def test_machine_timeout_reports_output(self):
         self.assertEqual(self.lua.execute('''
