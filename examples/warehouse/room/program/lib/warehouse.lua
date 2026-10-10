@@ -623,7 +623,7 @@ local function manyRequests(requests)
   local out={}
   for k=1,n do
     local r=requests[k];assert(type(r)=="table","item request required")
-    positive(r.count);out[k]={item=item(r.item),count=r.count,to=r.to}
+    positive(r.count);out[k]={item=item(r.item),count=r.count,to=r.to,waitFor=r.waitFor}
   end
   return out
 end
@@ -702,10 +702,11 @@ local function packedJobs(requests,pieces,missing,slots,opts)
   for _,p in ipairs(pieces) do local key=itemKey(p.item);maxima[key]=math.min(maxima[key] or p.maximum,p.maximum) end
   local normalized={}
   for _,p in ipairs(pieces) do
-    local maximum=maxima[itemKey(p.item)];local count=p.count
+    local maximum=maxima[itemKey(p.item)];local count=p.count;local wait=p.waitFor or 0
     while count>0 do
       local part={};for key,value in pairs(p) do part[key]=value end
       part.maximum=maximum;part.count=math.min(count,maximum)
+      part.waitFor=p.waitFor and math.min(wait,part.count);wait=wait-(part.waitFor or 0)
       normalized[#normalized+1]=part;count=count-part.count
     end
   end
@@ -732,7 +733,7 @@ local function packedJobs(requests,pieces,missing,slots,opts)
     end
     if #out==0 then for index=1,#requests do local count=missing[index] or 0;if count>0 then expect(index,count) end end end
     for k=cursor,last do local p=pieces[k];local index=expect(p.requestIndex,p.count)
-      job.steps[#job.steps+1]={take=p.from,item=item(p.item),count=p.count,maxSize=p.maximum,expectedIndex=index}
+      job.steps[#job.steps+1]={take=p.from,item=item(p.item),count=p.count,maxSize=p.maximum,expectedIndex=index,waitFor=p.waitFor}
       if p.take then local r=copy(p.take);r.count=p.count;job.reservations[#job.reservations+1]=r end
       if p.put then local r=copy(p.put);r.count=p.count;job.reservations[#job.reservations+1]=r end
     end
@@ -877,6 +878,7 @@ function M.collect(from,requests,opts)
       assert(remaining==0,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i))
     end
     local o=copy(opts or {});o.retries=0
+    local left={};for _,p in ipairs(pieces) do local i=p.requestIndex;left[i]=left[i] or requests[i].waitFor or 0;p.waitFor=math.min(left[i],p.count);left[i]=left[i]-p.waitFor end
     return packedJobs(requests,pieces,{},cargoSlots(),o)
   end)
   if not ok then return nil,jobs,{} end
