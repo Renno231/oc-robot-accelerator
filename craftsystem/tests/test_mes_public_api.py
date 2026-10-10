@@ -16,7 +16,7 @@ class MesPublicApiTests(LuaCase):
           package.preload.computer=function() return {uptime=function() return 0 end} end
           package.preload.warehouse=function() return {groups=function() return {} end} end
           package.preload.mes_config=function()
-            local c={config=function(opts) return opts and opts.config or CFG end}
+            local c={installRobots=function() end,config=function(opts) return opts and opts.config or CFG end}
             for _,name in ipairs({'setType','removeType','setCrafter','removeCrafter'}) do
               c[name]=function(...) CALLS[#CALLS+1]={name=name,args={...}};return name,'second return' end
             end

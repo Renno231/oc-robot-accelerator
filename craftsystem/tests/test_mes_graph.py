@@ -13,6 +13,8 @@ class MesGraphTests(LuaCase):
             self.module(name, 'lib/' + name + '.lua')
         self.lua.execute(r'''
             TIME=0; EVENTS={}; JOBS={}; NEXT=0; ACTIONS={};TIMERS={};LISTENERS={}
+            package.preload.mes_config=function() return {installRobots=function() end,
+                config=function(opts) return opts and opts.config or CFG end} end
             MOVES={}; SCANS={}; CLIENTS={}; MAX_CLIENTS=0; ACTIVE_CLIENTS=0
             OUTCOMES={}; DB={}; INSTALLS=0; CONSUME_DELAY=3; OUTPUT_DELAY=8
             GROUPS={cpu1={type='crafter',roles={buffer='buf1'}},
@@ -594,7 +596,8 @@ class MesGraphTests(LuaCase):
             assert(M.resources{config=CFG}.crafters.cpu1.buffer=='buf1')
             put('stock','t:raw',2);OUTCOMES.robot1='unknown'
             run({task('t:left',{'t:raw'})},{crafter='cpu1'})
-            package.preload.mes_config=function() return {robots=function() return DISCOVERED end} end
+            package.loaded.mes_config=nil
+            package.preload.mes_config=function() return {installRobots=function() end,robots=function() return DISCOVERED end} end
             DISCOVERED={{address='robot1',busy=true}}
             M.robots(0,{config=CFG});assert(M.resources{config=CFG}.crafters.cpu1.state=='unknown')
             DISCOVERED={{address='robot1',busy=false}}
@@ -784,7 +787,8 @@ class MesGraphTests(LuaCase):
             assert(failed.status=='unknown' and blocked.status=='failed' and #CLIENTS==before)
             local resource=M.resources{config=CFG}
             assert(resource.crafters.cpu1.state=='unknown' and resource.crafters.cpu2.state=='unknown')
-            package.preload.mes_config=function() return {robots=function() return {{address='robot1',busy=false}} end} end
+            package.loaded.mes_config=nil
+            package.preload.mes_config=function() return {installRobots=function() end,robots=function() return {{address='robot1',busy=false}} end} end
             M.robots(0,{config=CFG})
             return M.resources{config=CFG}.crafters.cpu1.state,M.resources{config=CFG}.crafters.cpu2.state
         '''), ('idle', 'idle'))
@@ -957,7 +961,8 @@ class MesGraphTests(LuaCase):
             assert(resource.crafters.cpu2.bufferOwner=='robot1')
             local second=run({task('t:right',{'t:raw'})},{crafter='cpu2'})
             assert(second.status=='failed' and #CLIENTS==1 and #ACTIONS==1)
-            package.preload.mes_config=function() return {robots=function() return DISCOVERED end} end
+            package.loaded.mes_config=nil
+            package.preload.mes_config=function() return {installRobots=function() end,robots=function() return DISCOVERED end} end
             DISCOVERED={{address='robot2',busy=false}}
             M.robots(0,{config=CFG})
             assert(M.resources{config=CFG}.crafters.cpu2.state=='unknown')

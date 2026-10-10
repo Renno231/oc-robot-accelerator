@@ -50,7 +50,7 @@ class MesRestartTests(unittest.TestCase):
             kiln={type='furnace',roles={input='input_face',output='output_face'}},
             cpu={type='crafter',roles={buffer='buffer_face'}}}}
           files['/etc/warehouse.cfg']=require('serialization').serialize(config)
-          package.preload.mes_config=function() return {config=function() return CFG end} end
+          package.preload.mes_config=function() return {installRobots=function() end,config=function() return CFG end} end
           package.preload.recipes=function() return {getAll=function() return {} end} end
           package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
           package.preload.craft_tools=function() return {list=function() return {} end} end

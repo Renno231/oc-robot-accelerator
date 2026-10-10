@@ -675,7 +675,7 @@ function M.robots(timeout, opts)
   end
   return copy(discovered)
 end
-for _, name in ipairs({ 'setType', 'removeType', 'setCrafter', 'removeCrafter' }) do
+for _, name in ipairs({ 'setType', 'removeType', 'setCrafter', 'removeCrafter', 'pendingRobots', 'registerRobot' }) do
   M[name] = function(...)
     return require('mes_config')[name](...)
   end

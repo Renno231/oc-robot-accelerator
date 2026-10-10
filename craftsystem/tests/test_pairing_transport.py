@@ -48,11 +48,15 @@ class PairingTransportTests(TransportFixture):
             assert(robot.executions==1)
         ''')
 
-    def test_unpaired_cproc_refuses_startup(self):
+    def test_unpaired_cproc_announces_until_interrupted(self):
         self.lua.execute('''
             local p=peer('unpaired-robot')
             p.disk['/etc/tnet.hosts']=p.require('serialization').serialize({});p.require('hosts').reload()
-            local ok,err=pcall(assert(load(CPROC_SOURCE,'cproc','t',p.env)))
-            assert(not ok and err:find('Pair this robot'))
+            server(p);advance(2.1)
+            assert(not p.require('hosts').localhost() and p.executions==0)
+            local hellos=0
+            for _,m in ipairs(TRACE) do if m.from==p.address and m.args[1]=='mes_robot_hello' then hellos=hellos+1 end end
+            assert(hellos>=2)
+            emit(p,'interrupted');advance(1.1)
             assert(countListeners(p,'interrupted')==0 and countListeners(p,'modem_message')==0)
         ''')

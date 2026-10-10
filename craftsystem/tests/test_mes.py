@@ -191,7 +191,7 @@ class MesTests(LuaCase):
         self.module('craft_plans', 'lib/craft_plans.lua')
         self.module('mes_config', 'lib/mes_config.lua')
         self.module('mes', 'lib/mes.lua')
-        self.lua.execute("M=require('mes')")
+        self.lua.execute("require('mes_config').installRobots=function() end;M=require('mes')")
 
     def test_terminal_jobs_wait_for_catalogue_settlement(self):
         self.assertEqual(self.lua.execute('''
