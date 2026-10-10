@@ -406,7 +406,7 @@ TRIP_KINDS = r"""
       if short then kind='shortCollect';kinds.shorts[#kinds.shorts+1]={job=id,trips=j.trips,requested=need,moved=moved,items=j.perItem} end
     end
     kinds[kind]=kinds[kind]+(j.trips or 0)
-    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips,queuedAt=j.queuedAt,tripTimings=j.tripTimings}
+    kinds.jobs[#kinds.jobs+1]={id=id,kind=kind,trips=j.trips,queuedAt=j.queuedAt,tripTimings=j.tripTimings,collectItems=collect[id] and j.perItem or nil}
     if (j.refused or 0)>0 then kinds.refusals[#kinds.refusals+1]={job=id,group=group,refused=j.refused,items=j.perItem,finishedAt=j.finishedAt} end
   end end
   kinds.following={}
