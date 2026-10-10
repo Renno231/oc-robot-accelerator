@@ -183,6 +183,36 @@ class WarehouseManyTests(unittest.TestCase):
           return slotted,wh.count({name='mod:a'})
         '''), (True, 0))
 
+    def test_drone_left_holding_items_takes_them_back_to_stock(self):
+        self.assertEqual(self.lua.execute('''
+          observe('stock',{stack('mod:a',5)})
+          local a={name='mod:a',damage=0}
+          FLEET[1].state='held';FLEET[1].home='stock';FLEET[1].held={{item=a,count=3}}
+          local id=#jobs+1;jobs[id]={state='failed',reason='destination refused items',
+            steps={{take=storages.stock,item=a,count=3,taken=3,moved=3}},
+            held={{drone='a',item=a,count=3}}}
+          listener('logistics',id)
+          local after=wh.count(a)
+          local drain=jobs[#jobs];assert(drain.opts.drone=='a' and drain.opts.cargo==true)
+          local to=drain.submitted[1].put;assert(#drain.submitted==1 and storages[to] and drain.submitted[1].count==3)
+          jobs[#jobs]={state='done',steps={{put=storages[to],item=a,count=3,moved=3}}};listener('logistics',#jobs)
+          return after,wh.count(a)
+        '''), (2, 5))
+
+    def test_available_leaves_out_what_drones_are_already_taking(self):
+        self.assertEqual(self.lua.execute('''
+          observe('stock',{stack('mod:a',5)});storages.out={node='out',side=0}
+          assert(wh.fetchMany({{item={name='mod:a'},count=3}},'out'))
+          return wh.count({name='mod:a'}),wh.available({name='mod:a'})
+        '''), (5, 2))
+
+    def test_observed_replaces_what_an_inventory_holds(self):
+        self.assertEqual(self.lua.execute('''
+          observe('stock',{stack('mod:a',5),stack('mod:b',2)})
+          wh.observed('stock',{{item={name='mod:b',damage=0},count=1},{item={name='mod:c',damage=0},count=4}})
+          return wh.count({name='mod:a'}),wh.count({name='mod:b'}),wh.count({name='mod:c'})
+        '''), (0, 1, 4))
+
     def test_consumed_lowers_a_machine_inventory(self):
         self.assertEqual(self.lua.execute('''
           observe('stock',{stack('mod:a',5)})

@@ -118,7 +118,7 @@ class MesGraphTests(LuaCase):
                 members=function() return MEMBERS end,
                 groups=function(kind) local out={};for n,g in pairs(GROUPS) do if not kind or kind==g.type then out[n]=g end end;return out end,
                 -- Fake machines use up their own inputs.
-                consumed=function() end,count=function(i) return held('stock',require('item_identity').stackName(i)) end,
+                consumed=function() end,observed=function(s,counts) local id=require('item_identity').stackName;for _,v in pairs((listing(s) or {}).items or {}) do put(s,id(v.item),0) end;for _,c in ipairs(counts) do put(s,id(c.item),c.count) end end,count=function(i) return held('stock',require('item_identity').stackName(i)) end,available=function(i) return held('stock',require('item_identity').stackName(i)) end,
                 contents=listing,stackSize=function(i) return MAXSTACK[require('item_identity').stackName(i)] or 64 end,
                 settled=function(id) return JOBS[id].settled==true end,
                 scan=function(s) SCANS[#SCANS+1]={storage=s,time=TIME};return {job()} end,
@@ -752,23 +752,24 @@ class MesGraphTests(LuaCase):
     def test_same_stage_concurrent_group_stores_keep_exact_partial_receipts(self):
         self.assertEqual(self._two_group_store_receipts(True), ('failed', True, 2))
 
-    def test_timed_out_load_quarantines_machine_and_cannot_complete_another_run(self):
+    def test_timed_out_load_keeps_machine_out_until_its_output_is_explained(self):
         self.assertEqual(self.lua.execute('''
             CFG.machineTypes.furnace.seconds=0;OUTPUT_DELAY=200
             put('stock','t:ore',2)
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local first=run({task('t:metal',{'t:ore'},'a',{'ore'},'furnace')})
             local resource=M.resources{config=CFG}.machines.kiln
-            assert(first.status=='failed' and resource.state=='unknown' and #resource.loads==1)
-            assert(resource.loads[1].run==first.id and resource.loads[1].state=='unknown')
+            assert(first.status=='failed' and resource.state=='unknown' and #SCANS==1)
+            -- The metal is still inside: the next run reads again, loads nothing and says why.
             CFG.machineTypes.furnace.seconds=150;OUTPUT_DELAY=500
             local second=run({task('t:metal',{'t:ore'},'b',{'ore'},'furnace')})
             local fetches=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' then fetches=fetches+1 end end
-            assert(second.status=='failed' and fetches==1 and held('stock','t:metal')==0)
-            assert(#ACTIONS==1) -- old physical work is still scheduled; never claimed settled
-            resource.loads[1].recipe='changed'
-            return M.resources{config=CFG}.machines.kiln.state,held('stock','t:ore'),second.reason
-        '''), ('unknown', 1, 'No idle resources for ready steps'))
+            assert(second.status=='failed' and fetches==1 and #SCANS==2 and held('stock','t:metal')==0)
+            -- Once the late metal is out, a read explains it: it goes to stock and the machine is back.
+            while TIME<300 do require('event').pull(1) end;OUTPUT_DELAY=100
+            local third=run({task('t:metal',{'t:ore'},'c',{'ore'},'furnace')})
+            return third.status,#SCANS,held('stock','t:metal'),held('stock','t:ore'),M.resources{config=CFG}.machines.kiln.state,second.reason
+        '''), ('complete', 3, 2, 0, 'idle', 'kiln: May still hold work: 1 t:metal'))
 
     def test_robot_address_aliases_are_locked_and_unknown_propagates(self):
         self.assertEqual(self.lua.execute('''

@@ -226,6 +226,7 @@ local function bufferIdentity(storage)
 end
 function M.submit(plan, cfg, opts)
   nextRun = nextRun + 1
+  local id = nextRun
   local ports = {
     dispatch = dispatch,
     emit = function(...)
@@ -233,9 +234,18 @@ function M.submit(plan, cfg, opts)
     end,
     contents = wh.contents,
     consumed = wh.consumed,
-    stock = function(id)
-      local n, d = id:match('^(.*):(%d+)$')
-      return wh.count({ name = n or id, damage = tonumber(d) or 0 })
+    observed = wh.observed,
+    -- Stock this run may take: what no drone is already taking, less what
+    -- other runs claim and have not yet sent a drone for.
+    stock = function(item)
+      local n, d = item:match('^(.*):(%d+)$')
+      local count = wh.available({ name = n or item, damage = tonumber(d) or 0 })
+      for _, r in ipairs(active) do
+        if r.id ~= id then
+          count = count - math.max(0, ((r.claims or {})[item] or 0) - ((r.inflight or {})[item] or 0))
+        end
+      end
+      return math.max(0, count)
     end,
     crafters = function()
       return crafters(cfg)

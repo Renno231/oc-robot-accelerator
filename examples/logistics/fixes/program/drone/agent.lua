@@ -226,11 +226,13 @@ local function waitingTake(endpoint,item,wanted,wait,reserve,minimum)
 end
 local function runSteps(task,id,result)
   local ledger={};result.steps={};result.cargo={}
+  -- A held drone sent to deliver what it carries starts with that cargo.
+  if task.cargo then for i=1,slots do local s=inv.getStackInInternalSlot(i);if s then ledger[#ledger+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end end end
   local function consume(item,count,delivered)
     for _,entry in ipairs(ledger) do
       if match(entry.item,item) then
         local n=math.min(count,entry.count);entry.count=entry.count-n;count=count-n
-        if not delivered then result.steps[entry.step].moved=result.steps[entry.step].moved-n end
+        if not delivered and entry.step then result.steps[entry.step].moved=result.steps[entry.step].moved-n end
       end
     end
   end
@@ -277,8 +279,9 @@ local function runSteps(task,id,result)
   end
   -- Every residual quantity retains its own take/source attribution.
   for _,entry in ipairs(ledger) do
-    if entry.count>0 then
-      local target=task.overflow or entry.source;goTo(target.node)
+    local target=task.overflow or entry.source
+    if entry.count>0 and target and entry.step then
+      goTo(target.node)
       local got=put(target,entry.item,entry.count)
       entry.count=entry.count-got;result.steps[entry.step].moved=result.steps[entry.step].moved-got
       local r=result.steps[entry.step];local key=task.overflow and "overflow" or "returned";r[key]=(r[key] or 0)+got
@@ -311,7 +314,7 @@ while true do
     modem.send(controller,port,token,"cargo",e[8],encode(listing))
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="trip" then
     local task=decode(e[9]);local id=e[8]
-    if task and cargoCount()==0 then
+    if task and (cargoCount()==0 or task.cargo and task.steps) then
       activeTrip=id;history={task.routes.take[1]};currentPoint=history[1];rerouted=false;testingCandidate=false
       backoff=0.05
       local result={state="idle",taken=0,moved=0,returned=0,overflow=0,held=0}
