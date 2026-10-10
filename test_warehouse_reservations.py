@@ -16,7 +16,7 @@ class ReservationTests(unittest.TestCase):
             unserialize=function(s) return serial[s] end} end
           package.preload.computer=function() return {uptime=function() return 0 end} end
           package.preload.event=function() return {
-            push=function() end,listen=function(_,fn) listener=fn end} end
+            push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end} end
           storages={stock={node='stock',side=0},alias={node='stock',side=1},buffer={node='buffer',side=0}}
           package.preload.map=function() return {
             storage=function(s) return storages[s] end,

@@ -27,7 +27,9 @@ local function report(id,data)
   end
   assert(#payload<7000,"result packet too large")
   modem.send(controller,port,token,"report",id,payload)
+  return payload
 end
+local last
 local activeTrip,history,currentPoint,rerouted,testingCandidate
 -- OC 8ca336fb entity/Drone.scala:74-78,430-457: .1 acceleration per
 -- tick, .4 axis cap, .8 drag. component/Drone.scala: getMaxVelocity=8,
@@ -269,9 +271,11 @@ while true do
   local e={computer.pullSignal(backoff)}
   backoff=math.min(0.5,backoff*2)
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="release" then
+    last=nil
     local listing=cargoListing()
     modem.send(controller,port,token,"cargo",e[8],encode(listing))
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="trip" then
+    last=nil
     local task=decode(e[9]);local id=e[8]
     if task and (cargoCount()==0 or task.cargo and task.steps) then
       activeTrip=id;history={task.routes.take[1]};currentPoint=history[1];rerouted=false;testingCandidate=false
@@ -340,7 +344,10 @@ while true do
         result.held=cargoCount()
       end
       history=nil
-      report(id,result)
+      last={id,report(id,result)}
     end
+  elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="status" then
+    if last then modem.send(controller,port,token,"report",last[1],last[2]) end
+    report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing() or nil})
   end
 end

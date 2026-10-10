@@ -130,6 +130,7 @@ class LogisticsManyTests(unittest.TestCase):
           files['/etc/logistics.drones']=require('serialization').serialize({
             d1={address='remote',token='secret',home='home'}})
           lg=assert(load(SOURCE))()
+          assert(#SENT==1 and SENT[1].kind=='status');SENT={}
           function report(id,result)
             LISTEN.modem_message('modem_message','local','remote',27103,0,'secret','report',id,
               require('serialization').serialize(result))

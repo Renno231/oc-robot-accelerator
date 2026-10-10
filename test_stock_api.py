@@ -108,7 +108,7 @@ class LibraryApiTests(unittest.TestCase):
         ''')
 
     def load(self, library, variable):
-        if library == 'warehouse':
+        if library in ('warehouse', 'logistics') and not self.lua.globals().STORE_SOURCE:
             install_store(self.lua, preserve_io=True)
         self.lua.globals().SOURCE = Path(f'drone-logistics/lib/{library}.lua').read_text()
         self.lua.execute(f'{variable}=assert(load(SOURCE))()')
@@ -155,7 +155,7 @@ class LibraryApiTests(unittest.TestCase):
           jobs={}
           package.preload.logistics=function() return {
             status=function(id) return jobs[id] end} end
-          package.loaded.event={push=function() end,listen=function(_,fn) listener=fn end}
+          package.loaded.event={push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end}
           os.rename=function() return true end
           map.add('rack',0,0,0);map.add('other',1,0,0)
           map.name('stock','rack',0);map.name('alias','rack',1)

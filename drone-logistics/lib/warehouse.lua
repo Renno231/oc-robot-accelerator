@@ -16,6 +16,10 @@ local db=db_store:load()
 -- Inventory aliases share a key, so two faces cannot reserve the same stock.
 local inFlight={}
 local pendingCatalogue={}
+local flight_store=require("store").open("/etc/warehouse.flight")
+for key,r in pairs(flight_store:load()) do
+  local id=tonumber(key:sub(5));inFlight[id]=r;pendingCatalogue[id]=true
+end
 -- Volatile, exact-sided observations. Physical identities are ONLY for
 -- invalidation; they never authorize reuse of another face's slot indices.
 local roleCache,pendingReads,pendingMutations,mutationCounts={},{},{},{}
@@ -270,6 +274,7 @@ local function submit(steps,opts,reservations)
   local s=id and logistics.status(id)
   if id and s and s.state~='done' and s.state~='failed' and s.state~='partial' then
     inFlight[id]=reservations;pendingCatalogue[id]=true
+    flight_store:put("job_"..id,reservations);flight_store:flush()
     if not readHook then pendingReads[id]=provenance end
     if not mutationHook and #movements>0 then beginMutation(id,movements) end
   end
@@ -516,11 +521,13 @@ local function finished(_,id)
   inFlight[id]=nil
   pendingCatalogue[id]=nil
   if observed or next(touched) then db_store:flush() end
+  flight_store:delete("job_"..id);flight_store:flush()
   local learned=limitsDirty;saveLimits()
   if observed or next(touched) or learned then changed() end
   endpointStorages=nil
 end
 event.listen("logistics",finished)
+event.listen("logistics_held",function(_,name) deliverHeld(name) end)
 local function positive(n) assert(type(n)=="number" and n>0 and n<math.huge and n%1==0,"positive count required") end
 local function node(endpoint)
   if type(endpoint)=="string" then return assert(map.place(endpoint),"unknown endpoint") end
@@ -881,5 +888,11 @@ function M.collect(from,requests,opts)
   end)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)
+end
+for id in pairs(inFlight) do
+  local s=logistics.status(id)
+  if not s then
+    inFlight[id]=nil;pendingCatalogue[id]=nil;flight_store:delete("job_"..id);flight_store:flush()
+  elseif s.state=="done" or s.state=="failed" or s.state=="partial" then finished("logistics",id) end
 end
 return M
