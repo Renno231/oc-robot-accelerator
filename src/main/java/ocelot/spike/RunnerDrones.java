@@ -28,6 +28,7 @@ final class RunnerDrones {
     private final List<RunnerDroneErrors> errors=new ArrayList<>();
     private final List<RunnerRobot> robots=new ArrayList<>();
     private final RunnerContainerEdits containerEdits;
+    private final RunnerDroneActions droneActions;
     private RunnerRecording recording;
     private RunnerRouteMetrics routeMetrics;
     private long sequence;
@@ -35,7 +36,7 @@ final class RunnerDrones {
     private RunnerComputer computer,secondComputer;
     private final Map<net.minecraft.util.math.BlockPos,net.minecraft.block.state.IBlockState> previous=new HashMap<>();
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
-    RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;containerEdits=new RunnerContainerEdits(spec.v4.containerEdits);}
+    RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;containerEdits=new RunnerContainerEdits(spec.v4.containerEdits);droneActions=new RunnerDroneActions(spec.v4.droneActions);}
     boolean owns(net.minecraft.entity.Entity entity) {return drones.contains(entity);}
     static void validateReload(JsonObject identity,String scenario,int count) {
         if(!identity.get("scenario").getAsString().equals(scenario)) throw new IllegalStateException("reload_scenario_identity");
@@ -164,6 +165,21 @@ final class RunnerDrones {
             storageRoomChestPlaced=true;
         }
         containerEdits.tick(tick,world,computer,secondComputer);
+        droneActions.tick(new RunnerDroneActions.Environment() {
+            private RunnerComputer controller(int index) {return index==0?computer:secondComputer;}
+            public boolean requested(int index,String marker) {return controller(index).markerRequested(marker);}
+            public void move(int index,double x,double y,double z) {
+                Drone drone=drones.get(index);Vec3d target=drone.getTarget();
+                drone.setPositionAndUpdate(x,y,z);
+                // Public Entity relocation leaves OC's movement target untouched.
+                System.out.println("runner_drone_relocation index="+index+" position="+drone.getPositionVector()+
+                    " targetBefore="+target+" targetAfterTeleport="+drone.getTarget()+
+                    " offsetAfterTeleport="+drone.getTarget().distanceTo(drone.getPositionVector()));
+                // Authorized placement equivalent: preserve inventory/EEPROM and reset the public target.
+                drone.setTarget(new Vec3d(x,y,z));
+            }
+            public void signal(int index,String name) {controller(index).signal(name);}
+        });
         if(!started) {
             if(tick<3) return null;
             if(computer!=null && !computer.prepare(tick)) return null;

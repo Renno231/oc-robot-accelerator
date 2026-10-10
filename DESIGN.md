@@ -72,6 +72,23 @@ attempt have been removed.
   is not spent duplicating receipts in one aggregate string. Public MES status
   and receipt shapes remain complete. The OpenComputers sandbox does not expose
   `collectgarbage`; keep instrumentation bounded using ordinary supported APIs.
+- Native restart fixtures install both `store.lua` and its canonical `cbor.lua`
+  dependency alongside logistics and warehouse. Start the public MES service
+  (`mes.start()` or `rc mes start`) before looking up a persisted run with
+  `mes.wait()`. An enabled service later in `rc.cfg` has not started while an
+  earlier, blocking fixture task is still running. Reuse persisted controller
+  host registrations across boots; use public `hosts.addHost(..., true)` when
+  a robot fixture refreshes its own pairing-equivalent registration.
+- Robot reboot fixtures reuse the installed `/usr` files on subsequent boots;
+  gate bootstrap installation with their persisted cycle marker. Native
+  `component.eeprom.set` is a void setter: call it directly, then continue.
+- Power-cycle fixtures select the carrier from the active job's public
+  `tripTimings`, and generate relocation hooks from the fixture's drone list.
+  Record lost, held cargo, physical relocation and Found before assessing completion.
+- Active drones use one route-request wait for navigation and blocked reroutes.
+  An authenticated controller status probe resends that request; a route wait
+  lasts until navigation arrives. Idle/held ready reports belong to the main
+  loop, where the drone has completed its trip and is back at home.
 
 ### Map access geometry
 
