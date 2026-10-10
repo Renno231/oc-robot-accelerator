@@ -103,6 +103,54 @@ class StationsTests(unittest.TestCase):
           function row(name,count,spacing) return {prefix=name,x=5,y=64,z=2,face='top',role='stock',rowDir='east',count=count,spacing=spacing} end
         ''')
 
+    def test_boot_mes_service_resumes_station_without_setup_or_station_require(self):
+        self.lua.execute('''
+          assert(st.add('storage',single('boot_chest')));drain()
+          assert(st.get('boot_chest').state=='checking')
+          LISTEN={};EVENTS={};st=nil
+          package.loaded.stations=nil;package.loaded.logistics=nil;package.loaded.warehouse=nil
+          lg=require('logistics');wh=require('warehouse')
+          assert(package.loaded.stations==nil)
+          package.path='craftsystem/usr/lib/?.lua;'..package.path
+          package.preload.craft_client=function() return {install=function() return {} end,tick=function() end} end
+          package.preload.mes_config=function() return {installRobots=function() end,
+            config=function() return {crafters={},machineTypes={}} end} end
+          require('event').timer=function() return 1 end
+          assert(require('mes_service').start())
+          assert(package.loaded.stations and LISTEN.logistics)
+          for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
+          finishAll()
+          st=package.loaded.stations
+          assert(st.get('boot_chest').state=='ready' and wh.members().boot_chest)
+        ''')
+
+    def test_phase_events_and_list_member_count(self):
+        self.lua.execute('''
+          local seen={}
+          LISTEN.station={function(_,name,state,phase)
+            seen[#seen+1]={name=name,state=state,phase=phase}
+          end}
+          assert(st.add('row',row('counted',3,2)))
+          assert(st.list()[1].count==3)
+          finishAll()
+          assert(seen[1].name=='counted' and seen[1].state=='checking' and seen[1].phase=='row')
+          assert(seen[2].state=='checking' and seen[2].phase=='read')
+          assert(seen[3].state=='ready' and seen[3].phase==nil)
+          assert(st.add('storage',single('single',12,5)));finishAll()
+          local counts={};for _,r in ipairs(st.list()) do counts[r.name]=r.count end
+          assert(counts.counted==3 and counts.single==1)
+        ''')
+
+    def test_name_error_identifies_taken_member_and_empty_name(self):
+        self.lua.execute('''
+          local ok,err=st.add('storage',single(''));assert(not ok and err:find('name empty',1,true))
+          ok,err=st.add('storage',single('home1'));assert(not ok and err:find('name home1 already used',1,true))
+          map.name('occupied2','home1',1)
+          ok,err=st.add('row',row('occupied',3,2))
+          assert(not ok and err:find('name occupied2 already used',1,true))
+          assert(#st.list()==0 and not map.storage('occupied1'))
+        ''')
+
     def test_storage_ready_T1_T2_T3_T5_T6_T7(self):
         self.lua.execute('''
           assert(st.add('storage',single('chest'))=='chest')

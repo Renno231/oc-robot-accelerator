@@ -42,7 +42,7 @@ local function cleanup(r)
 end
 local start,advance
 local function phase(r,p)
-  r.phase=p;r.jobs={};start(r)
+  r.phase=p;r.jobs={};start(r);event.push('station',r.name,'checking',p)
 end
 start=function(r,replay)
   local first=r.members[1].node
@@ -146,7 +146,7 @@ local function validate(kind,s)
   assert(kind=='storage' or d and d~=f and d~=f~1 and (s.spacing==1 or s.spacing==2),'invalid row direction or spacing')
   assert(s.pair==nil or s.pair==1 or s.pair==2,'pair must be 1 or 2')
   local nodes,storages=map.nodes(),map.storages()
-  local function free(n) assert(type(n)=='string' and n~='' and not nodes[n] and not storages[n] and not records['st_'..n],'name already used or empty') end
+  local function free(n) assert(type(n)=='string' and n~='','name empty');assert(not nodes[n] and not storages[n] and not records['st_'..n],'name '..n..' already used') end
   free(name)
   local r={name=name,kind=kind,spec=copy(s),state='checking',phase='read',members={},created={nodes={},links={}},tried={},jobs={},bad={},sizes={}}
   local positions,counts,used={},{},{}
@@ -207,7 +207,7 @@ function M.remove(name,opts)
 end
 function M.get(name) local r=records['st_'..name];return r and copy(r) end
 function M.list()
-  local out={};for _,r in pairs(records) do out[#out+1]={name=r.name,kind=r.kind,state=r.state,phase=r.phase,reason=r.reason,note=r.note} end
+  local out={};for _,r in pairs(records) do out[#out+1]={name=r.name,kind=r.kind,state=r.state,phase=r.phase,reason=r.reason,note=r.note,count=#r.members} end
   table.sort(out,function(a,b) return a.name<b.name end);return out
 end
 event.listen('logistics',function(_,id)
