@@ -634,8 +634,9 @@ class MesGraphTests(LuaCase):
             return #scans<10,last>first,held('stock','t:metal')
         '''), (True, True, 1))
 
-    def test_fifo_batch_store_settlement_attributes_two_live_loads(self):
+    def test_two_live_loads_are_collected_in_order_each_when_due(self):
         self.assertEqual(self.lua.execute('''
+            -- The furnace works through the loads in order; each is taken when it is due.
             OUTPUT_DELAY=1;CONSUME_DELAY=0.2;CFG.machineTypes.furnace.batch=1
             put('stock','t:ore',2)
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
@@ -648,13 +649,13 @@ class MesGraphTests(LuaCase):
             local r=run({task('t:metal',{'t:ore'},'a',{'ore'},'furnace'),
                 task('t:metal',{'t:ore'},'b',{'ore'},'furnace')})
             assert(r.status=='complete',r.reason)
-            local stores=0;for _,m in ipairs(MOVES) do if m.kind=='store' and m.item=='t:metal' then stores=stores+1;assert(m.count==2) end end
+            local stores=0;for _,m in ipairs(MOVES) do if m.kind=='store' and m.item=='t:metal' then stores=stores+1;assert(m.count==1) end end
             local a=r.stages[1].loadLedger[1];local b=r.stages[2].loadLedger[1]
-            assert(a.collected==b.collected and a.storeJobs[1].job==b.storeJobs[1].job)
+            assert(a.collected<b.collected and a.storeJobs[1].job~=b.storeJobs[1].job)
             assert(a.collected>=JOBS[a.storeJobs[1].job].settle)
             assert(a.collectedItems['t:metal']==1 and b.collectedItems['t:metal']==1)
             return stores,held('stock','t:metal'),b.inputBefore==nil
-        '''), (1, 2, True))
+        '''), (2, 2, True))
 
     def test_shared_buffer_cannot_be_double_dispatched(self):
         self.assertEqual(self.lua.execute('''
