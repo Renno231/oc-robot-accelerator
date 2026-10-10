@@ -198,7 +198,85 @@ class LogisticsRestartTests(unittest.TestCase):
                 ''')
 
 
+    def test_unknown_navigation_trip_answers_known_token_only(self):
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                self.start(mode).execute('''
+                  emit('modem_message','local','remote',27103,0,'wrong','navigate',999,'{}')
+                  assert(#SENT==0)
+                  emit('modem_message','local','remote',27103,0,'secret','navigate',999,'{}')
+                  assert(#SENT==1 and SENT[1].kind=='navigation' and SENT[1].id==999)
+                  assert(require('serialization').unserialize(SENT[1].payload).reason=='unknown trip 999')
+                ''')
+
+
 class AgentRestartTests(unittest.TestCase):
+    def route_fixture(self, blocked=False):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+        lua.globals().BLOCKED = blocked
+        lua.execute('''
+          TIME=0;SENT={};POSITION=0;TARGET=0
+          local drone={inventorySize=function() return 4 end,count=function() return 0 end,
+            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+            move=function(dx) TARGET=TARGET+dx;if not BLOCKED then POSITION=TARGET end end,
+            getOffset=function() return math.abs(TARGET-POSITION) end,getVelocity=function() return 0 end}
+          local inv={getStackInInternalSlot=function() end}
+          component={list=function(kind) return function() return kind end end,
+            proxy=function(kind) return kind=='drone' and drone or inv end}
+          computer={energy=function() return 5000 end,freeMemory=function() return 32000 end,
+            uptime=function() return TIME end,pullSignal=function(seconds) return coroutine.yield(seconds) end}
+          local modem={send=function(_,_,_,kind,id,payload)
+            SENT[#SENT+1]={kind=kind,id=id,payload=payload}
+          end}
+          AGENT_THREAD=coroutine.create(assert(load(AGENT)))
+          assert(coroutine.resume(AGENT_THREAD,modem,'token','controller','d1',27103,0,0,0))
+          function resume(...)
+            SENT={};local ok,err=coroutine.resume(AGENT_THREAD,...)
+            assert(ok,err);assert(coroutine.status(AGENT_THREAD)=='suspended')
+          end
+          function command(kind,id,payload)
+            resume('modem_message','local','controller',27103,0,'token',kind,id,payload)
+          end
+          function decoded(n) return assert(load('return '..SENT[n].payload))() end
+          ROUTE="{route={{name='home',x=0,y=0,z=0},{name='dest',x=1,y=0,z=0}}}"
+          command('trip',11,"{reserve=1000,home='dest',steps={{go='dest'}},routes={take={{name='home',x=0,y=0,z=0}}}}")
+          assert(#SENT==1 and SENT[1].kind=='navigate' and SENT[1].id==11)
+        ''')
+        return lua
+
+    def test_goto_waits_past_ten_seconds_and_resends_on_restart_status(self):
+        self.route_fixture().execute('''
+          local original=SENT[1].payload
+          TIME=25;resume();assert(#SENT==0)
+          command('status');assert(#SENT==1 and SENT[1].kind=='navigate' and SENT[1].payload==original)
+          command('navigation',99,ROUTE);assert(#SENT==0)
+          command('navigation',11,ROUTE)
+          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle' and POSITION==1)
+        ''')
+
+    def test_blocked_reroute_waits_past_ten_seconds_and_resends_on_status(self):
+        self.route_fixture(True).execute('''
+          command('navigation',11,ROUTE)
+          TIME=0.1;resume() -- establish the unchanged offset
+          TIME=4.1;resume() -- stall, undo movement target, and retrace physically
+          TIME=4.2;resume()
+          assert(#SENT==1 and SENT[1].kind=='report' and decoded(1).state=='blocked')
+          local original=SENT[1].payload
+          TIME=30;resume();assert(#SENT==0)
+          command('status');assert(#SENT==1 and SENT[1].kind=='report' and SENT[1].payload==original)
+          BLOCKED=false;command('navigation',11,ROUTE)
+          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle' and POSITION==1)
+        ''')
+
+    def test_unknown_trip_route_response_fails_loudly(self):
+        self.route_fixture().execute('''
+          command('navigation',11,"{reason='unknown trip 11'}")
+          assert(#SENT==1 and SENT[1].id==11)
+          local result=decoded(1)
+          assert(result.state=='held' and result.reason:find('unknown trip 11',1,true))
+        ''')
+
     def test_last_cleared_by_trip_release_and_empty_status_only_ready(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
