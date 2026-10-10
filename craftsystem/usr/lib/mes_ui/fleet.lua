@@ -1,8 +1,8 @@
 -- Fleet: announcing hardware, drones, crafters and machines in one list.
 -- Reads logistics, map and mes on open, R and their change signals only.
-local ui=require("mes_ui.core");local lg=require("logistics");local map=require("map")
+local ui=require("mes_ui.core");local lg=require("logistics");local map=require("map");local wh=require("warehouse")
 local S={hints="Enter register · release · found · details · R refresh · H help",
-  help={{"Enter","new hardware: register · held drone: release cargo"},{"","lost drone: mark found · other rows: details"}}}
+  help={{"Enter","new drone or robot: register · held drone: release cargo"},{"","lost drone: mark found · other rows: details"}}}
 local function mes() return require("mes") end
 local stateColour={idle="good",working="accent",held="warn",charging="dim",booting="dim"}
 local FULL=5000
@@ -38,12 +38,12 @@ end
 function S:rebuild()
   local rows,P=self.rows,ui.P;for k=#rows,1,-1 do rows[k]=nil end
   local function add(text,fg,kind,ref) rows[#rows+1]={text=text,fg=fg,kind=kind,ref=ref,heading=kind=="heading"} end
-  local pending,drones=lg.pending(),lg.drones();self.pending,self.drones=pending,drones
-  ui.badge("fleet",#pending)
+  local pending,robots=ui.newHardware();local drones=lg.drones();self.pending,self.drones=pending,drones
   local res=ui.try(function() return mes().resources() end) or {crafters={},machines={}};self.res=res
-  if #pending>0 then
-    add("New hardware  "..#pending.." waiting",P.warn,"heading")
+  if #pending+#robots>0 then
+    add("New hardware  "..#pending+#robots.." waiting",P.warn,"heading")
     for _,a in ipairs(pending) do add("  drone · "..a:sub(1,8).."… · on a charger · Register",P.good,"new",a) end
+    for _,a in ipairs(robots) do a=type(a)=="table" and a.address or a;add("  robot · "..a:sub(1,8).."… · unpaired cproc · Register",P.good,"newRobot",a) end
     add("",nil,"heading")
   end
   local n={idle=0,working=0,held=0,lost=0}
@@ -52,7 +52,7 @@ function S:rebuild()
   for _,d in ipairs(drones) do
     local place=d.node or (d.home and "home "..d.home) or "?"
     local t="  "..ui.fit(d.name,12)..ui.fit(d.lost and "LOST" or d.state or "?",10)..ui.fit(place,18)..ui.right(energy(d),5).."  "
-      ..ui.fit(cargoText(d),56)..(d.job and "job #"..d.job or "")..(d.releasePending and "  releasing…" or "")
+      ..ui.fit(cargoText(d),56)..(d.job and "job #"..d.job..(d.trip and " trip "..d.trip or "") or "")..(d.releasePending and "  releasing…" or "")
     add(t,d.lost and P.bad or P[stateColour[d.state] or "fg"],"drone",d.name)
   end
   if #drones==0 then add("  no drones registered",P.dim,"heading") end
@@ -74,16 +74,13 @@ function S:rebuild()
 end
 function S:draw()
   local ch=0;for _,e in pairs(map.nodes()) do if e.charger then ch=ch+1 end end
-  ui.title("Fleet",#(self.drones or {}).." drones · "..ch.." chargers"..(#(self.pending or {})>0 and " · "..#self.pending.." new" or ""))
+  local new=ui.badges.fleet
+  ui.title("Fleet",#(self.drones or {}).." drones · "..ch.." chargers"..(new and " · "..new.." new" or ""))
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
-function S:signal(name) if name=="logistics" or name=="mes" then self:refresh() end end
+function S:signal(name) if name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce" then self:refresh() end end
 
--- Locked rows in a closable box.
-local function show(title,lines)
-  local rows={};for _,l in ipairs(lines) do rows[#rows+1]={text=type(l)=="table" and l[1] or l,fg=type(l)=="table" and l[2] or nil,locked=true} end
-  ui.pick(title,rows,function() end,{nofilter=true,note="⌫ close"})
-end
+local show=ui.show
 local function value(v)
   if type(v)~="table" then return tostring(v) end
   local parts={};for _,k in ipairs(sorted(v)) do parts[#parts+1]=tostring(k).."="..value(v[k]) end
@@ -120,10 +117,35 @@ function S:register(address)
     return true
   end})
 end
+-- Robot: crafter name, then its buffer: a non-stock storage that is no
+-- crafter's buffer or machine's face.
+function S:registerRobot(address)
+  local crafters=mes().crafters();local n=1;while crafters["cpu"..n] do n=n+1 end
+  ui.prompt("Register robot","Crafter name for robot "..address:sub(1,8).."…","cpu"..n,function(name)
+    local members,taken,rows=wh.members(),{},{}
+    for _,x in pairs(crafters) do taken[x.buffer]=true end
+    for _,x in pairs(wh.groups()) do for _,s in pairs(x.roles) do taken[s]=true end end
+    for _,s in ipairs(map.storageNames()) do if not members[s] and not taken[s] then local e=map.storage(s)
+      rows[#rows+1]={text=ui.fit(s,16).." "..e.node.." "..ui.sideGlyph[e.side],value=s}
+    end end
+    if #rows==0 then ui.fail("no free non-stock storage: name the chest in front of the robot in Setup");return end
+    ui.pick(name.." · buffer: the chest the robot faces",rows,function(buf)
+      ui.confirm("Register robot","Register "..address:sub(1,8).."… as "..name..", buffer "..buf.."?",function()
+        if ui.try(mes().registerRobot,address,name,buf) then ui.ok("Crafter "..name.." registered: buffer "..buf) end
+        self:refresh()
+      end)
+    end)
+  end,{check=function(v)
+    if not v:match("^[%w_-]+$") then return nil,"letters, digits, _ and - only" end
+    if crafters[v] or wh.groups()[v] then return nil,"name already used" end
+    return true
+  end})
+end
 function S:activate(r)
   if not r then return end
   local k,P=r.kind,ui.P
   if k=="new" then self:register(r.ref)
+  elseif k=="newRobot" then self:registerRobot(r.ref)
   elseif k=="drone" then
     local d;for _,x in ipairs(self.drones) do if x.name==r.ref then d=x end end;if not d then return end
     if d.lost then

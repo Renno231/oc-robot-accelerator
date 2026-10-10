@@ -20,6 +20,8 @@ D.groups.furnaceA={type="furnace",roles={input="furnA.in",fuel="furnA.fuel",outp
 D.groups.furnaceB={type="furnace",roles={input="furnB.in",fuel="furnB.fuel",output="furnB.out"}}
 D.groups.cpu1={type="crafter",roles={buffer="cpu1.buf"}}
 node("6:65:7",6,65,7);D.storages["cpu2.buf"]={node="6:65:7",side=3};D.groups.cpu2={type="crafter",roles={buffer="cpu2.buf"}}
+-- Free non-stock chests: buffers for a robot being registered.
+node("8:65:7",8,65,7);D.storages["chest8"]={node="8:65:7",side=3};D.storages["chest9"]={node="8:65:7",side=2}
 local stock={
   {"minecraft:log",0,"Oak Wood",192},{"minecraft:log",1,"Spruce Wood",64},{"minecraft:planks",0,"Oak Wood Planks",37},
   {"minecraft:stick",0,"Stick",12},{"minecraft:coal",0,"Coal",20},{"minecraft:coal",1,"Charcoal",0},
@@ -45,7 +47,8 @@ for id=1,60 do
   D.jobs[id]={id=id,state=st,requested=req,moved=st=="done" and req or st=="partial" and req//2 or 0,item=i,
     from={storage=names[(id%7)+1]},to={storage=names[((id+3)%7)+1]},reason=st=="failed" and "drone d2: route blocked at 5:66:2" or nil}
 end
--- Fleet: 6 registered drones in every state (one lost, one held), 2 announcing,
+-- Fleet: 6 registered drones in every state (one lost: as logistics marks it,
+-- job and trip cleared; one held), 2 announcing,
 -- 8 chargers of which 2 are free.
 for k=2,8 do local n="-2:65:"..(2*k);node(n,-2,65,2*k);D.nodes[n].charger=true end
 local function st(name,d,n,label) return {name=name,damage=d,label=label,size=n,maxSize=64} end
@@ -57,7 +60,7 @@ D.drones={
     cargo={st("minecraft:brick",0,64,"Brick"),st("minecraft:clay_ball",0,9,"Clay")},
     held={{item={name="minecraft:brick",damage=0,label="Brick"},count=64},{item={name="minecraft:clay_ball",damage=0,label="Clay"},count=9}}},
   {name="drone4",address="d4e5f6a7-0004-4e00-8000-000000000004",state="charging",node="-2:65:8",home="-2:65:8",energy=900,cargoSlots=8},
-  {name="drone5",address="e5f6a7b8-0005-4e00-8000-000000000005",state="working",home="-2:65:10",energy=150,cargoSlots=8,lost=true,job=57,trip=109,
+  {name="drone5",address="e5f6a7b8-0005-4e00-8000-000000000005",state="lost",home="-2:65:10",energy=150,cargoSlots=8,lost=true,
     cargo={st("minecraft:sand",0,64,"Sand")}},
   {name="drone6",address="f6a7b8c9-0006-4e00-8000-000000000006",state="booting",node="-2:65:12",home="-2:65:12",cargoSlots=8},
 }

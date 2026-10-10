@@ -191,6 +191,7 @@ local function modalNote(m,text,colour)
 end
 
 -- Pick one row. rows: array of {text,value,fg,locked}. Typing filters.
+-- opts.at: the row to start on (default: the first selectable).
 function ui.pick(title,rows,done,opts)
   opts=opts or {}
   local index,filter={},""
@@ -221,8 +222,8 @@ function ui.pick(title,rows,done,opts)
       L:set(first);m.paint(m);return true
     end
     L:refresh()
-    -- Start on the first selectable row.
-    for i=1,#index do if not rows[index[i]].locked then L:set(i);break end end
+    -- Start on opts.at, else the first selectable row.
+    for i=1,#index do if not rows[index[i]].locked and (not opts.at or index[i]==opts.at) then L:set(i);break end end
   end})
 end
 
@@ -279,12 +280,18 @@ function ui.confirm(title,question,done)
   return ui.pick(title,{{text=question,locked=true},{text="  No",value=false},{text="  Yes",value=true,fg=P.warn}},function(v) if v then done() end end,{nofilter=true})
 end
 
+-- Locked rows ({text,fg} or text) in a closable box.
+function ui.show(title,lines)
+  local rows={};for _,l in ipairs(lines) do rows[#rows+1]={text=type(l)=="table" and l[1] or l,fg=type(l)=="table" and l[2] or nil,locked=true} end
+  ui.pick(title,rows,function() end,{nofilter=true,note="⌫ close"})
+end
+
 -- A form: rows of label/value; Enter edits a row. fields[k]={label,show=fn,
--- edit=fn(refresh)}; the final row runs save(close).
-function ui.form(title,fields,saveText,save)
+-- edit=fn(refresh)}; the final row runs save(close). w: width, default 64.
+function ui.form(title,fields,saveText,save,w)
   local L
   local labelW=0;for _,f in ipairs(fields) do labelW=math.max(labelW,len(f.label)) end
-  return ui.modal({title=title,w=math.min(W-4,64),h=math.min(H-2,#fields+5),build=function(m)
+  return ui.modal({title=title,w=math.min(W-4,w or 64),h=math.min(H-2,#fields+5),build=function(m)
     L=ui.list(m.menu,{name="r",x=m.ix,y=m.iy,w=m.iw,h=m.ih-1,bg=P.box,count=function() return #fields+2 end,
       row=function(i)
         if i==#fields+1 then return "",nil,true end
@@ -320,6 +327,13 @@ function ui.busy(text) ui.notify(text,P.accent);ui.flush() end
 ---------------------------------------------------------------- header/footer
 -- A count after a tab's title, e.g. "Fleet (2)"; 0 or nil hides it.
 function ui.badge(name,n) n=(n or 0)>0 and n or nil;if ui.badges[name]~=n then ui.badges[name]=n;headerDirty=true end end
+-- Announcing drones and robots: read at start and on an announce, never
+-- polled; sets the Fleet badge. Robots only once mes has pendingRobots.
+function ui.newHardware()
+  local ok,lg=pcall(require,"logistics");local d=ok and lg.pending() or {}
+  local okm,m=pcall(require,"mes");local r=okm and m.pendingRobots and ui.try(m.pendingRobots) or {}
+  ui.badge("fleet",#d+#r);return d,r
+end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
 local function header()
   ui.fill(1,1,W,1,P.bar);local x=2
@@ -477,6 +491,13 @@ function handle(e)
   elseif name=="interrupted" then running=false
   elseif name=="screen_resized" then W,H=gpu.getResolution();repaintAll=true
   elseif name=="warehouse" or name=="logistics" or name=="mes" or name=="logistics_work" then signal(name,table.unpack(e,2))
+  elseif name=="logistics_announce" or name=="mes_robot_announce" then
+    -- The open Fleet screen re-reads them itself.
+    if stack[1].tab~="fleet" then ui.newHardware() end;signal(name,table.unpack(e,2))
+  elseif name=="station" then
+    -- One line wherever the user is; the station was started async.
+    local st=e[3];if st=="ready" then ui.ok("Station "..e[2].." ready") elseif st=="failed" then ui.fail("Station "..e[2].." failed: see Setup") elseif st=="removed" then ui.ok("Station "..e[2].." removed") end
+    signal(name,table.unpack(e,2))
   end
 end
 function ui.flush()
@@ -534,7 +555,7 @@ function ui.run(opts)
     local idle,total=0,0;for _,d in ipairs(lg.drones()) do total=total+1;if d.state=="idle" then idle=idle+1 end end
     return total>0 and (total.." drones · "..(total-idle).." busy") or "no drones"
   end
-  ui.setStatus(ui.statusSource());statusAt=computer.uptime()
+  ui.setStatus(ui.statusSource());statusAt=computer.uptime();ui.newHardware()
   running=true;ui.switch(opts.tab or "craft")
   if opts.push then ui.push(opts.push,opts.arg) end
   ui.flush()
