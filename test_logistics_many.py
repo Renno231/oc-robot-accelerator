@@ -1,9 +1,39 @@
 """Real mixed-route allocator, expected-item receipts and controller timing."""
 import unittest
+from pathlib import Path
 import test_stock_api
 
 
 class LogisticsManyTests(unittest.TestCase):
+    def test_agent_waiting_take_stops_at_minimum_or_waits_for_it(self):
+        source = Path('drone-logistics/drone/agent.lua').read_text()
+        function = source[source.index('local function waitingTake('):source.index('local function runSteps(')]
+        self.lua.execute('''
+          STOCK=1;PULLS=0;CLOCK=0
+          computer={uptime=function() return CLOCK end,energy=function() return 100 end,
+            pullSignal=function(seconds) PULLS=PULLS+1;CLOCK=CLOCK+seconds;STOCK=2 end}
+          function cargoRoom() return true end
+          function take(endpoint,item,wanted)
+            local got=math.min(STOCK,wanted);STOCK=STOCK-got;return got,64,nil,STOCK
+          end
+        ''')
+        waiting_take = self.lua.execute(function + '\nreturn waitingTake')
+        self.assertEqual(waiting_take(None, None, 3, self.lua.table(timeout=5), 0, 1)[0], 1)
+        self.assertEqual(self.lua.globals().PULLS, 0)
+        self.lua.execute('STOCK=1;PULLS=0;CLOCK=0')
+        self.assertEqual(waiting_take(None, None, 3, self.lua.table(timeout=5), 0, 3)[0], 3)
+        self.assertEqual(self.lua.globals().PULLS, 1)
+
+    def test_wait_for_survives_dispatch_and_decreases_on_later_trip(self):
+        self.lua.execute('''
+          local take=leg('take','mod:a',6,nil,64);take.waitFor=4
+          local id=lg.job({take,leg('put','mod:a',6,nil,64,'dest')},{wait={timeout=5}})
+          local packet,task=dispatch();assert(task.steps[1].waitFor==4)
+          report(packet.id,{state='idle',held=0,reason='source shortfall',steps={
+            {taken=2,moved=2,short=true,left=4},{moved=2}}})
+          packet,task=dispatch();assert(task.steps[1].count==4 and task.steps[1].waitFor==2)
+        ''')
+
     def test_empty_sources_block_without_retry_but_nonempty_sources_retry(self):
         for packed in (True, False):
             for left in (0, 1):

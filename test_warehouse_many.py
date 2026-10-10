@@ -4,6 +4,30 @@ import test_stock_api
 
 
 class WarehouseManyTests(unittest.TestCase):
+    def test_collect_wait_for_splits_across_pieces_and_stack_limits(self):
+        self.lua.execute('''
+          observe('stock',{stack('mod:out',44)},1)
+          addStorage('other',{stack('mod:out',44)},1)
+          local ids=assert(wh.collect('buffer',{{item={name='mod:out'},count=40,waitFor=10}},{wait={timeout=5}}))
+          local takes={};for _,id in ipairs(ids) do for _,s in ipairs(jobs[id].submitted) do
+            if s.take then takes[#takes+1]=s end
+          end end
+          assert(#takes==2 and takes[1].waitFor==10 and takes[2].waitFor==0)
+          local packed
+          for i=1,100 do local name,value=debug.getupvalue(wh.collect,i)
+            if name=='packedJobs' then packed=value;break end
+          end
+          assert(packed)
+          local item={name='mod:out',damage=0}
+          local tours=packed({{item=item,count=40}},{{item=item,requestIndex=1,count=32,maximum=64,from='buffer',to='stock',waitFor=10},
+            {item=item,requestIndex=1,count=8,maximum=16,from='buffer',to='other',waitFor=0}},{},4,{})
+          takes={};local sum=0
+          for _,tour in ipairs(tours) do for _,s in ipairs(tour.steps) do if s.take then
+            takes[#takes+1]=s;sum=sum+(s.waitFor or 0);assert(s.count<=16)
+          end end end
+          assert(#takes==3 and sum==10 and takes[1].waitFor==10 and takes[2].waitFor==0 and takes[3].waitFor==0)
+        ''')
+
     def test_collection_wait_reaches_logistics_job(self):
         self.lua.execute('''
           observe('stock',{},3)

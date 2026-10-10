@@ -7,6 +7,19 @@ from test_support import LuaCase
 
 
 class MesStateTests(LuaCase):
+    def test_collection_wait_for_only_counts_due_load_output(self):
+        self.lua.execute('''
+          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',2)})
+          while #actions('fetchMany')>0 do drain('fetchMany') end
+          local g=WORLD.groups.alloy;assert(#g.loads==2)
+          g.tripSeconds=5;g.loads[1].due=2;g.loads[2].due=10
+          g.loads[2].remaining['t:later']=3
+          tick(2);local a=actions('collectMany')[1];assert(a.wait.timeout==5)
+          local requests={};for _,r in ipairs(a.requests) do requests[r.item.name]=r end
+          assert(requests['t:bronze'].count==2 and requests['t:bronze'].waitFor==1)
+          assert(requests['t:later'].count==3 and requests['t:later'].waitFor==nil)
+        ''')
+
     def test_robot_refetches_only_clean_shortfalls_with_other_stock(self):
         for stock, refused in ((1, 0), (0, 0), (1, 1)):
             with self.subTest(stock=stock, refused=refused):

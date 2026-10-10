@@ -167,11 +167,11 @@ local function cargoRoom(item)
   end
   return false
 end
-local function waitingTake(endpoint,item,wanted,wait,reserve)
+local function waitingTake(endpoint,item,wanted,wait,reserve,minimum)
   local total,maxSize,reason,left=take(endpoint,item,wanted)
   if not wait then return total,maxSize,reason,false,left end
   local deadline=computer.uptime()+wait.timeout;local delay=0.05
-  while total<wanted and computer.uptime()<deadline do
+  while total<(minimum or wanted) and computer.uptime()<deadline do
     if computer.energy()<reserve then return total,maxSize,"wait interrupted to charge",true,left end
     if not cargoRoom(item) then break end
     computer.pullSignal(math.min(delay,math.max(0,deadline-computer.uptime())))
@@ -211,7 +211,7 @@ local function runSteps(task,id,result)
       end
     elseif step.take and step.count>0 then
       goTo(step.take.node)
-      local got,maximum,why,recharge,left=waitingTake(step.take,step.item,step.count,task.wait,task.reserve)
+      local got,maximum,why,recharge,left=waitingTake(step.take,step.item,step.count,task.wait,task.reserve,step.waitFor)
       r.moved=got;r.taken=got;r.maxSize=maximum
       ledger[#ledger+1]={step=i,source=step.take,item=step.item,count=got}
       if step.all then r.complete=got<step.count and cargoRoom(step.item);r.short=r.complete or nil

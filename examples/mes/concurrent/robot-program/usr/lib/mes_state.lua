@@ -357,7 +357,7 @@ local function beginMany(run, stage, kind, requests, endpoint, wait)
       stage.itemsMoved[#stage.itemsMoved + 1] = record
       bundle.records[#bundle.records + 1] = record
       r.receipt = record
-      payload[#payload + 1] = { item = item(id), count = r.count, to = kind == 'fetch' and dest or nil }
+      payload[#payload + 1] = { item = item(id), count = r.count, to = kind == 'fetch' and dest or nil, waitFor = r.waitFor }
     end
   end
   if #payload == 0 then
@@ -1256,6 +1256,7 @@ local function collect(w, g)
         for _, q in ipairs(requests) do
           if q.item == id then
             q.count = q.count + n
+            if g.tripSeconds and w.now >= load.due then q.waitFor = (q.waitFor or 0) + n end
           end
         end
       end

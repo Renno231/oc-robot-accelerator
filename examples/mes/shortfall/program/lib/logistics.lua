@@ -203,6 +203,7 @@ local function scheduleJob(job)
               local limit=limits[key]
               local room=(d.cargoSlots-used)*limit+(math.ceil(held/limit)*limit-held)
               s.count=math.min(s.count,room);carried[key]=held+s.count;allocation[i]=s.count
+              if s.waitFor then s.waitFor=math.min(s.count,math.max(0,s.waitFor-job.steps[i].moved)) end
               useful=useful or s.count>0
             elseif s.put then
               local key=itemKey(s.item);local held=carried[key] or 0
@@ -566,6 +567,7 @@ function M.job(steps,opts)
         assert((step.all==nil or step.all==true) and (step.rest==nil or step.rest==true),"invalid all/rest")
         assert(not (step.all and (step.put or step.count)) and not (step.rest and (step.take or step.count)),"conflicting step count")
         assert((step.take and step.all) or (step.put and step.rest) or (type(step.count)=="number" and step.count>0 and step.count%1==0),"step count/all/rest required")
+        assert(step.waitFor==nil or (step.take and step.waitFor>=0 and step.waitFor%1==0 and step.waitFor<=step.count),"waitFor")
         step.requested=step.count or (step.all and "all" or "rest")
         if step.count and step.take then job.requested=job.requested+step.count;job.remaining=job.remaining+step.count end
         if step.all then job.openEnded=true end
