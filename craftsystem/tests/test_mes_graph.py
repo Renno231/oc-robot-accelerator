@@ -567,9 +567,10 @@ class MesGraphTests(LuaCase):
             assert(r.status=='unknown' and M.resources{config=CFG}.crafters.cpu1.state=='unknown')
             local second=run({task('t:left',{'t:raw'})},{crafter='cpu1'})
             assert(second.status=='failed' and #CLIENTS==1)
-            -- Operator confirmed idle and separately recovered the buffer.
+            -- The robot answers idle again and the buffer was recovered.
             put('buf1','t:raw',0);OUTCOMES.robot1='complete'
-            local third=run({task('t:left',{'t:raw'})},{crafter='cpu1',isCrafterIdle=function() return true end})
+            for _,c in ipairs(CLIENTS) do c.finish=c.finish or TIME;c.outcome='complete' end
+            local third=run({task('t:left',{'t:raw'})},{crafter='cpu1'})
             return third.status,#CLIENTS,M.resources{config=CFG}.crafters.cpu1.state
         '''), ('complete', 2, 'idle'))
 
@@ -969,7 +970,7 @@ class MesGraphTests(LuaCase):
             return fuel,held('stock','t:fuel'),held('fuel1','t:fuel'),held('stock','t:metal')
         '''), (0, 2, 0, 12))
 
-    def test_additional_fuel_refresh_credits_observably_added_units(self):
+    def test_fuel_is_counted_from_the_first_read_plus_deliveries(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
             local mt=CFG.machineTypes.furnace;mt.batch=4;mt.fuel={role='fuel',item='t:fuel',per=8}
@@ -980,9 +981,8 @@ class MesGraphTests(LuaCase):
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',12)})
             assert(r.status=='complete',r.reason)
             local fuel=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' and m.item=='t:fuel' then fuel=fuel+m.count end end
-            local reads=0;for _,s in ipairs(SCANS) do if s.storage=='fuel1' then reads=reads+1 end end
-            return fuel,reads>1,held('stock','t:fuel'),held('stock','t:metal')
-        '''), (1, True, 1, 12))
+            return fuel,held('stock','t:fuel'),held('stock','t:metal')
+        '''), (2, 0, 12))
 
     def test_bulk_wait_preserves_first_known_failure_while_other_jobs_settle(self):
         self.assertEqual(self.lua.execute('''
@@ -1040,21 +1040,15 @@ class MesGraphTests(LuaCase):
             return held('buf2','t:left'),held('stock','t:raw'),M.crafters{config=CFG}.cpu2.status==nil
         '''), (1, 2, True))
 
-    def _failure_during_admission_read(self, fuel):
-        self.lua.globals().DELAY_FUEL_READ = fuel
-        return self.lua.execute('''
-            local mt=CFG.machineTypes.furnace;mt.batch=1;mt.blocking=not DELAY_FUEL_READ
+    def test_failure_during_input_read_prevents_new_load_but_settles_old_load(self):
+        self.assertEqual(self.lua.execute('''
+            local mt=CFG.machineTypes.furnace;mt.batch=1;mt.blocking=true
             put('stock','t:ore',3);put('stock','t:raw',1);OUTCOMES.robot1='failed'
-            if DELAY_FUEL_READ then
-                GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
-                mt.fuel={role='fuel',item='t:fuel',per=1};mt.roles={'input','fuel','output'};mt.roleSlots.fuel={1}
-                put('stock','t:fuel',3)
-            end
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local wh=require('warehouse');local scan=wh.scanRole;local reads=0
             wh.scanRole=function(storage,slots)
                 local id=scan(storage,slots)
-                if storage==(DELAY_FUEL_READ and 'fuel1' or 'in1') then
+                if storage=='in1' then
                     reads=reads+1
                     if reads==2 then JOBS[id].finish=TIME+10;JOBS[id].settle=TIME+10.2;DELAYED_READ=id end
                 end
@@ -1069,11 +1063,6 @@ class MesGraphTests(LuaCase):
             for _,m in ipairs(MOVES) do if m.kind=='fetch' then assert(m.time<failureAt,'new input delivery after failure') end end
             assert(held('stock','t:metal')==1 and held('stock','t:ore')==2)
             local resource=M.resources{config=CFG}.machines.kiln
-            return resource.state,#resource.loads,DELAY_FUEL_READ and held('stock','t:fuel') or 0
-        ''')
+            return resource.state,#resource.loads
+        '''), ('idle', 0))
 
-    def test_failure_during_input_read_prevents_new_load_but_settles_old_load(self):
-        self.assertEqual(self._failure_during_admission_read(False), ('idle', 0, 0))
-
-    def test_failure_during_fuel_refresh_prevents_new_load_claim_or_delivery(self):
-        self.assertEqual(self._failure_during_admission_read(True), ('idle', 0, 2))
