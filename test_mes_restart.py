@@ -13,6 +13,7 @@ class MesRestartTests(unittest.TestCase):
         lua.execute(f'package.path="{lib}/?.lua;"..package.path')
         lua.execute(r'''
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
+          package.preload.stations=function() return {} end
           local serialization=require('serialization');local serialize=serialization.serialize
           COUNTS={};local store=require('store');local open=store.open;local cbor=require('cbor')
           store.open=function(path,...)
