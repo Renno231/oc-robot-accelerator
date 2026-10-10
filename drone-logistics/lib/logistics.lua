@@ -295,6 +295,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle"
     d.held=nil;for _,s in pairs(listing) do d.held=d.held or {};d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
     wakeScheduler()
+  elseif kind=="navigate" and d.trip~=id then
+    send(d,"navigation",id,serialization.serialize({reason="unknown trip "..tostring(id)},false))
   elseif kind=="navigate" and d.trip==id and d.job and type(payload)=="string" and #payload<7000 then
     local request=serialization.unserialize(payload);local job=jobs[d.job]
     if type(request)~="table" or not map.node(request.from) or not map.node(request.to) then return end
