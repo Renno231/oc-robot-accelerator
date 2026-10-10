@@ -28,34 +28,72 @@ local function config(opts)
   end
   return require('mes_config').config(opts)
 end
-local function stockSnapshot(reserved)
+-- Calls fn(stack) for every stack in ordinary stock: warehouse members that are
+-- not a machine or crafter role, each physical inventory once.
+local function eachStock(fn)
   local wh = require('warehouse')
   local members = wh.members()
-  local grouped, groupKeys = {}, {}
+  local roles, seen = {}, {}
   for _, g in pairs(wh.groups()) do
     for _, s in pairs(g.roles) do
-      grouped[s] = true
-      groupKeys[(members[s] or {}).inventory or s] = true
+      roles[(members[s] or {}).inventory or s] = true
     end
   end
-  local stacks, seen = {}, {}
-  reserved = copy(reserved or {})
   for _, s in ipairs(sorted(members)) do
     local key = members[s].inventory or s
-    if not grouped[s] and not groupKeys[key] and not seen[key] then
+    if not roles[key] and not seen[key] then
       seen[key] = true
       for _, v in pairs((wh.contents(s) or {}).items or {}) do
-        local id = identity.stackName(v.item)
-        local withheld = math.min(v.count, reserved[id] or 0)
-        reserved[id] = (reserved[id] or 0) - withheld
-        if v.count > withheld then
-          stacks[#stacks + 1] =
-            { name = v.item.name, damage = v.item.damage or 0, size = v.count - withheld, maxSize = v.maxSize
-              or 64 }
-        end
+        fn(v)
       end
     end
   end
+end
+-- What a chain of robot tasks takes from outside, and its net outputs. Items an
+-- earlier task makes are used by later ones before anything is fetched.
+local function chainNeeds(tasks)
+  local needed, balance = {}, {}
+  for _, t in ipairs(tasks) do
+    local ops = t.qty_produced / t.recipeOutput
+    for slot, id in pairs(t.recipe) do
+      id = identity.canonical(id)
+      if id ~= 'minecraft:air' and not (t.tool_slots or {})[slot] then
+        local deficit = math.max(0, ops - (balance[id] or 0))
+        needed[id] = (needed[id] or 0) + deficit
+        balance[id] = (balance[id] or 0) + deficit - ops
+      end
+    end
+    local id = identity.canonical(t.item)
+    balance[id] = (balance[id] or 0) + t.qty_produced
+  end
+  local outputs = {}
+  for id, n in pairs(balance) do
+    if n - (needed[id] or 0) > 0 then
+      outputs[id] = n - (needed[id] or 0)
+    end
+  end
+  return needed, outputs
+end
+-- Operations that machine group i of count gets when ops are split evenly.
+local function share(ops, count, i)
+  return math.floor(ops / count) + (i <= ops % count and 1 or 0)
+end
+local function inputQuantities(t, plan)
+  local node = plan.blueprint and plan.blueprint.nodes[t.node]
+  return t.input_quantities or (node and node.input_quantities) or {}
+end
+local function stockSnapshot(reserved)
+  local stacks = {}
+  reserved = copy(reserved or {})
+  eachStock(function(v)
+    local id = identity.stackName(v.item)
+    local withheld = math.min(v.count, reserved[id] or 0)
+    reserved[id] = (reserved[id] or 0) - withheld
+    if v.count > withheld then
+      stacks[#stacks + 1] =
+        { name = v.item.name, damage = v.item.damage or 0, size = v.count - withheld, maxSize = v.maxSize or 64 }
+    end
+  end)
   return assert(require('inventory').new({
     getAllStacks = function()
       return {
@@ -78,38 +116,23 @@ function M.robotPlan(plan, first, last, inventory)
     tools = copy(plan.tools or {}),
     tool_stock = {},
   }
-  local balance, usedTools, manufacturedTools = {}, {}, {}
+  local usedTools, manufacturedTools = {}, {}
   for i = first, last do
     local t = copy(plan.tasks[i])
     t.node = nil
     t.input_nodes = nil
     sub.tasks[#sub.tasks + 1] = t
-    local ops = t.qty_produced / t.recipeOutput
     for slot, id in pairs(t.recipe) do
-      id = identity.canonical(id)
-      if id ~= 'minecraft:air' then
-        if (t.tool_slots or {})[slot] then
-          usedTools[id] = true
-        else
-          local deficit = math.max(0, ops - (balance[id] or 0))
-          sub.inventory_needed[id] = (sub.inventory_needed[id] or 0) + deficit
-          balance[id] = (balance[id] or 0) + deficit - ops
-        end
+      if (t.tool_slots or {})[slot] then
+        usedTools[identity.canonical(id)] = true
       end
     end
-    local id = identity.canonical(t.item)
-    balance[id] = (balance[id] or 0) + t.qty_produced
-    local family = require('craft_tool_rules').family(id)
+    local family = require('craft_tool_rules').family(identity.canonical(t.item))
     if sub.tools[family] then
       manufacturedTools[family] = true
     end
   end
-  for id, n in pairs(balance) do
-    local net = n - (sub.inventory_needed[id] or 0)
-    if net > 0 then
-      sub.requestOutputs[id] = net
-    end
-  end
+  sub.inventory_needed, sub.requestOutputs = chainNeeds(sub.tasks)
   for id in pairs(usedTools) do
     if manufacturedTools[id] then
       return nil,
@@ -252,9 +275,7 @@ local function processingOutputs(t, plan)
   if not byproducts then
     local db = require('recipes')
     local all = db.getAll and db.getAll(t.item)
-    local quantities = t.input_quantities
-      or (plan.blueprint and plan.blueprint.nodes[t.node] and plan.blueprint.nodes[t.node].input_quantities)
-      or {}
+    local quantities = inputQuantities(t, plan)
     for _, recipe in ipairs(all or {}) do
       if
         recipe.isProcessing
@@ -384,23 +405,11 @@ function M.graph(plan, cfg, opts)
     stage.tasks[#stage.tasks + 1] = { item = t.item, qty = t.qty_produced }
   end
   local wh = require('warehouse')
-  local stock, grouped, seen = {}, {}, {}
-  local members = wh.members()
-  for _, g in pairs(wh.groups()) do
-    for _, s in pairs(g.roles) do
-      grouped[(members[s] or {}).inventory or s] = true
-    end
-  end
-  for _, s in ipairs(sorted(members)) do
-    local key = members[s].inventory or s
-    if not grouped[key] and not seen[key] then
-      seen[key] = true
-      for _, v in pairs((wh.contents(s) or {}).items or {}) do
-        local id = identity.stackName(v.item)
-        stock[id] = (stock[id] or 0) + v.count
-      end
-    end
-  end
+  local stock = {}
+  eachStock(function(v)
+    local id = identity.stackName(v.item)
+    stock[id] = (stock[id] or 0) + v.count
+  end)
   -- Stock claimed by running requests is not available to this plan.
   for id, n in pairs(service.claims()) do
     stock[id] = math.max(0, (stock[id] or 0) - n)
@@ -420,26 +429,14 @@ function M.graph(plan, cfg, opts)
     local t = tasks[stage.taskIndices[1]]
     local needed = {}
     if stage.kind == 'robot' then
-      local balance = {}
+      local chain = {}
       for _, i in ipairs(stage.taskIndices) do
-        local task = tasks[i]
-        local ops = task.qty_produced / task.recipeOutput
-        for slot, id in pairs(task.recipe) do
-          if id ~= 'minecraft:air' and not (task.tool_slots or {})[slot] then
-            id = identity.canonical(id)
-            local deficit = math.max(0, ops - (balance[id] or 0))
-            needed[id] = (needed[id] or 0) + deficit
-            balance[id] = (balance[id] or 0) + deficit - ops
-          end
-        end
-        local id = identity.canonical(task.item)
-        balance[id] = (balance[id] or 0) + task.qty_produced
+        chain[#chain + 1] = tasks[i]
       end
-      for _, id in ipairs(sorted(balance)) do
-        local n = balance[id] - (needed[id] or 0)
-        if n > 0 then
-          stage.outputs[#stage.outputs + 1] = { item = id, qty = n }
-        end
+      local outputs
+      needed, outputs = chainNeeds(chain)
+      for _, id in ipairs(sorted(outputs)) do
+        stage.outputs[#stage.outputs + 1] = { item = id, qty = outputs[id] }
       end
       stage.crafter = (selectedStages[index] or {}).crafter or opts.crafter
     else
@@ -452,9 +449,7 @@ function M.graph(plan, cfg, opts)
       )
       local ops = t.qty_produced / t.recipeOutput
       local per = 0
-      local quantities = t.input_quantities
-        or (plan.blueprint and plan.blueprint.nodes[t.node] and plan.blueprint.nodes[t.node].input_quantities)
-        or {}
+      local quantities = inputQuantities(t, plan)
       for slot, id in pairs(t.recipe) do
         if id ~= 'minecraft:air' then
           local q = quantities[slot] or 1
@@ -473,8 +468,7 @@ function M.graph(plan, cfg, opts)
       assert(type(names) == 'table' and #names > 0, 'No machine groups')
       stage.loads = 0
       for i = 1, #names do
-        local n = math.floor(ops / #names) + (i <= ops % #names and 1 or 0)
-        stage.loads = stage.loads + math.ceil(n / math.floor(mt.batch / per))
+        stage.loads = stage.loads + math.ceil(share(ops, #names, i) / math.floor(mt.batch / per))
       end
       local outputs = processingOutputs(t, plan)
       for _, id in ipairs(sorted(outputs)) do
@@ -484,7 +478,7 @@ function M.graph(plan, cfg, opts)
         local neededFuel = 0
         for i, name in ipairs(names) do
           local group = assert(groups[name], 'Unknown machine group ' .. tostring(name))
-          local n = math.floor(ops / #names) + (i <= ops % #names and 1 or 0)
+          local n = share(ops, #names, i)
           local budget = fuelBudgets[name]
           if not budget then
             local held = 0
