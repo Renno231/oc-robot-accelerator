@@ -293,8 +293,9 @@ class MesStateTests(LuaCase):
           put('ma','t:copper',1);put('mb','t:tin',1);drain('scanRole');drain('fetchMany')
           assert(#RUN.stages[1].loadLedger==2 and RUN.stages[1].loadLedger[2].inputBefore==2)
           drain('scanRole');assert(RUN.stages[2].loadLedger==nil)
-          put('ma','t:copper',0);put('mb','t:tin',0);tick(1);drain('scanRole');drain('fetchMany')
-          assert(RUN.stages[2].loadLedger[1].inputBefore==0 and RUN.stages[1].loadLedger[1].collected==nil)
+          -- Inputs empty, but no new look until the next collection.
+          put('ma','t:copper',0);put('mb','t:tin',0);tick(1)
+          assert(#actions('scanRole')==0 and RUN.stages[2].loadLedger==nil)
         ''')
 
     def test_nonblocking_joint_capacity_does_not_invent_free_slots(self):

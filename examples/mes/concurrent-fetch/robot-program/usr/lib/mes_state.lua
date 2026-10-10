@@ -1106,8 +1106,9 @@ local function admit(w, g)
       end
     end
     local ops = donor and math.min(donor.left, r.capacity) or 0
-    -- After a refusal the machine takes nothing new until output is collected.
-    if donor and not g.refused and (mt.blocking == false or empty or same) then
+    -- After a refusal, or a blocking machine found holding other work, the
+    -- machine takes nothing new until its next collection.
+    if donor and not g.awaitCollection and (mt.blocking == false or empty or same) then
       while ops > 0 and not fits(r.run, g, r, ops) do
         ops = math.floor(ops / 2)
       end
@@ -1207,6 +1208,10 @@ local function admit(w, g)
       end
     end
   end
+  -- A blocking machine that could take nothing waits for its next collection.
+  if mt.blocking ~= false and next(g.pending) then
+    g.awaitCollection = true
+  end
   blocked(w, g)
   return true
 end
@@ -1256,7 +1261,7 @@ local function finishLoad(w, g)
       r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
     end
     load.donor.left = load.donor.left + load.ops
-    g.refused = true
+    g.awaitCollection = true
     r.blocked = true
     r.active = r.active - 1
     table.remove(g.loads, #g.loads)
@@ -1274,7 +1279,7 @@ local function finishLoad(w, g)
     end
     if ops < load.ops then
       load.donor.left = load.donor.left + load.ops - ops
-      g.refused = true
+      g.awaitCollection = true
       load.ops = ops
       record.items = ops * r.perOp
       for id, n in pairs(r.outputs) do
@@ -1338,7 +1343,7 @@ local function reap(w, g, collected)
     end
   end
   if collected then
-    g.refused = nil
+    g.awaitCollection = nil
   end
   g.outputBackoff = collected and BACKOFF or math.min(g.outputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
@@ -1531,9 +1536,10 @@ local function groupAdvance(w, g)
       g.observed = g.initialInputs
       g.initialInputs = nil
       g.phase = 'admit'
-    elseif mt.blocking == false then
+    elseif mt.blocking == false or g.awaitCollection then
       -- A non-blocking machine is sized by its first look until a load goes in;
-      -- after that each delivery reports what fit.
+      -- after that each delivery reports what fit. A machine waiting for its
+      -- next collection is not looked at again before then.
       g.phase = 'admit'
     else
       scanInputs(w, g)
