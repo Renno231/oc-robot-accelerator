@@ -379,12 +379,17 @@ with the slots each role's face exposes). A processing step uses any group of th
 group, or a chosen set. Machines are scheduled per load, not owned per step. Admission follows AE2
 blocking mode: non-blocking types (a vanilla furnace) take loads while input room allows; blocking
 types (multi-input, e.g. copper + tin) take a load only when their inputs are empty or hold the same
-recipe. A blocking machine's inputs are read before each load; when it can take nothing, it is not read
-again until its next collection. A non-blocking machine is read once,
-before its first load; after that each delivery reports what went in. A machine that refuses part of
-a load keeps what went in, the drone returns the rest to storage, and the rest is retried after the
-machine's next collection, failing at the input deadline. Output never gates admission; it is collected continuously and attributed to loads FIFO by
-item. Fuel, batch and timing come from the type; output is read when due, not blindly polled.
+recipe. Drones never look at a machine or a robot buffer on a normal run: the MES knows what is in
+each machine from its own loads and collections, and every action's report is the truth. A blocking
+machine is empty once all its loads are collected; until then only the same recipe tops it up. A
+non-blocking machine takes loads, and each delivery reports what went in. A machine that refuses part
+of a load keeps what went in, the drone returns the rest to storage, and the rest is retried after the
+machine's next collection, failing at the input deadline. Output never gates admission. When a load
+should be done, a drone takes the expected output directly; the take reports what was there, it is
+attributed to loads FIFO by item, and anything not ready is taken on the next try (backing off).
+Fuel counts only what the MES delivered. A robot reports its buffer after a craft, and the drone takes
+exactly that. A look happens only when something new enters the system or a report shows actual state
+differs from expected (failure resynchronization).
 
 **Hand-off and intermediates.** An output whose consuming step already has its robot or machine
 (with room) goes there directly (furnace output to `cpu1` buffer). Otherwise it waits in an

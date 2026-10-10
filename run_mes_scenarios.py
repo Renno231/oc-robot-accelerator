@@ -66,6 +66,7 @@ def summarize_job(state, command_exit, jobs_root, source, case, mode):
         if case == 'torches16':
             row['t11MesTrips'] = T11_TORCH_MES_TRIPS
         row['mesStatus'] = result.get('status') or (result.get('mes') or {}).get('status')
+        row['tripKinds'] = result.get('tripKinds')
         if case == 'concurrent':
             for key in ('runs', 'combinedGameSeconds', 'furnaceLoads', 'sameRobotOverlap', 'robotOverlapSeconds', 'afterScan'):
                 row[key] = result.get(key)

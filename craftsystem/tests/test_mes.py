@@ -124,9 +124,11 @@ class MesTests(LuaCase):
                 end,
                 store=function(item,n,s)
                     s=type(s)=='table' and s.storage or s
-                    local id=require('item_identity').stackName(item)
-                    put(s,id,held(s,id)-n);put('stock',id,held('stock',id)+n)
-                    MOVES[#MOVES+1]={kind='store',item=id,n=n,s=s};return job()
+                    local id=require('item_identity').stackName(item);local take=math.min(n,held(s,id))
+                    put(s,id,held(s,id)-take);put('stock',id,held('stock',id)+take)
+                    MOVES[#MOVES+1]={kind='store',item=id,n=take,s=s};local j=job()
+                    if take<n then local r=JOBS[j];r.state='partial';r.moved=take;r.taken=take;r.returned=0;r.held={};r.steps={{short=true}} end
+                    return j
                 end
             } end
             -- Compatibility adapter for this legacy functional fixture. Packed
@@ -155,6 +157,7 @@ class MesTests(LuaCase):
                 return ids
             end
             wh.fetchMany=function(requests,to) return many(requests,to,false) end
+            wh.collect=function(from,requests) return many(requests,from,true) end
             wh.storeMany=function(from,opts)
                 local storage=type(from)=='table' and from.storage or from
                 local requests=opts and opts.requests
@@ -235,6 +238,9 @@ class MesTests(LuaCase):
                 o=o or {};o.serverAddress=address;o.existingOnly=true
                 local r=client.runDetailed(p,o)
                 sink(token,'robot_admitted',{address=address,jobId=jobId,disposition='accepted'})
+                if r.status=='complete' then
+                    r.buffer={};for id,v in pairs((CONTENTS.buf or {}).items or {}) do if v.count>0 then r.buffer[id]=v.count end end
+                end
                 sink(token,'robot_terminal',{address=address,jobId=jobId,status=r.status,receipt=r});return true
             end
             client.tick=function() end
@@ -335,13 +341,14 @@ class MesTests(LuaCase):
 
     def test_specific_group_multiple_loads_existing_fuel(self):
         self.assertEqual(self.lua.execute('''
+            -- Fuel already in the machine is not ours to count: the MES delivers all it needs.
             put('stock','t:raw',130);put('stock','t:fuel',17);put('af','t:fuel',1)
             local r=run({task('t:processed',{'t:raw'},130,1,'furnace')},{machines={furnace='A'}})
             local loads=0;for _,v in ipairs(MOVES) do if v.kind=='fetch' and v.item=='t:raw' then
                 assert(v.n<=64 and v.s=='ai');loads=loads+1
             end end
             return r.status,loads,held('stock','t:processed'),held('stock','t:fuel'),held('bi','t:raw')
-        '''), ('complete', 3, 130, 1, 0))
+        '''), ('complete', 3, 130, 0, 0))
 
     def test_shortfall_reports_locations_stops_without_retry(self):
         self.assertEqual(self.lua.execute('''

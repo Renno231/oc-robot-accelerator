@@ -178,6 +178,21 @@ class WarehouseManyTests(unittest.TestCase):
           assert(wh.storeMany({storage='buffer',slots={9}})==nil)
         ''')
 
+    def test_collect_takes_expected_items_without_looking_and_counts_what_was_there(self):
+        self.lua.execute('''
+          observe('stock',{},3)
+          local before=#jobs
+          local ids=assert(wh.collect({storage='buffer',slots={7}},{{item={name='mod:output'},count=4}}))
+          assert(#ids==1 and #jobs==before+1) -- one trip: no read job first
+          local job=jobs[ids[1]];assert(job.opts.retries==0)
+          for _,s in ipairs(job.submitted) do
+            assert(not s.read and s.item.name=='mod:output')
+            if s.take then assert(s.take.storage=='buffer' and s.take.slots[1]==7 and s.count==4) end
+          end
+          deliver(ids[1],'mod:output',2)
+          assert(wh.count({name='mod:output'})==2)
+        ''')
+
     def test_store_many_does_not_reuse_shared_empty_slots(self):
         self.lua.execute('''
           observe('stock',{},1);observe('buffer',{stack('mod:a',1),stack('mod:b',1)})

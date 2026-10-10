@@ -127,9 +127,10 @@ class MesServiceTests(LuaCase):
           local svc=require('mes_service');local c=require('craft_client');local fired=false
           c.tick=function()
             assert(svc.guarded())
-            if not fired then fired=true;svc.enqueue(id,'cancel',{reason='queued during connect'});svc.pump() end
+            if not fired then fired=true;BEFORE=#MOVES;svc.enqueue(id,'cancel',{reason='queued during connect'});svc.pump() end
           end
           local r=M.wait(id)
-          assert(r.status=='failed' and r.reason=='queued during connect' and #MOVES==0 and #CLIENTS==0)
+          -- Inputs already on their way finish; nothing new is fetched after the failure.
+          assert(r.status=='failed' and r.reason=='queued during connect' and #MOVES==BEFORE and #CLIENTS==0)
           for _,job in pairs(JOBS) do assert(job.settled) end
         ''')

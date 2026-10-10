@@ -79,6 +79,11 @@ class MesStateTests(LuaCase):
             elseif a.kind=='scanRole' then l.steps={{listing=S.copy(view(a.storage)),size=2}}
             else for i,r in ipairs(a.requests or {}) do
               local n=moved and moved[i] or r.count
+              -- A collection takes what is there.
+              if a.kind=='collectMany' then
+                n=math.min(n,total(type(a.endpoint)=='table' and a.endpoint.storage or a.endpoint,r.item.name..((r.item.damage or 0)>0 and ':'..r.item.damage or '')))
+                if n<r.count then l.steps[#l.steps+1]={short=true};l.held={} end
+              end
               l.perItem[#l.perItem+1]={item=r.item,requestIndex=i,requested=r.count,moved=n,shortfall=r.count-n,taken=r.count,returned=r.count-n}
             end end
             fact('job',{id=id,receipt=l});return l
@@ -92,9 +97,16 @@ class MesStateTests(LuaCase):
           function readyRobots()
             drain('scan');drain('fetchMany');return actions('robot_begin')
           end
+          -- A finished robot reports what it read in its buffer.
           function terminal(a,status,at)
+            local buffer
+            if (status or 'complete')=='complete' then
+              buffer={};for _,c in pairs(CF) do if c.robot==a.address then
+                for id,v in pairs(view(c.buffer).items) do if v.count>0 then buffer[id]=v.count end end
+              end end
+            end
             a.testDone=true;fact('robot_terminal',{token=a.token,address=a.address,jobId=a.jobId,status=status or 'complete',at=at or TIME,
-              receipt={status=status or 'complete',message='robot '..(status or 'complete')}});advance()
+              receipt={status=status or 'complete',message='robot '..(status or 'complete'),buffer=buffer}});advance()
           end
           function loaded(stages,opts)
             new(stages,opts);drain('scanRoles');drain('fetchMany')
@@ -104,11 +116,11 @@ class MesStateTests(LuaCase):
     def test_update_records_only_and_advance_dispatches_both_branches(self):
         self.lua.execute('''
           new({robot('t:left'),robot('t:right'),robot('t:join',{1,2})})
-          assert(#actions('scan')==2 and RUN.stages[3].state=='waiting')
-          local before=#ACTIONS;local a=actions('scan')[1]
-          submit(a,{10});receipt(a,10);fact('settled',{id=10})
+          assert(#actions('fetchMany')==2 and RUN.stages[3].state=='waiting')
+          local before=#ACTIONS;local a=actions('fetchMany')[1]
+          a.testDone=true;submit(a,{10});receipt(a,10);fact('settled',{id=10})
           assert(#ACTIONS==before and RUN.stages[1].state=='fetching')
-          advance();assert(#actions('fetchMany')==1)
+          advance();assert(#actions('robot_begin')==1)
           assert(package.loaded.event==nil and package.loaded.warehouse==nil)
         ''')
 
@@ -123,12 +135,12 @@ class MesStateTests(LuaCase):
     def test_robot_and_buffer_aliases_lock_before_any_action(self):
         self.lua.execute('''
           CF.b.robot='r1';new({robot('t:left'),robot('t:right')})
-          assert(#actions('scan')==1 and WORLD.robots.r1.state=='busy')
+          assert(#actions('fetchMany')==1 and WORLD.robots.r1.state=='busy')
         ''')
         self.setUp()
         self.lua.execute('''
           ALIAS='physical-chest';new({robot('t:left'),robot('t:right')})
-          assert(#actions('scan')==1 and WORLD.buffers[ALIAS].owner=='r1')
+          assert(#actions('fetchMany')==1 and WORLD.buffers[ALIAS].owner=='r1')
         ''')
 
     def test_partial_submission_retains_all_ids_and_first_failure_until_settled(self):
@@ -155,7 +167,7 @@ class MesStateTests(LuaCase):
           new({robot('t:left'),robot('t:right'),robot('t:join',{1,2})});local running=readyRobots()
           fact('cancel',{});advance();assert(RUN.status=='running')
           put('b1','t:left',1);put('b2','t:right',1)
-          terminal(running[1]);terminal(running[2]);drain('scan');drain('storeMany')
+          terminal(running[1]);terminal(running[2]);drain('collectMany')
           assert(RUN.status=='failed' and RUN.reason=='Cancelled' and RUN.stages[3].state=='waiting')
           assert(RUN.stages[1].state=='done' and RUN.stages[2].state=='done')
         ''')
@@ -214,10 +226,10 @@ class MesStateTests(LuaCase):
           fact('robot_terminal',{token=a.token,address=a.address,jobId='other-job',status='failed',reason='wrong job'})
           fact('robot_terminal',{token='other-token',address=a.address,status='failed',reason='wrong token'})
           advance();assert(RUN.reason==nil and RUN.stages[1].state=='crafting')
-          put('b1','t:left',1);terminal(a);drain('scan');drain('storeMany')
+          put('b1','t:left',1);terminal(a);drain('collectMany')
           fact('robot_terminal',{token=a.token,address=a.address,jobId=a.jobId,status='failed',reason='stale failure'})
           advance();assert(RUN.reason==nil and RUN.stages[1].receipt.status=='complete')
-          put('b2','t:right',1);terminal(running[2]);drain('scan');drain('storeMany')
+          put('b2','t:right',1);terminal(running[2]);drain('collectMany')
           assert(RUN.status=='complete')
         ''')
 
@@ -251,11 +263,11 @@ class MesStateTests(LuaCase):
         self.lua.execute('''
           new({robot('t:final')});local a=readyRobots()[1]
           tick(2)
-          local original={status='COMPLETE',message='SUCCESS',jobId=a.jobId,receipt=true,finishedAt=3}
+          local original={status='COMPLETE',message='SUCCESS',jobId=a.jobId,receipt=true,finishedAt=3,buffer={['t:final']=1}}
           fact('robot_admitted',{token=a.token,address=a.address,jobId=a.jobId,disposition='started',receipt={status='RUNNING'}})
           fact('robot_terminal',{token=a.token,address=a.address,jobId=a.jobId,status='complete',at=3,receipt=original})
-          put('b1','t:final',1);tick(4);drain('scan')
-          local store=actions('storeMany')[1];submit(store,{51});receipt(store,51);advance()
+          put('b1','t:final',1);tick(4)
+          local store=actions('collectMany')[1];submit(store,{51});receipt(store,51);advance()
           local stage=RUN.stages[1]
           assert(stage.assigned==0 and stage.craftStarted==0 and stage.craftFinished==3)
           assert(stage.released==nil and stage.receipt.message=='SUCCESS' and stage.receipt.receipt==true)
@@ -287,24 +299,16 @@ class MesStateTests(LuaCase):
           assert(WORLD.robots.r1.run==9 and WORLD.robots.r1.state=='busy')
         ''')
 
-    def test_blocking_same_recipe_topup_and_different_recipe_waits_for_empty_inputs(self):
+    def test_blocking_same_recipe_topup_and_different_recipe_waits_for_its_loads_to_be_collected(self):
         self.lua.execute('''
-          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',2),machine('t:steel',{'t:iron','t:coal'},'alloy')})
-          put('ma','t:copper',1);put('mb','t:tin',1);drain('scanRole');drain('fetchMany')
-          assert(#RUN.stages[1].loadLedger==2 and RUN.stages[1].loadLedger[2].inputBefore==2)
-          drain('scanRole');assert(RUN.stages[2].loadLedger==nil)
-          -- Inputs empty, but no new look until the next collection.
-          put('ma','t:copper',0);put('mb','t:tin',0);tick(1)
-          assert(#actions('scanRole')==0 and RUN.stages[2].loadLedger==nil)
-        ''')
-
-    def test_nonblocking_joint_capacity_does_not_invent_free_slots(self):
-        self.lua.execute('''
-          CFG.machineTypes.alloy.blocking=false;CFG.machineTypes.alloy.inputs={'a'}
-          view('ma').slots=1;view('ma').freeSlots=1
-          new({machine('t:bronze',{'t:copper','t:tin'},'alloy')});drain('scanRoles')
-          assert(#actions('fetchMany')==0);tick(61);drain('scanRole');drain('scan')
-          assert(RUN.reason:find('input deadline'))
+          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy',4),machine('t:steel',{'t:iron','t:coal'},'alloy')})
+          while #actions('fetchMany')>0 do drain('fetchMany') end
+          -- Same recipe tops up; the other recipe waits. Nothing is looked at.
+          assert(#RUN.stages[1].loadLedger==4 and RUN.stages[2].loadLedger==nil)
+          assert(#actions('scanRole')==0 and #actions('scanRoles')==0 and #actions('fetchMany')==0)
+          put('mx','t:bronze',4);tick(5);drain('collectMany')
+          assert(RUN.stages[1].state=='done' and #RUN.stages[2].loadLedger==1)
+          assert(#actions('scanRole')==0 and #actions('scanRoles')==0)
         ''')
 
     def test_machine_fifo_packed_store_allocates_real_split_ids_and_byproducts(self):
@@ -312,8 +316,8 @@ class MesStateTests(LuaCase):
           local a=machine('t:metal',{'t:ore'});a.outputs[2]={item='t:slag',qty=1}
           loaded({a,machine('t:metal',{'t:ore'})});drain('fetchMany')
           assert(#RUN.stages[1].loadLedger==1 and #RUN.stages[2].loadLedger==1)
-          put('mo','t:metal',2);put('mo','t:slag',1);tick(2);drain('scanRole')
-          local store=actions('storeMany')[1];assert(#store.requests==2)
+          put('mo','t:metal',2);put('mo','t:slag',1);tick(2)
+          local store=actions('collectMany')[1];assert(#store.requests==2)
           store.testDone=true;submit(store,{41,42})
           fact('job',{id=41,receipt={state='done',trips=1,perItem={{item={name='t:metal'},requestIndex=1,requested=1,moved=1}}}})
           fact('job',{id=42,receipt={state='done',trips=1,perItem={{item={name='t:metal'},requestIndex=1,requested=1,moved=1},{item={name='t:slag'},requestIndex=2,requested=1,moved=1}}}})
@@ -328,22 +332,21 @@ class MesStateTests(LuaCase):
     def test_tool_exact_physical_reservations_serialize_when_only_one_unit(self):
         self.lua.execute('''
           TOOL_COUNT=1;local a,b=robot('t:left'),robot('t:right');a.tool=true;b.tool=true
-          new({a,b});assert(#actions('scan')==1 and WORLD.toolReservations['t:tool:7']==1)
+          new({a,b});assert(#actions('fetchMany')==1 and WORLD.toolReservations['t:tool:7']==1)
           local running=readyRobots()[1];put('b1','t:tool:8',1);put('b1','t:left',1)
-          terminal(running);drain('scan');drain('storeMany')
+          terminal(running);drain('collectMany')
           assert(RUN.stages[1].state=='done' and RUN.stages[2].state=='fetching' and #actions('fetchMany')==1)
           assert(WORLD.toolReservations['t:tool:7']==1)
         ''')
 
-    def test_fuel_credit_is_first_read_plus_deliveries(self):
+    def test_fuel_counts_only_what_the_mes_delivered(self):
         self.lua.execute('''
           CFG.machineTypes.furnace.fuel={role='fuel',item='t:fuel',per=2}
           local stage=machine('t:metal',{'t:ore'},nil,4);stage.fuel={item='t:fuel',need=2}
-          put('mf','t:fuel',1);loaded({stage})
-          local r=RUN.stages[1].loadLedger[1];assert(r.items==2)
-          put('mi','t:ore',0);put('mf','t:fuel',1)
-          drain('scanRole');drain('fetchMany')
-          -- The unit seen at the first read counts; one added by hand later does not.
+          put('mf','t:fuel',1);loaded({stage});drain('fetchMany')
+          -- A unit added by hand is not ours to count; the machine is never looked at.
           local fuel=0;for _,a in ipairs(ACTIONS) do if a.kind=='fetchMany' then for _,v in ipairs(a.requests) do if v.item.name=='t:fuel' then fuel=fuel+v.count end end end end
-          assert(fuel==1 and WORLD.groups.kiln.fuelCredit==2,fuel..' '..WORLD.groups.kiln.fuelCredit)
+          local f=WORLD.machines.kiln.fuel
+          assert(#RUN.stages[1].loadLedger==2 and fuel==2 and f.credit==2 and f.admitted==4,fuel..' '..f.credit..' '..f.admitted)
+          assert(#actions('scanRoles')==0 and #actions('scanRole')==0)
         ''')

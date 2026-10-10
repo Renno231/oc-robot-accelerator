@@ -40,7 +40,7 @@ function handlers.craft(plan,id,retryOnly)
     return "accepted",{status="ACCEPTED",jobId=id,receipt=true}
 end
 local function execute(job)
-    local ok, completed, executionError = xpcall(function()
+    local ok, completed, executionError, buffer = xpcall(function()
         return executor.executePlan(job.plan, {
             side=storageSide,
             shouldContinue=function() return running end,
@@ -56,7 +56,7 @@ local function execute(job)
             executionError=tostring(executionError).."; cleanup failed: "..tostring(cleanupError or returned)
         end
     end
-    local terminal=receipts.finish(job.id,completed and "COMPLETE" or "FAILED",executionError)
+    local terminal=receipts.finish(job.id,completed and "COMPLETE" or "FAILED",executionError,completed and buffer or nil)
     active=nil
     publisher:publish("job:"..job.id,terminal)
 end

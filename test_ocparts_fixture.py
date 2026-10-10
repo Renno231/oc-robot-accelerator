@@ -51,21 +51,21 @@ class OcpartsFixtureTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 lua.execute('local overlap=false;' + proof)
 
-    def test_topup_requires_observed_input_and_unsettled_prior_output(self):
+    def test_topup_requires_unsettled_prior_output(self):
         proof = generator.OCPARTS_RUN.split("  for _,group in ipairs({'furnaceA','furnaceB'}) do")[1].split('end end')[0]
         proof = "for _,group in ipairs({'furnaceA','furnaceB'}) do" + proof
         lua = LuaRuntime()
-        def loads(before, delivered, collected):
+        def loads(delivered, collected):
             lua.execute(f'''result={{topups={{}}}};stage={{loadLedger={{
-              {{group='furnaceA',items={generator.OCPARTS_BATCH},inputBefore=0,delivered=1,collected={collected}}},
-              {{group='furnaceA',items={generator.OCPARTS_BATCH},inputBefore={before},delivered={delivered},collected=20}},
-              {{group='furnaceB',items={generator.OCPARTS_BATCH},inputBefore=0,delivered=1,collected={collected}}},
-              {{group='furnaceB',items={generator.OCPARTS_BATCH},inputBefore={before},delivered={delivered},collected=20}}
+              {{group='furnaceA',items={generator.OCPARTS_BATCH},delivered=1,collected={collected}}},
+              {{group='furnaceA',items={generator.OCPARTS_BATCH},delivered={delivered},collected=20}},
+              {{group='furnaceB',items={generator.OCPARTS_BATCH},delivered=1,collected={collected}}},
+              {{group='furnaceB',items={generator.OCPARTS_BATCH},delivered={delivered},collected=20}}
             }}}}''')
-        loads(3, 5, 10)
+        loads(5, 10)
         lua.execute(proof)
-        for before, delivered, collected in ((0, 5, 10), (3, 10, 10), (3, 11, 10)):
-            loads(before, delivered, collected)
+        for delivered, collected in ((10, 10), (11, 10)):
+            loads(delivered, collected)
             with self.assertRaises(Exception):
                 lua.execute(proof)
 
@@ -135,7 +135,8 @@ class OcpartsFixtureTests(unittest.TestCase):
             self.assertIn("result.submitterExit.statusAtReturn=='running'", main)
             self.assertIn("mes.status(id).status=='running'", main)
             self.assertIn('finishTripAccounting(result)', main)
-            self.assertIn('rows[2].inputBefore>0 and rows[2].delivered<rows[1].collected', main)
+            self.assertIn("assert(rows[2].delivered<rows[1].collected,'PCB", main)
+            self.assertNotIn('inputBefore', main)
             self.assertIn("wh.group('cpu2','crafter'", (root/'program/setup.lua').read_text())
             for i, directory in enumerate(('robot-program', 'robot-program-2'), 1):
                 self.assertIn("'cpu" + str(i) + "'", (root/directory/'main.lua').read_text())

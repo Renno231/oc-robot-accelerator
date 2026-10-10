@@ -170,9 +170,10 @@ function execution.execute(plan,options,dump,verifyReturned,storageCounts)
     if not active() then return false,"Crafting cancelled." end
     local verified,why=ledger.verify();if not verified then return false,why end
     local returned,problem=dump(side);if not returned then return false,problem end
-    local stored,storageError=verifyReturned(side,assert(require("craft_plan").outputs(plan)),reserved)
-    if not stored then return false,storageError end
+    local stored,counts=verifyReturned(side,assert(require("craft_plan").outputs(plan)),reserved)
+    if not stored then return false,counts end
     progress("All requested outputs verified and returned to storage.")
-    return true
+    -- The robot just read its buffer; report it so nothing has to look again.
+    return true,nil,counts
 end
 return execution
