@@ -14,6 +14,7 @@ class MesGraphTests(LuaCase):
         self.lua.execute(r'''
             TIME=0; EVENTS={}; JOBS={}; NEXT=0; ACTIONS={};TIMERS={};LISTENERS={}
             package.preload.stations=function() return {} end
+            package.preload.iochest=function() return {} end
             package.preload.mes_config=function() return {installRobots=function() end,
                 config=function(opts) return opts and opts.config or CFG end} end
             MOVES={}; SCANS={}; CLIENTS={}; MAX_CLIENTS=0; ACTIVE_CLIENTS=0

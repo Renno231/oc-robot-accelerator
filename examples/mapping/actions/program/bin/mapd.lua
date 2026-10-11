@@ -13,6 +13,7 @@ local edits={add=true,remove=true,link=true,unlink=true,name=true,unname=true,sa
 local reads={node=true,storage=true}
 local pending={}
 local stations={station_add="add",station_retry="retry",station_remove="remove",stations="list",station="get"}
+local chest={io_list="list",io_import_now="importNow",io_mark_emptied="markEmptied",io_attach="attach",io_fetch="fetch",io_fetch_many="fetchMany"}
 local function reply(address,id,phase,ok,value)
   local data=serialization.serialize({value=value},false)
   if #data>bound then ok=false;data=serialization.serialize({value="reply entry exceeds packet bound"},false) end
@@ -40,8 +41,8 @@ local function receive(_,_,sender,received,_,tag,key,id,op,data)
     if edits[op] or reads[op] then
       local result=map[op](table.unpack(args));if edits[op] and op~="save" then map.save() end
       return result
-    elseif stations[op] then
-      local value,err=require("stations")[stations[op]](table.unpack(args))
+    elseif stations[op] or chest[op] then
+      local value,err=require(chest[op] and "iochest" or "stations")[(chest[op] or stations[op])](table.unpack(args))
       if err then error(err,0) end;return value
     elseif op=="nodes" or op=="storages" then return page(map[op](),args[1])
     elseif op=="scan" or op=="test" then

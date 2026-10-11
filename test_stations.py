@@ -10,7 +10,7 @@ class StationsTests(unittest.TestCase):
         f = test_stock_api.LibraryApiTests(); f.setUp(); self.lua = f.lua
         self.lua.execute('oldIO=io.open')
         install_store(self.lua)
-        for name in ('map', 'logistics', 'warehouse', 'stations'):
+        for name in ('map', 'logistics', 'warehouse', 'stations', 'iochest'):
             self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
         self.lua.execute('''
           local countedIO=io.open
@@ -55,6 +55,7 @@ class StationsTests(unittest.TestCase):
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
           package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
           package.preload.stations=function() return assert(load(STATIONS))() end
+          package.preload.iochest=function() return assert(load(IOCHEST))() end
           local open=require('store').open;PUTS=0;FLUSHES=0
           require('store').open=function(p,...)
             local h=open(p,...)

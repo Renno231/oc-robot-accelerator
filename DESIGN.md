@@ -318,6 +318,10 @@ names; it never stores positions or sides.
   `warehouse.ungroup(name)`, `warehouse.groups(type?)`. A group is one machine
   whose faces are storages (e.g. a furnace: input, fuel, output). `type` is an
   opaque label; the warehouse gives it no meaning. Group storages are not stock.
+- Store targets accept an item through a matching filter, an existing stack of
+  that item, or a wholly empty inventory. For imports into occupied stock, use
+  an inventory already holding that item or configure its filter for the item.
+  An occupied, unfiltered inventory accepts its existing item types.
 - Catalogue, per inventory: item counts, slot count, free slots, `maxSize` per
   item seen, time of last read. Counts are last-known, not guarantees. It is
   learned from:
