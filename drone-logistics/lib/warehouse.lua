@@ -12,6 +12,7 @@ end
 local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
 local db_store=require("store").open("/etc/warehouse.db","log")
 local db=db_store:load()
+local observed={}
 -- Reservations belong to warehouse-submitted jobs, not the logistics router.
 -- Inventory aliases share a key, so two faces cannot reserve the same stock.
 local inFlight={}
@@ -324,7 +325,13 @@ function M.available(i)
   for key,list in pairs(entries()) do n=n+math.max(0,quantity(list[1].entry,i)-reserved(key,i,'take')) end
   return n
 end
-function M.entries() syncMapRevision();return copy(entries()) end
+function M.entries()
+  syncMapRevision();local out=copy(entries())
+  for key,faces in pairs(out) do for _,v in ipairs(faces) do
+    if v.entry then v.entry.beforeRestart=not observed[key] end
+  end end
+  return out
+end
 -- SHARED/read-only: aggregate physical stock inventories once per change.
 function M.totals()
   syncMapRevision()
@@ -410,7 +417,7 @@ local function observe(storage,step)
   for k,v in pairs(db[key] and db[key].items or {}) do if not e.items[k] then
     e.items[k]={item=v.item,count=0,maxSize=v.maxSize,stacks=0,room=0}
   end end
-  db[key]=e;saveInventory(key);return true
+  db[key]=e;observed[key]=true;saveInventory(key);return true
 end
 local endpointStorages
 local function at(endpoint)
