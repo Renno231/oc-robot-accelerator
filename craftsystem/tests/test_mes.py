@@ -316,6 +316,17 @@ class MesTests(LuaCase):
                 r.where[1].storage=='buf' and r.where[1].item=='t:raw' and r.where[1].count==1
         '''), ('unknown', 1, 1, 1, True))
 
+    def test_failed_done_signal_carries_existing_run_subject(self):
+        self.lua.execute('''
+            FAIL=true
+            local r=awaitRun({requestItem='t:final',tasks={task('t:final',{'t:raw'})}}, {config=CFG})
+            assert(r.status=='failed')
+            local seen=false;for _,e in ipairs(EVENTS) do if e[1]=='mes' and e[2]=='done' then
+                assert(e[3]==r.id and e[4]=='failed' and e[5]=='t:final');seen=true
+            end end
+            assert(seen)
+        ''')
+
     def test_request_submitted_mid_run_is_accepted_and_completes(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',2);BUSY_PROBE=true
