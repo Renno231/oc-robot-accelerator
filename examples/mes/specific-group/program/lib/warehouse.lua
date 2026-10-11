@@ -431,7 +431,7 @@ function M.scan(storages)
   for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
   return ids
 end
-local function adjust(storage,i,delta,maximum,touched)
+local function adjust(storage,i,delta,maximum,touched,empty)
   if not storage or delta==0 then return end
   local key=inventory(storage) or storage;local e=db[key];touched[key]=storage
   if not e then e={items={},capacityUnknown=true,estimated=true};db[key]=e end
@@ -446,11 +446,22 @@ local function adjust(storage,i,delta,maximum,touched)
       local new=math.ceil(math.max(0,n-v.room)/v.maxSize);v.stacks=v.stacks+new
       if e.freeSlots then e.freeSlots=math.max(0,e.freeSlots-new) end
     end
-    v.count=math.max(0,v.count+n);v.room=math.max(0,v.stacks*v.maxSize-v.count)
-    if v.count==0 then if e.slots then e.freeSlots=math.min(e.slots,e.freeSlots+v.stacks) end;v.stacks=0;v.room=0 end
+    v.count=math.max(0,v.count+n)
+    if n<0 then
+      local stacks=math.max(0,math.min(v.count,empty and v.stacks-empty or v.stacks))
+      if e.slots then e.freeSlots=math.min(e.slots,e.freeSlots+v.stacks-stacks) end
+      v.stacks=stacks
+    end
+    v.room=math.max(0,v.stacks*v.maxSize-v.count)
     e.items[k]=v
   end
   if delta<0 then
+    if empty then
+      local seen
+      for _,v in pairs(e.items) do if v.count>0 and matches(v.item,i) then
+        if seen then empty=nil;break end;seen=true
+      end end
+    end
     local remaining=-delta
     for k,v in pairs(e.items) do if matches(v.item,i) then local n=math.min(remaining,v.count);change(k,v,-n);remaining=remaining-n end end
   else
@@ -459,6 +470,9 @@ local function adjust(storage,i,delta,maximum,touched)
     change(k,v or {item=item(i),count=0,maxSize=maximum,stacks=0,room=0},delta)
   end
   e.estimated=true
+end
+local function emptied(s)
+  return s.knownTaken==s.taken and (s.returned or 0)==0 and s.emptied or nil
 end
 local function short(storage,i,returned,touched)
   if not storage then return end
@@ -514,7 +528,7 @@ local function finished(_,id)
         else invalidateRead(step.read) end
       elseif step.take then
         mutationKeys({step.take})
-        local storage=at(step.take);adjust(storage,step.item,-(step.taken or 0)+(step.returned or 0),step.maxSize,touched)
+        local storage=at(step.take);adjust(storage,step.item,-(step.taken or 0)+(step.returned or 0),step.maxSize,touched,emptied(step))
         -- A full-face short reports observed remaining stock, not necessarily
         -- zero (e.g. unmergeable NBT variants filled the drone's cargo slots).
         -- A single-slot short shows that slot held less than planned.
@@ -529,7 +543,7 @@ local function finished(_,id)
     end
   elseif s.item then
     if s.from then mutationKeys({s.from}) end;if s.to then mutationKeys({s.to}) end
-    adjust(at(s.from),s.item,-(s.taken or 0)+(s.returned or 0),s.maxSize,touched)
+    adjust(at(s.from),s.item,-(s.taken or 0)+(s.returned or 0),s.maxSize,touched,emptied(s))
     if s.short and s.from and not s.from.slots then short(at(s.from),s.item,s.found or 0,touched) end
     adjust(at(s.to),s.item,s.moved or 0,s.maxSize,touched)
     adjust(at(s.overflowEndpoint),s.item,s.overflow or 0,s.maxSize,touched)
@@ -615,6 +629,13 @@ local function accepts(settings,i)
   if not settings.filter then return nil end
   for _,v in ipairs(settings.filter) do if matches(i,v) then return true end end;return false
 end
+local function targetOrder(a,b)
+  if a.tier~=b.tier then return a.tier<b.tier end
+  if a.tier==4 then
+    if a.freeSlots~=b.freeSlots then return a.freeSlots>b.freeSlots end
+  elseif a.priority~=b.priority then return a.priority>b.priority end
+  return a.storage<b.storage
+end
 function M.store(i,n,from,opts)
   i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum=limits[limitKey(i)]
   if not maximum then return nil,"requested "..n..", capacity 0, unknown stack size for "..i.name..":"..i.damage.."; reading the source teaches it" end
@@ -625,16 +646,16 @@ function M.store(i,n,from,opts)
       if accept~=false and e and not e.capacityUnknown and maximum then
         local held=quantity(e,i);local room=0;for _,v in pairs(e.items) do if matches(v.item,i) then room=room+v.room end end
         local occupied=0;for _,v in pairs(e.items) do occupied=occupied+v.count end
-        local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
+        local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or e.freeSlots>0 and 4 or nil
         local capacity=e.full and e.full[itemKey(i)] and 0 or math.max(0,e.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum))
         if tier and capacity>0 then
-          candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity}
+            candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity,freeSlots=e.freeSlots}
         end
       elseif accept~=false and (not e or e.capacityUnknown or not maximum) then uncertain=true end
     end
     if uncertain then unknown=unknown+1 end
   end
-  table.sort(candidates,function(a,b) if a.tier~=b.tier then return a.tier<b.tier end;if a.priority~=b.priority then return a.priority>b.priority end;return a.storage<b.storage end)
+  table.sort(candidates,targetOrder)
   -- Interleave takes and puts, allowing a large request to split naturally.
   local steps,reservations,remaining,used={},{},n,{};local source=node(from)
   for _,c in ipairs(candidates) do if remaining==0 then break end
@@ -873,20 +894,16 @@ function storeTargets(stock,i,from,source,maximum,planned)
     if accept~=false and entry and not entry.capacityUnknown and not sameInventory(face.storage,from) then
       local held=quantity(entry,i);local room,occupied=0,0
       for _,v in pairs(entry.items) do occupied=occupied+v.count;if matches(v.item,i) then room=room+v.room end end
-      local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or nil
+      local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or entry.freeSlots>0 and 4 or nil
       local capacity=entry.full and entry.full[itemKey(i)] and 0 or math.max(0,
         entry.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum,planned))
       if tier and capacity>0 and distance(source,face.storage)<math.huge then
         candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,
-          priority=face.settings.priority or 0,capacity=capacity}
+          priority=face.settings.priority or 0,capacity=capacity,freeSlots=entry.freeSlots}
       end
     end
   end end
-  table.sort(candidates,function(a,b)
-    if a.tier~=b.tier then return a.tier<b.tier end
-    if a.priority~=b.priority then return a.priority>b.priority end
-    return a.storage<b.storage
-  end)
+  table.sort(candidates,targetOrder)
   return candidates
 end
 -- Take up to the expected count of each item from a machine role or robot buffer
