@@ -146,6 +146,30 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(report['profile'], 'extended')
         self.assertIn('template/mods/extra.jar', report['sha256'])
 
+    def test_extra_mods_hook_unset_copy_hash_and_collision(self):
+        extra = self.base / 'extra-mods'
+        extra.mkdir()
+        (extra / 'example.jar').write_bytes(b'added mod')
+        with mock.patch.dict(os.environ):
+            os.environ.pop('ROBOT_RUNNER_EXTRA_MODS', None)
+            code, _, report = self.invoke()
+            self.assertEqual(code, 0)
+            root = Path(json.loads(self.last_output)['run_directory'])
+            self.assertFalse((root / 'mods/example.jar').exists())
+            self.assertFalse(any(k.startswith('extra-mods/') for k in report['sha256']))
+            os.environ['ROBOT_RUNNER_EXTRA_MODS'] = str(extra)
+            code, _, report = self.invoke()
+            self.assertEqual(code, 0)
+            root = Path(json.loads(self.last_output)['run_directory'])
+            self.assertEqual((root / 'mods/example.jar').read_bytes(), b'added mod')
+            self.assertEqual(report['sha256']['extra-mods/example.jar'], hashlib.sha256(b'added mod').hexdigest())
+            (extra / 'OpenComputers.jar').write_bytes(b'collision')
+            with mock.patch.object(supervisor.subprocess, 'Popen') as launch:
+                code, _, report = self.invoke()
+            self.assertNotEqual(code, 0)
+            self.assertIn('extra mod collides with existing mod: OpenComputers.jar', report['reason'])
+            launch.assert_not_called()
+
     def test_growing_control_jar_rejected_before_launch(self):
         original = Path.open
         jar = self.jar

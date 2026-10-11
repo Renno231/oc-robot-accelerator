@@ -11,7 +11,15 @@ local value,err
 if command=="pending" then value=logistics.pending()
 elseif command=="register" then value,err=logistics.register(args[1],args[2],args[3])
 elseif command=="forget" then value,err=logistics.forget(args[1])
-elseif command=="release" then value,err=logistics.release(args[1])
+elseif command=="release" then
+  value,err=logistics.release(args[1])
+  if value then
+    local event=require("event");local _,name,status
+    repeat _,name,status=event.pull("logistics_released") until name==args[1]
+    if status=="ok" then
+      for _,d in ipairs(logistics.drones()) do if d.name==name then value=d.cargo;break end end
+    else value=nil;err="cargo report timeout" end
+  end
 elseif command=="found" then value,err=logistics.found(args[1])
 elseif command=="drones" then value=logistics.drones()
 elseif command=="routes" then value=logistics.routes()
