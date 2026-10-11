@@ -1,6 +1,7 @@
 -- MES configuration and paired craftServer hosts; resource occupancy belongs to mes.
 local M = {}
 local path = "/etc/mes.cfg"
+local cache
 local function copy(t)
   if type(t)~="table" then return t end
   local out={};for k,v in pairs(t) do out[k]=copy(v) end;return out
@@ -10,15 +11,16 @@ local function finite(v) return type(v)=="number" and v==v and math.abs(v)<math.
 local function integer(v) return finite(v) and v>0 and v%1==0 end
 function M.config(opts)
   if opts and opts.config then assert(type(opts.config)=="table","Config table required");return opts.config end
+  if cache then return copy(cache) end
   local f,err=io.open(path,"r")
   if not f then
-    if not require("filesystem").exists(path) then return {machineTypes={},crafters={}} end
+    if not require("filesystem").exists(path) then cache={machineTypes={},crafters={}};return copy(cache) end
     error(err or "Cannot read /etc/mes.cfg",0)
   end
   local data=f:read("*a");f:close()
   local cfg=require("serialization").unserialize(data)
   assert(type(cfg)=="table","Invalid /etc/mes.cfg")
-  return cfg
+  cache=cfg;return copy(cfg)
 end
 local saveSequence=0
 local function save(cfg)
@@ -44,6 +46,7 @@ local function save(cfg)
   if failure then cleanup();error(tostring(failure),0) end
   local renamed,renameOK,renameErr=pcall(fs.rename,temporary,path)
   if not renamed or not renameOK then cleanup();error(tostring(renameErr or renameOK or "Cannot rename /etc/mes.cfg"),0) end
+  cache=cfg
 end
 local function persist(cfg,opts)
   if not (opts and opts.config) then save(cfg) end

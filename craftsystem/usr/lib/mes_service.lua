@@ -368,8 +368,8 @@ function M.resources(cfg)
   for name, g in pairs(wh.groups()) do
     if g.type ~= 'crafter' then
       o.machines[name] = state.copy(world.machines[name] or { state = 'idle', type = g.type, loads = {} })
-      local plan,t=require('mes_timing').seconds(world,{name=name,type=g.type,mt=(cfg.machineTypes or {})[g.type]})
-      o.machines[name].seconds={plan=plan,lo=t.lo,hi=t.hi,samples=t.samples,source=t.hi<math.huge and 'learned' or t.lo>0 and 'relearn' or 'estimate'}
+      local plan,t,source=require('mes_timing').seconds(world,{name=name,type=g.type,mt=(cfg.machineTypes or {})[g.type]})
+      o.machines[name].seconds={plan=plan,lo=t.lo,hi=t.hi,samples=t.samples,source=source,excluded=state.copy((world.groups[name] or {}).timingExcluded or {})}
     end
   end
   return o

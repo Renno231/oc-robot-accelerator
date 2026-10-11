@@ -167,7 +167,8 @@ class MesConfigTests(LuaCase):
             assert(C.crafters().cpu.robot=='addr');assert(C.removeCrafter('cpu'));assert(WRITES==3)
             assert(C.removeType('furnace'));assert(WRITES==4)
             assert(C.setType('injected',def(),OPT));assert(WRITES==4)
-            DISK='invalid';assert(not pcall(C.config))
+            DISK='invalid';assert(type(C.config())=='table')
+            package.loaded.mes_config=nil;assert(not pcall(require('mes_config').config))
         ''')
 
     def test_openos_close_nil_success_and_explicit_failure(self):
@@ -178,6 +179,52 @@ class MesConfigTests(LuaCase):
             CLOSE_RESULT=nil;CLOSE_ERROR='close error'
             local ok,err=pcall(C.setType,'failedAgain',def());assert(not ok and err:find('close error',1,true))
             assert(#EVENTS==1)
+        ''')
+
+    def resource_facade(self):
+        self.module('mes_state', 'lib/mes_state.lua')
+        self.module('mes_timing', 'lib/mes_timing.lua')
+        self.module('mes_service', 'lib/mes_service.lua')
+        self.module('mes', 'lib/mes.lua')
+        self.lua.execute('''
+          S=require('mes_service');S.start=function() return true end
+          local wh=require('warehouse')
+          for i=1,30 do local n=debug.getupvalue(S.resources,i);if n=='wh' then debug.setupvalue(S.resources,i,wh) end end
+          M=require('mes')
+        ''')
+
+    def test_config_cache_fifty_refreshes_save_and_override(self):
+        self.mock_disk();self.resource_facade()
+        self.lua.execute('''
+          DISK={machineTypes={furnace=def()},crafters={}}
+          local open=io.open;OPENS=0
+          io.open=function(...) OPENS=OPENS+1;return open(...) end
+          assert(M.types().furnace.seconds==10 and OPENS==1);OPENS=0
+          for i=1,50 do M.types();M.resources() end
+          assert(OPENS==0)
+          local cfg=C.config();cfg.machineTypes.furnace.seconds=99
+          assert(M.types().furnace.seconds==10)
+          local d=def();d.seconds=12;assert(C.setType('furnace',d));assert(OPENS==1)
+          assert(M.types().furnace.seconds==12 and OPENS==1)
+          local before=OPENS;d.seconds=13;RENAME_FAIL=true
+          assert(not pcall(C.setType,'furnace',d));RENAME_FAIL=nil
+          assert(M.types().furnace.seconds==12 and OPENS==before+1)
+          CFG.machineTypes.furnace=def();CFG.machineTypes.furnace.seconds=88
+          assert(C.config(OPT)==CFG and M.types(OPT).furnace.seconds==88)
+          assert(M.types().furnace.seconds==12 and OPENS==before+1)
+        ''')
+
+    def test_resources_excluded_counts_are_copies(self):
+        self.resource_facade()
+        self.lua.execute('''
+          CFG.machineTypes.furnace=def();GROUPS.kiln={type='furnace'}
+          for i=1,30 do local n,w=debug.getupvalue(S.resources,i);if n=='world' then
+            w.groups.kiln={timingExcluded={fuel=2,capacity=1}}
+          end end
+          local row=M.resources(OPT).machines.kiln
+          assert(row.seconds.source=='config' and row.seconds.excluded.fuel==2 and row.seconds.excluded.capacity==1)
+          row.seconds.excluded.fuel=99
+          assert(M.resources(OPT).machines.kiln.seconds.excluded.fuel==2)
         ''')
 
     def test_atomic_failures_preserve_existing_config_and_emit_no_success(self):

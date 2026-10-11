@@ -7,16 +7,18 @@ local function bounds(w,g)
  return t
 end
 function M.seconds(w,g)
- local t=bounds(w,g);local estimate=g.mt and g.mt.seconds
+ local t=bounds(w,g);local estimate=g.mt and g.mt.seconds;local source='config'
  if not estimate then
   local values={}
   for name,v in pairs(w.timing) do
    if w.machines[name] and w.machines[name].type==(g.type or (w.machines[g.name] or {}).type) and v.hi<inf then values[#values+1]=v.hi end
   end
   table.sort(values);local n=#values
-  estimate=n>0 and (values[(n+1)//2]+values[n//2+1])/2 or nil
+  estimate=n>0 and (values[(n+1)//2]+values[n//2+1])/2 or nil;source=n>0 and 'type' or 'none'
  end
- return t.hi<inf and t.hi or math.max(estimate or 0,2*t.lo),t
+ if t.hi<inf then return t.hi,t,'learned' end
+ if 2*t.lo>(estimate or 0) then return 2*t.lo,t,'lower' end
+ return estimate or 0,t,source
 end
 local function exclude(g,reason)
  g.epoch=nil;g.timingExcluded=g.timingExcluded or {}
@@ -78,7 +80,7 @@ function M.persist(p,w)
   local old=p.timing[name]
   local function moved(a,b) return a~=b and (a==inf or b==inf or math.abs(a-b)>b*.05) end
   if not old and (t.lo>0 or t.hi<inf) or old and (moved(t.lo,old.lo) or moved(t.hi,old.hi)) then
-   local v={};for k,x in pairs(t) do v[k]=x end;p.timing[name]=v;changed=true
+   local v={};for k,x in pairs(t) do v[k]=x end;p.timing[name]=v;changed=true;require('event').push('mes','timing',name)
   end
  end
  if changed then p.store:put('timing',p.timing) end
