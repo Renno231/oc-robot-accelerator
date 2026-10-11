@@ -191,7 +191,7 @@ local function modalNote(m,text,colour)
 end
 
 -- Pick one row. rows: array of {text,value,fg,locked}. Typing filters.
--- opts.at: the row to start on (default: the first selectable).
+-- opts.at: the row to start on, locked or not (default: the first selectable).
 function ui.pick(title,rows,done,opts)
   opts=opts or {}
   local index,filter={},""
@@ -223,7 +223,7 @@ function ui.pick(title,rows,done,opts)
     end
     L:refresh()
     -- Start on opts.at, else the first selectable row.
-    for i=1,#index do if not rows[index[i]].locked and (not opts.at or index[i]==opts.at) then L:set(i);break end end
+    for i=1,#index do if opts.at and index[i]==opts.at or not opts.at and not rows[index[i]].locked then L:set(i);break end end
   end})
 end
 
