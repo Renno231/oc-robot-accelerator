@@ -30,28 +30,30 @@ local function cargoText(d)
   local parts={};for _,i in ipairs(order) do parts[#parts+1]=ui.label(i).." ×"..sum[ui.id(i)] end
   return #s.." stack"..(#s==1 and "" or "s")..": "..table.concat(parts,", ")
 end
--- Timing: machine.seconds={plan,lo,hi,samples,source}, seconds per input item.
--- source learned: plan=hi; relearn (hi unknown): plan=max(estimate,2·lo);
--- estimate: the type's configured seconds, else the median hi of the type's
--- learned machines, else none. Which estimate is read from types and peers.
+-- Timing: machine.seconds={plan,lo,hi,samples,source,excluded}, seconds per
+-- input item. source (mes_timing.seconds): learned plan=hi, lower plan=2·lo,
+-- config the type's seconds, type the median hi of the type's learned
+-- machines, none no estimate. excluded={reason=count} of skipped samples.
 local inf=math.huge
 local function secs(v) return (string.format("%.1f",v):gsub("%.0$","")) end
-local function timing(name,m,res,types)
+local tags={learned="learned",lower="2× lower",config="configured",type="type median"}
+local function timing(m)
   local t=m.seconds;if not t then return end
-  local peers=0;for n,x in pairs(res.machines) do if n~=name and x.type==m.type and x.seconds and x.seconds.hi<inf then peers=peers+1 end end
-  local est=(types[m.type] or {}).seconds and "estimate" or peers>0 and "type" or "unknown"
-  local tag=t.source=="learned" and "learned" or t.source=="relearn" and t.plan<=2*t.lo and "2× lower" or est
   local range=t.hi<inf and (t.lo>0 and secs(t.lo).."–"..secs(t.hi).." s" or "≤"..secs(t.hi).." s") or t.lo>0 and "≥"..secs(t.lo).." s" or "no bounds"
-  return {t=t,tag=tag,range=range,peers=peers,n=t.samples.." sample"..(t.samples==1 and "" or "s")}
+  return {t=t,tag=tags[t.source],range=range,n=t.samples.." sample"..(t.samples==1 and "" or "s")}
 end
+local skipped={unknown="start time not known",restart="after a restart",fuel="short of fuel",quarantine="fault or overdue",stopped="run stopped",capacity="output full"}
 local function explain(x,kind)
-  local t=x.t;local why={learned="learned upper bound",["2× lower"]="twice the learned lower bound",
-    estimate="the "..kind.." type's estimate",type="median of "..x.peers.." learned "..kind..(x.peers==1 and "" or "s")}
-  return x.tag=="unknown" and "No time known yet (no estimate, "..x.n..")." or "Planned at "..secs(t.plan).." s per item ("..why[x.tag]..", "..x.n..").",
+  local t=x.t;local why={learned="learned upper bound",lower="twice the learned lower bound",
+    config="the "..kind.." type's configured seconds",type="median of the learned "..kind.." machines"}
+  local out={not x.tag and "No time known yet (no estimate, "..x.n..")." or "Planned at "..secs(t.plan).." s per item ("..why[t.source]..", "..x.n..").",
     t.hi<inf and (t.lo>0 and "Range "..x.range.."." or "At most "..secs(t.hi).." s; no lower bound yet.")
     or t.lo>0 and "More than "..secs(t.lo).." s; no upper bound yet."
-    or x.tag=="unknown" and "Loads are checked after a short wait, then at growing intervals, until output appears; that teaches it."
-    or "No bounds learned yet."
+    or not x.tag and "Loads are checked after a short wait, then at growing intervals, until output appears; that teaches it."
+    or "No bounds learned yet."}
+  local n,parts=0,{};for _,k in ipairs(sorted(t.excluded or {})) do local c=t.excluded[k];n=n+c;parts[#parts+1]=c.." "..(skipped[k] or k) end
+  out[3]=n>0 and "Skipped "..n.." sample"..(n==1 and "" or "s").." (not timed): "..table.concat(parts,", ").."." or "No samples skipped."
+  return out
 end
 local function energy(d) return d.energy and (math.floor(d.energy/FULL*100+0.5).."%") or "—" end
 -- Sensors are not in drones(); logistics.sensors() names them when present.
@@ -65,8 +67,6 @@ function S:rebuild()
   local function add(text,fg,kind,ref) rows[#rows+1]={text=text,fg=fg,kind=kind,ref=ref,heading=kind=="heading"} end
   local pending,robots,sensors=ui.newHardware();local drones=lg.drones();self.pending,self.drones=pending,drones
   local res=ui.try(function() return mes().resources() end) or {crafters={},machines={}};self.res=res
-  -- Types read /etc/mes.cfg: once, then again only when the config changes.
-  self.types=self.types or ui.try(function() return mes().types() end) or {}
   if #pending+#robots+#sensors>0 then
     add("New hardware  "..#pending+#robots+#sensors.." waiting",P.warn,"heading")
     for _,a in ipairs(pending) do add("  drone · "..a:sub(1,8).."… · on a charger · Register",P.good,"new",a) end
@@ -95,9 +95,9 @@ function S:rebuild()
   add("",nil,"heading")
   local mn=sorted(res.machines)
   add("Machines  "..#mn,P.accent,"heading")
-  for _,name in ipairs(mn) do local m=res.machines[name];local k=#(m.loads or {});local x=timing(name,m,res,self.types)
+  for _,name in ipairs(mn) do local m=res.machines[name];local k=#(m.loads or {});local x=timing(m)
     add("  "..ui.fit(name,14)..ui.fit(m.type or "?",12)..ui.fit(m.state or "?",10)..ui.fit(k.." load"..(k==1 and "" or "s"),10)
-      ..(x and ui.fit(x.tag=="unknown" and "time unknown" or secs(x.t.plan).." s/item "..x.tag,24)..ui.fit(x.range,16)..x.n or ""),
+      ..(x and ui.fit(x.tag and secs(x.t.plan).." s/item "..x.tag or "time unknown",24)..ui.fit(x.range,16)..x.n or ""),
       m.state=="idle" and P.good or P.accent,"machine",name)
   end
 end
@@ -108,7 +108,6 @@ function S:draw()
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
 function S:signal(name,drone,status)
-  if name=="mes" and drone=="changed" then self.types=nil end
   if name=="logistics_released" then self:released(drone,status)
   elseif name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce" then self:refresh() end
 end
@@ -233,8 +232,8 @@ function S:activate(r)
     if k=="machine" then
       lines[#lines+1]=ui.fit("loads",14)..#(t.loads or {})
       for i,l in ipairs(t.loads or {}) do lines[#lines+1]={"  "..i..". "..value(l),P.dim} end
-      local x=timing(r.ref,t,self.res,self.types)
-      if x then local a,b=explain(x,t.type or "?");lines[#lines+1]={"Timing",P.accent};lines[#lines+1]="  "..a;lines[#lines+1]="  "..b end
+      local x=timing(t)
+      if x then lines[#lines+1]={"Timing",P.accent};for _,l in ipairs(explain(x,t.type or "?")) do lines[#lines+1]="  "..l end end
     end
     show((k=="crafter" and "Crafter · " or "Machine · ")..r.ref,lines)
   end

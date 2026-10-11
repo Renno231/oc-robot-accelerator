@@ -43,6 +43,9 @@ for _,a in ipairs(args) do
   if a:match("^stats%w+$") then require("stats").labScenario(a:sub(6)) end
   -- `timing`: machines in every learned-timing case (fakes/mes.lua).
   if a=="timing" then require("mes").labTiming() end
+  -- `learn` (with `timing`): 10 s in, pressA learns a lower bound and
+  -- signals ('mes','timing','pressA') as mes_timing.persist does.
+  if a=="learn" then local function fire() require("mes").labLearn() end;labTimers[#labTimers+1]=event.timer(10,fire) end
 end
 if args[2]=="mem" then
   -- settled: the most free over the last 10 samples, i.e. after the

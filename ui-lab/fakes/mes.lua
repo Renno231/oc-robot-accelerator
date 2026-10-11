@@ -10,19 +10,21 @@ local runs={}
 local function changed() event.push("mes","changed") end
 function M.types() return copy(types) end
 function M.crafters() return copy(crafters) end
-function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");types[name]=copy(def);changed();return true end
+function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");assert(math.type(def.batch)=="integer" and def.batch>0,"Batch must be a positive integer");types[name]=copy(def);changed();return true end
 -- Learned bounds per machine as mes_timing keeps them (seconds per input
 -- item); a machine not listed has none (lo=0, hi=inf, 0 samples).
 local inf=math.huge
 local timing={furnaceA={lo=9.8,hi=11.6,samples=3}}
--- mes_timing.seconds and mes_service.resources' source rule.
+-- mes_timing.seconds' plan and source; excluded as mes_service copies it.
+local excluded={}
 local function seconds(name,kind,groups)
-  local t=timing[name] or {lo=0,hi=inf,samples=0};local est=(types[kind] or {}).seconds
+  local t=timing[name] or {lo=0,hi=inf,samples=0};local est,src=(types[kind] or {}).seconds,"config"
   if not est then
     local v={};for n,x in pairs(timing) do if groups[n] and groups[n].type==kind and x.hi<inf then v[#v+1]=x.hi end end
-    table.sort(v);local k=#v;est=k>0 and (v[(k+1)//2]+v[k//2+1])/2 or nil
+    table.sort(v);local k=#v;est=k>0 and (v[(k+1)//2]+v[k//2+1])/2 or nil;src=k>0 and "type" or "none"
   end
-  return {plan=t.hi<inf and t.hi or math.max(est or 0,2*t.lo),lo=t.lo,hi=t.hi,samples=t.samples,source=t.hi<inf and "learned" or t.lo>0 and "relearn" or "estimate"}
+  local plan;if t.hi<inf then plan,src=t.hi,"learned" elseif 2*t.lo>(est or 0) then plan,src=2*t.lo,"lower" else plan=est or 0 end
+  return {plan=plan,lo=t.lo,hi=t.hi,samples=t.samples,source=src,excluded=copy(excluded[name] or {})}
 end
 -- Fleet board: cpu1 busy on a run, cpu2 idle; furnaceA holds two loads.
 function M.resources()
@@ -50,7 +52,10 @@ function M.labTiming()
     D.groups[n]={type=n:match("^(%a-)%u") or n:match("^%a+"),roles=roles}
   end
   timing.furnaceC={lo=12.5,hi=inf,samples=4};timing.maceratorA={lo=4.1,hi=4.4,samples=6}
+  -- pressA: many loads, none timed (overlapping starts, a restart, a fault).
+  excluded.pressA={unknown=9,restart=1,quarantine=2};excluded.furnaceA={fuel=1}
 end
+function M.labLearn() timing.pressA={lo=3,hi=inf,samples=1};event.push("mes","timing","pressA") end
 function M.removeType(name) types[name]=nil;changed();return true end
 function M.setCrafter(name,c) assert(c.robot and c.buffer,"robot and buffer required");crafters[name]=copy(c);wh.group(name,"crafter",{buffer=c.buffer});changed();return true end
 function M.removeCrafter(name) crafters[name]=nil;wh.ungroup(name);changed();return true end
