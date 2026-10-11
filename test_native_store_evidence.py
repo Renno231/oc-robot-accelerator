@@ -46,13 +46,14 @@ class NativeStoreEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'trailing bytes'):
             value(self.encode('1') + self.encode('2'))
 
-    def test_all_four_real_native_stores_enrich_observer(self):
+    def test_all_five_real_native_stores_enrich_observer(self):
         with tempfile.TemporaryDirectory() as directory:
             drive = Path(directory); (drive / 'etc').mkdir()
-            for name in ('warehouse.db', 'warehouse.flight', 'logistics.state', 'mes.state'):
+            for name in ('map.db', 'warehouse.db', 'warehouse.flight', 'logistics.state', 'mes.state'):
                 (drive / 'etc' / name).write_bytes(self.encode('{k="record",v={done=true}}'))
             evidence = enrich({'files': []}, drive)
-            self.assertEqual(len(evidence['files']), 4)
+            self.assertEqual(len(evidence['files']), 5)
+            self.assertTrue(evidence['files']['/etc/map.db']['record']['done'])
             self.assertTrue(evidence['files']['/etc/mes.state']['record']['done'])
 
 

@@ -25,7 +25,7 @@ local function move(r)
   end end
   return ids
 end
-local function save(r) records['st_'..r.name]=r;store:put('st_'..r.name,r);store:flush() end
+local function save(r) records['st_'..r.name]=r;store:put('st_'..r.name,r);map.save();store:flush() end
 local function signal(r,state,reason)
   r.state=state;r.reason=reason
   if state=='ready' then r.phase=nil;r.jobs={} end
@@ -105,20 +105,20 @@ advance=function(r)
     if s.test=='ok' then
       if r.phase=='path' then
         local edge=r.pendingLinks[r.nextLink]
-        map.link(edge[1],edge[2]);r.created.links[#r.created.links+1]=edge;map.save()
+        map.link(edge[1],edge[2]);r.created.links[#r.created.links+1]=edge
         r.nextLink=r.nextLink+1
         return phase(r,r.pendingLinks[r.nextLink] and 'path' or 'read')
       end
       if r.phase=='link' then
         local a,b=r.tried[#r.tried],r.members[1].node
-        map.link(a,b);r.created.links[#r.created.links+1]={a,b};map.save()
+        map.link(a,b);r.created.links[#r.created.links+1]={a,b}
         return phase(r,#r.members>1 and 'row' or 'read')
       end
       for i=2,#r.members do
         local a,b=r.members[i-1].node,r.members[i].node
         map.link(a,b);r.created.links[#r.created.links+1]={a,b}
       end
-      map.save();return phase(r,'read')
+      return phase(r,'read')
     elseif s.test~='blocked' then return signal(r,'failed',r.phase..': '..tostring(s.reason))
     elseif r.phase=='link' then return start(r) end
     return signal(r,'failed','blocked between '..pos(map.node(r.members[1].node))..' and '..pos(map.node(r.members[#r.members].node))..": clear the row's hover line")
@@ -233,7 +233,7 @@ function M.add(kind,s)
     if not map.node(m.node) then map.add(m.node,m.x+v[1],m.y+v[2],m.z+v[3]) end
     map.name(m.storage,m.node,m.side)
   end
-  map.save();save(r);start(r);return r.name
+  start(r);return r.name
 end
 function M.retry(name)
   local r=records['st_'..name]

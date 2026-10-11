@@ -189,14 +189,14 @@ class StationsTests(unittest.TestCase):
     def test_storage_ready_T1_T2_T3_T5_T6_T7(self):
         self.lua.execute('''
           assert(st.add('storage',single('chest'))=='chest')
-          assert(st.get('chest').phase=='link' and PUTS==2 and FLUSHES==2)
+          assert(st.get('chest').phase=='link' and PUTS==1 and FLUSHES==1)
           local n=PUTS;drain();drain();assert(PUTS==n)
           local d=lg.drones();assert(d[1].lost==false)
           finishAll();local r=st.get('chest');assert(r.state=='ready' and #r.created.nodes==1)
           assert(r.members[1].node=='h5_65_2' and r.members[1].side==0)
           assert(r.created.links[1][1]=='home6' and #r.created.links==1)
           local t,b=counts();assert(t==1 and b==1 and wh.members().chest)
-          assert(PUTS==4 and FLUSHES==4)
+          assert(PUTS==3 and FLUSHES==3)
           r.members[1].node='corrupt';assert(st.get('chest').members[1].node=='h5_65_2')
         ''')
 
@@ -206,7 +206,7 @@ class StationsTests(unittest.TestCase):
           assert(st.add('storage',single('chest')));finishAll()
           local r=st.get('chest');local t,b=counts()
           assert(r.state=='ready' and r.members[1].node=='existing' and #r.created.nodes==0)
-          assert(t==0 and b==1 and PUTS==3)
+          assert(t==0 and b==1 and PUTS==2)
           local links=map.links('existing');assert(#links==1 and links[1]=='home6')
           links[1]='bad';assert(map.links('existing')[1]=='home6' and map.links('unknown')==nil)
         ''')
@@ -227,7 +227,7 @@ class StationsTests(unittest.TestCase):
           local r=st.get('row');local t,b=counts();assert(r.state=='ready' and t==2 and b==5)
           assert(#r.created.nodes==5 and #r.created.links==5)
           for i=2,5 do local v=r.created.links[i];assert(v[1]==r.members[i-1].node and v[2]==r.members[i].node) end
-          assert(map.node(r.members[5].node).x==13 and PUTS==5 and FLUSHES==5)
+          assert(map.node(r.members[5].node).x==13 and PUTS==4 and FLUSHES==4)
           for _,size in pairs(r.sizes) do assert(size==54) end;assert(not r.note)
         ''')
 
