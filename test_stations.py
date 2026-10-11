@@ -12,6 +12,8 @@ class StationsTests(unittest.TestCase):
         install_store(self.lua)
         for name in ('map', 'logistics', 'warehouse', 'stations', 'iochest', 'stats'):
             self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
+        for name in ('mes_alerts', 'mes_alert_sources'):
+            self.lua.globals()[name.upper()] = Path(f'craftsystem/usr/lib/{name}.lua').read_text()
         self.lua.execute('''
           local countedIO=io.open
           io.open=function(p,m)
@@ -57,6 +59,8 @@ class StationsTests(unittest.TestCase):
           package.preload.stations=function() return assert(load(STATIONS))() end
           package.preload.stats=function() return assert(load(STATS))() end
           package.preload.iochest=function() return assert(load(IOCHEST))() end
+          package.preload.mes_alerts=function() return assert(load(MES_ALERTS))() end
+          package.preload.mes_alert_sources=function() return assert(load(MES_ALERT_SOURCES))() end
           local open=require('store').open;PUTS=0;FLUSHES=0
           require('store').open=function(p,...)
             local h=open(p,...)
@@ -119,7 +123,7 @@ class StationsTests(unittest.TestCase):
             config=function() return {crafters={},machineTypes={}} end} end
           require('event').timer=function() return 1 end
           assert(require('mes_service').start())
-          assert(package.loaded.stations and package.loaded.stats and LISTEN.logistics)
+          assert(package.loaded.stations and package.loaded.stats and package.loaded.mes_alerts and LISTEN.logistics)
           for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
           finishAll()
           st=package.loaded.stations
