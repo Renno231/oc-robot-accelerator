@@ -49,7 +49,7 @@ for _,a in ipairs(args) do
   -- `alerts3`: three active alerts of different kinds at start (fakes/mes_alerts.lua).
   if a=="alerts3" then require("mes_alerts").labThree() end
   -- `alertshist`: failed runs (item, old id-only), a stuck machine named
-  -- with a colon, a dismissed-then-cleared alert, one pruned 20 s in.
+  -- with a colon, a dismissed-then-cleared alert, one expiring 20 s in.
   if a=="alertshist" then require("mes_alerts").labHistory() end
   -- `alertcycle`: one-shot timers, 10 s apart from 15 s: drone3 held too
   -- long is raised; drone5 lost clears; furnaceA load 3 stuck is dismissed
@@ -59,7 +59,7 @@ for _,a in ipairs(args) do
     local function held() al.labRaise("droneHeld","drone3","Cargo held: drone3") end
     local function found() al.labClear("droneLost","drone5") end
     local function elsewhere() al.labDismiss("machineStuck","furnaceA:3") end
-    local function failed() al.labRaise("runFailed","7b3e90c1d24f6a85e0c9b7d13a2f4e68","Run failed: minecraft:stonebrick") end
+    local function failed() al.labRaise("runFailed","7b3e90c1d24f6a85e0c9b7d13a2f4e68","Run failed: minecraft:stonebrick",nil,nil,nil,"minecraft:stonebrick") end
     for k,f in ipairs({held,found,elsewhere,failed}) do labTimers[#labTimers+1]=event.timer(5+k*10,f) end
   end
 end
