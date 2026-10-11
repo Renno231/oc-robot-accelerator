@@ -295,6 +295,7 @@ function M.available(i)
   for key,list in pairs(entries()) do n=n+math.max(0,quantity(list[1].entry,i)-reserved(key,i,'take')) end
   return n
 end
+function M.entries() syncMapRevision();return copy(entries()) end
 -- SHARED/read-only: aggregate physical stock inventories once per change.
 function M.totals()
   syncMapRevision()
