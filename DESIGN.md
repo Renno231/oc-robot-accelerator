@@ -492,6 +492,27 @@ Logistics needs no inventory catalogue and makes no survey trips. The drone
 checks locally at the source, takes what is there, and reports actual counts.
 Whole-inventory listings happen only through an explicit `read`.
 
+Survey discovery is an explicit geolyzer job, not an inventory catalogue
+refresh. The controller owns its temporary density grid; carriers receive
+bounded scan/analyze commands and unit probe paths. Only new blocks and
+solid/air mismatches are analyzed. Roles and ambiguous faces are never selected
+by discovery; approved stations still prove links by flights and read inventories.
+Same-density replacements cannot be detected without re-reading known blocks.
+
+OpenOS signal payloads must carry nested survey results as serialized strings,
+not nested tables: the native signal boundary drops nested table fields. Decode
+the string in the survey listener, and never persist raw scan results in the
+logistics job store. This uses the existing serialization/event path; no kernel
+or transport-library changes are needed.
+
+Warehouse in-flight read provenance is endpoint-scoped: unrelated membership
+edits must not discard completed reads. After a metadata generation change,
+compare that endpoint's exact identity set and retain its per-key mutation
+epochs; changed identities or overlapping mutations still discard the read.
+S1 waits for its own warehouse read settlement before adding inventory aliases.
+Different stations continue commissioning concurrently; neither flights nor
+read phases are globally serialized.
+
 The optional warehouse layer owns stock knowledge, source discovery and
 policies (e.g. keep a destination stocked) and calls logistics with concrete
 transfers. Mapping owns locations, faces, chargers, links, persistence and
