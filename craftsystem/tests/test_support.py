@@ -17,6 +17,7 @@ class LuaCase(unittest.TestCase):
         self.module('craft_execution', 'lib/craft_execution.lua')
         self.module('craft_plan', 'lib/craft_plan.lua')
         self.module('cbor', 'lib/cbor.lua')
+        self.module('mes_timing', 'lib/mes_timing.lua')
         self.module('mes_persist', 'lib/mes_persist.lua')
         # Legacy hardware fixtures use an in-memory store seam. Restart tests
         # replace this with the canonical store and its counted filesystem.

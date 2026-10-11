@@ -2,6 +2,7 @@
 -- There are deliberately no event, computer, warehouse or transport imports.
 local M = {}
 local identity = require('item_identity')
+local timing = require('mes_timing')
 -- Machine timing. A load may run this long past its expected finish, and a
 -- blocked request may wait this long for input room, before it fails.
 local MACHINE_GRACE = 60
@@ -157,6 +158,7 @@ function M.update(run, what, data)
     if a then
       run.world.revision = run.world.revision + 1
       a.submitted = true
+      a.submittedAt = run.now
       a.ids = copy(data.ids or {})
       a.error = data.error
       if data.error then
@@ -535,6 +537,7 @@ local function finishBundle(run, bundle)
   return true, errorText
 end
 local function finishMany(run, b)
+  b.submittedAt = b.submittedAt or b.action.submittedAt
   local done, err = finishBundle(run,b)
   if not done or not err or run.stopping or b.action.lost then return done,err end
   local why
@@ -983,7 +986,7 @@ local function startMachine(run, s)
   local mt = assert(run.cfg.machineTypes[s.machineType], 'Unknown machine type')
   local available = run.ports.groups(s.machineType)
   assert(
-    type(mt.seconds) == 'number' and mt.seconds >= 0 and mt.seconds < math.huge,
+    mt.seconds == nil or type(mt.seconds) == 'number' and mt.seconds >= 0 and mt.seconds < math.huge,
     'Invalid batch/deadline configuration'
   )
   local names = s.groups == 'any' and sorted(available)
@@ -1266,7 +1269,7 @@ local function finishLoad(w, g)
       end
       load.remaining = copy(record.outputs)
     end
-    local duration = load.ops * r.perOp * mt.seconds
+    local duration = timing.load(w, g, load)
     load.duration = duration
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
     g.lastExpectedDue = load.due
@@ -1324,7 +1327,7 @@ local function reap(w, g, collected)
         for id, q in pairs(load.remaining) do
           ops = math.max(ops, math.ceil(q / load.request.outputs[id]))
         end
-        load.due = w.now + math.max(ops * load.request.perOp * g.mt.seconds, g.outputBackoff)
+        load.due = w.now + math.max(ops * load.request.perOp * timing.seconds(w, g), g.outputBackoff)
       end
     end
   end
@@ -1335,7 +1338,7 @@ local function reap(w, g, collected)
       load.due = previous.due + load.duration
       load.deadline = math.max(load.deadline, load.due + load.duration + MACHINE_GRACE)
     end
-    g.outputDue = math.min(g.outputDue, load.due)
+    g.outputDue = math.min(g.outputDue, load.due, load.deadline)
     g.lastExpectedDue = math.max(g.lastExpectedDue or load.due, load.due)
     previous = load
   end
@@ -1481,6 +1484,7 @@ local function finishCollection(w, g)
       end
     end
   end
+  timing.observe(w, g, c, err)
   g.collection = nil
   reap(w, g, any)
   return true

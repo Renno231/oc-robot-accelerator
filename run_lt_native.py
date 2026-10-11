@@ -9,6 +9,7 @@ import sys
 import time
 import re
 from build_native_robot_register import build
+from supervisor import NO_WINDOW
 
 
 def summarize(root, output):
@@ -90,7 +91,8 @@ local ok,err=xpcall""", 1)
                str(installation), '--jobs-root', str(root / 'jobs')]
     started = time.time()
     with (root / 'native-command.log').open('w') as output:
-        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
+        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
+                                creationflags=NO_WINDOW)
     summary = dict(estimate=estimate, started=started, finished=time.time(),
                    command=command, exit=result.returncode)
     (root / 'run.json').write_text(json.dumps(summary, indent=2))
