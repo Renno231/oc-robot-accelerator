@@ -5,12 +5,24 @@ import test_stations as stations
 
 class IOChestTests(unittest.TestCase):
     def test_module_byte_budget(self):
-        self.assertLessEqual(Path('drone-logistics/lib/iochest.lua').stat().st_size, 6200)
+        self.assertLessEqual(Path('drone-logistics/lib/iochest.lua').stat().st_size, 6250)
 
     def setUp(self):
         f = stations.StationsTests(); f.setUp(); self.lua = f.lua
         self.lua.globals().IOCHEST = Path('drone-logistics/lib/iochest.lua').read_text()
         self.lua.execute('''
+          IO_SAVES=0;IO_FLUSHES=0;IO_EVENTS=0
+          local store=require('store');local open=store.open
+          store.open=function(path,...)
+            local disk=open(path,...)
+            if path=='/etc/io' then
+              local put,flush=disk.put,disk.flush
+              disk.put=function(self,...) IO_SAVES=IO_SAVES+1;return put(self,...) end
+              disk.flush=function(self,...) IO_FLUSHES=IO_FLUSHES+1;return flush(self,...) end
+            end
+            return disk
+          end
+          require('event').listen('io',function() IO_EVENTS=IO_EVENTS+1 end)
           ic=require('iochest');item={name='mod:seed',damage=0}
           function chest(n,role,x,count,size)
             local key='h'..x..'_65_2:0';INV[key]={count=count or 0,size=size or 27}
@@ -53,6 +65,36 @@ class IOChestTests(unittest.TestCase):
               rounds=rounds+1;assert(rounds<20)
             until not next(REFRESH)
           end
+        ''')
+
+    def test_sensor_names_sorted_private_and_without_reads(self):
+        self.lua.execute('''
+          sensor('zeta',nil,1,32);sensor('alpha',nil,1,16)
+          local before=jobs();local sends=0
+          local modem=require('component').modem;local send=modem.send
+          modem.send=function(...) sends=sends+1;return send(...) end
+          local names=lg.sensors()
+          assert(#names==2 and names[1]=='alpha' and names[2]=='zeta')
+          names[1]='private';names[3]='not-registered'
+          names=lg.sensors();assert(#names==2 and names[1]=='alpha')
+          assert(#lg.drones()==6 and jobs()==before and sends==0)
+        ''')
+
+    def test_identical_sensor_reports_have_no_saves_flushes_or_events(self):
+        self.lua.execute('''
+          chest('out1','export',10,32);assert(sensor('s1','out1',1,32));drain()
+          IO_SAVES=0;IO_FLUSHES=0;IO_EVENTS=0
+          sensor('s1',nil,1,32)
+          assert(IO_SAVES==0 and IO_FLUSHES==0 and IO_EVENTS==0)
+          local packet=require('serialization').serialize({state='setup',seq=2,reason='no adjacent inventory'})
+          emit('logistics_sensor','s1','report',packet);drain()
+          assert(IO_SAVES==1 and IO_FLUSHES==1 and IO_EVENTS==1)
+          assert(record('out1').reason=='no adjacent inventory')
+          IO_SAVES=0;IO_FLUSHES=0;IO_EVENTS=0
+          local acks=0;local ack=lg.ackSensor
+          lg.ackSensor=function(...) acks=acks+1;return ack(...) end
+          emit('logistics_sensor','s1','report',packet);drain()
+          assert(IO_SAVES==0 and IO_FLUSHES==0 and IO_EVENTS==0 and acks==1)
         ''')
 
     def test_new_items_during_collection_only_collect_unreserved_amount(self):

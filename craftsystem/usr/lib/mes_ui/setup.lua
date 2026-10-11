@@ -6,6 +6,20 @@ local S={hints="Enter edit · + rows add · D remove · R refresh · H help",fil
   help={{"Enter","edit the selected row; on a + row, add one"},{"D","remove the selected machine, crafter, station, storage or type"}}}
 local function mes() return require("mes") end
 local ok,st=pcall(require,"stations");if not ok then st=nil end
+local function iochest() local k,m=pcall(require,"iochest");return k and m or nil end
+local ioFg={active="accent",partial="warn",idle="good"}
+-- An IO record's state as its io signal names it.
+local function ioState(r) return next(r.pending or {}) and "active" or r.reason and "partial" or "idle" end
+-- listing/balance entries {item,count}, biggest first.
+local function ioItems(r)
+  local out={};for _,e in pairs(r.listing or {}) do if e.count>0 then out[#out+1]=e end end
+  table.sort(out,function(a,b) return a.count>b.count end);return out
+end
+local function ioSummary(r,w)
+  local items=ioItems(r);if #items==0 then return "empty" end
+  local n,parts=0,{};for _,e in ipairs(items) do n=n+math.ceil(e.count/(wh.stackSize(e.item) or 64));parts[#parts+1]=ui.label(e.item).." "..ui.num(e.count) end
+  return ui.fit(n.." stack"..(n==1 and "" or "s")..": "..table.concat(parts,", "),w)
+end
 local phaseText={link="linking",row="testing row",read="reading"}
 local stateFg={checking="accent",removing="accent",ready="good",failed="bad"}
 local counts={} -- row sizes by station name: list() has no count
@@ -37,7 +51,7 @@ function S:rebuild()
   add("Machine types",P.accent,"heading")
   for _,t in ipairs(sorted(types)) do local d=types[t]
     local io="in→"..table.concat(d.inputs,",").."  out←"..d.output..(d.fuel and "  fuel→"..d.fuel.role or "")
-    add("  "..ui.fit(t,14)..ui.fit(io,44).."×"..(byType[t] or 0).."  batch "..d.batch,nil,"type",t)
+    add("  "..ui.fit(t,14)..ui.fit(io,44).."×"..(byType[t] or 0).."  batch "..ui.fit(d.batch,6)..(d.seconds and d.seconds.." s/item" or "time learned"),nil,"type",t)
   end
   add("  + New machine type",P.good,"newType")
   add("",nil,"heading")
@@ -71,6 +85,16 @@ function S:rebuild()
   end
   if st then add("  + Add storage…",P.good,"newStation","storage");add("  + Add row…",P.good,"newStation","row") end
   add("",nil,"heading")
+  local io=iochest();local ios=io and ui.try(io.list) or {};self.io={}
+  local nio={active=0,partial=0}
+  for _,r in ipairs(ios) do self.io[r.name]=r;local k=ioState(r);nio[k]=(nio[k] or 0)+1 end
+  add("IO  "..(io and #ios.." chests"..(nio.active>0 and " · "..nio.active.." active" or "")..(nio.partial>0 and " · "..nio.partial.." partial" or "") or "(iochest library not loaded)"),P.accent,"heading")
+  for _,r in ipairs(ios) do local k=ioState(r)
+    add("  "..ui.fit(r.name,16)..ui.fit(r.role=="import" and "In" or "Out",5)..ui.fit(r.sensor or "no sensor",14)..ui.fit(k,9)..ioSummary(r,ui.size()-48),P[ioFg[k]],"io",r.name)
+    if r.reason then for _,l in ipairs(wrap(r.reason,ui.size()-12)) do add("      "..l,P.warn,"io",r.name) end end
+  end
+  if io and #ios==0 then add("  none: add a storage or row with role import or export",P.dim,"heading") end
+  add("",nil,"heading")
   local used=F.roleOf();local names=map.storageNames();local stock=0
   for _ in pairs(members) do stock=stock+1 end
   add("Storages  "..#names.." named · "..stock.." in stock"..(self.showAll and "" or "   (Enter to list)"),P.accent,"storages")
@@ -87,11 +111,11 @@ function S:draw()
   ui.title("Setup","nodes "..#map.names().." · storages "..#map.storageNames().." · machines "..g)
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
--- Phase changes push no station signal: while a station is busy, its
+-- io signals re-read the IO rows; phase changes push no station signal: while a station is busy, its
 -- logistics jobs finishing re-read the list.
 function S:signal(name,what)
   local busy=false;for _,x in pairs(self.stations or {}) do if x.state=="checking" or x.state=="removing" then busy=true end end
-  if name=="warehouse" or name=="station" or (name=="mes" and what=="changed") or (name=="logistics" and busy) then self:refresh() end
+  if name=="warehouse" or name=="station" or name=="io" or (name=="mes" and what=="changed") or (name=="logistics" and busy) then self:refresh() end
 end
 
 -- Remove; a station holding items asks whether to move or forget them.
@@ -136,6 +160,60 @@ function S:station(name)
   end,{nofilter=true})
 end
 
+-- IO chest actions: In imports now; Out without a sensor is marked emptied;
+-- any without a sensor gets one attached.
+local function ioDetails(r)
+  local P=ui.P;local k=ioState(r)
+  local lines={{r.name.."  "..(r.role=="import" and "In" or "Out").." · "..(r.sensor or "no sensor").." · "..k,P[ioFg[k]]}}
+  if r.reason then for _,l in ipairs(wrap(r.reason,100)) do lines[#lines+1]={"  "..l,P.warn} end end
+  lines[#lines+1]={"Contents",P.accent}
+  local items=ioItems(r);for _,e in ipairs(items) do lines[#lines+1]="  "..ui.fit(ui.label(e.item),32)..ui.right(ui.num(e.count),8) end
+  if #items==0 then lines[#lines+1]={"  empty",P.dim} end
+  local jobs={};for id in pairs(r.pending or {}) do jobs[#jobs+1]="#"..tostring(id) end;table.sort(jobs)
+  lines[#lines+1]={"Jobs",P.accent};lines[#lines+1]={"  "..(#jobs>0 and table.concat(jobs,", ") or "none"),#jobs>0 and P.fg or P.dim}
+  ui.show("IO · "..r.name,lines)
+end
+function S:attach(r)
+  local io=iochest();local lg=require("logistics")
+  local function go(sensor)
+    ui.busy("Attaching "..sensor.." to "..r.name.."…")
+    local ok,res,err=pcall(io.attach,sensor,r.name)
+    if not ok then ui.fail((tostring(res):gsub("^[^:]+:%d+: ","")))
+    elseif res then ui.ok(sensor.." attached to "..r.name) else ui.fail(tostring(err)) end
+    self:refresh()
+  end
+  -- Registered sensors: logistics names them only if it has sensors().
+  if not lg.sensors then
+    ui.prompt("Attach sensor · "..r.name,"Registered sensor name (Fleet registers new ones)","",go)
+    return
+  end
+  local used={};for _,x in pairs(self.io) do if x.sensor then used[x.sensor]=x.name end end
+  local rows={}
+  for _,n in ipairs(lg.sensors()) do if not used[n] then rows[#rows+1]={text=n,value=n} end end
+  for _,n in ipairs(lg.sensors()) do if used[n] then rows[#rows+1]={text=ui.fit(n,16).."on "..used[n],locked=true} end end
+  if #rows==0 then ui.fail("no registered sensors: register one on Fleet");return end
+  ui.pick("Attach sensor · "..r.name,rows,go)
+end
+function S:ioRow(name)
+  local r=self.io[name];if not r then return end;local io=iochest()
+  local rows={}
+  if r.role=="import" then rows[#rows+1]={text="Import now",value="import"} end
+  if r.role=="export" and not r.sensor then rows[#rows+1]={text="Mark emptied (I took everything out)",value="emptied"} end
+  if not r.sensor then rows[#rows+1]={text="Attach sensor…",value="attach"} end
+  rows[#rows+1]={text="Details",value="details"}
+  ui.pick(name.." · "..(r.role=="import" and "In" or "Out")..(r.sensor and " · "..r.sensor or ""),rows,function(v)
+    if v=="import" then
+      -- With a sensor it asks the sensor; without, a drone reads the chest once.
+      local ok,res=pcall(io.importNow,name)
+      if not ok then ui.fail((tostring(res):gsub("^[^:]+:%d+: ","")))
+      else ui.ok(name..": importing"..(type(res)=="number" and " (read job #"..res..")" or "")) end
+      self:refresh()
+    elseif v=="emptied" then if ui.try(io.markEmptied,name) then ui.ok(name.." marked empty") end;self:refresh()
+    elseif v=="attach" then self:attach(r)
+    else ioDetails(r) end
+  end,{nofilter=true})
+end
+
 function S:activate(r)
   if not r then return end
   local k=r.kind
@@ -161,6 +239,7 @@ function S:activate(r)
       elseif v=="remove" then ui.confirm("Remove "..r.ref,"Remove crafter "..r.ref.."?",function() ui.try(mes().removeCrafter,r.ref) end) end
     end,{nofilter=true})
   elseif k=="station" then self:station(r.ref)
+  elseif k=="io" then self:ioRow(r.ref)
   elseif k=="newStation" then F.addStation(r.ref,function() self:refresh() end)
   elseif k=="storages" then self.showAll=not self.showAll;self:refresh()
   elseif k=="newStorage" then F.addStorage(nil,function() self:refresh() end)

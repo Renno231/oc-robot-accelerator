@@ -18,6 +18,7 @@ local message,messageColour,messageUntil
 local running,repaintAll,footerDirty,headerDirty,guarded
 local status,statusAt="",-math.huge
 local termFg,termBg
+local ioLast={} -- IO chest name -> {state,reason} last signalled
 -- F starts search: typed characters edit the filter until Enter.
 ui.filterText="";ui.searching=false
 
@@ -327,12 +328,12 @@ function ui.busy(text) ui.notify(text,P.accent);ui.flush() end
 ---------------------------------------------------------------- header/footer
 -- A count after a tab's title, e.g. "Fleet (2)"; 0 or nil hides it.
 function ui.badge(name,n) n=(n or 0)>0 and n or nil;if ui.badges[name]~=n then ui.badges[name]=n;headerDirty=true end end
--- Announcing drones and robots: read at start and on an announce, never
--- polled; sets the Fleet badge. Robots only once mes has pendingRobots.
+-- Announcing drones, robots and sensors: read at start and on an announce,
+-- never polled; sets the Fleet badge. Robots only once mes has pendingRobots.
 function ui.newHardware()
-  local ok,lg=pcall(require,"logistics");local d=ok and lg.pending() or {}
+  local ok,lg=pcall(require,"logistics");local d=ok and lg.pending() or {};local s=ok and lg.pending("sensor") or {}
   local okm,m=pcall(require,"mes");local r=okm and m.pendingRobots and ui.try(m.pendingRobots) or {}
-  ui.badge("fleet",#d+#r);return d,r
+  ui.badge("fleet",#d+#r+#s);return d,r,s
 end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
 local function header()
@@ -493,7 +494,18 @@ function handle(e)
   elseif name=="warehouse" or name=="logistics" or name=="mes" or name=="logistics_work" then signal(name,table.unpack(e,2))
   elseif name=="logistics_announce" or name=="mes_robot_announce" then
     -- The open Fleet screen re-reads them itself.
-    if stack[1].tab~="fleet" then ui.newHardware() end;signal(name,table.unpack(e,2))
+    if stack[1].tab~="fleet" then ui.newHardware();ui.notify("New "..(e[3]=="sensor" and "sensor" or name=="mes_robot_announce" and "robot" or "drone").." waiting: register it on Fleet",P.accent) end
+    signal(name,table.unpack(e,2))
+  elseif name=="io" then
+    -- IO chests: one line on a new reason or a change of state, wherever the
+    -- user is; never over a line that already says it or one just shown.
+    local n,st,why=tostring(e[2]),e[3],e[4];local was=ioLast[n] or {}
+    if was[1]~=st or was[2]~=why then ioLast[n]={st,why}
+      if why and why~=was[2] then if not (message and message:find(why,1,true)) then ui.notify(n..": "..why) end
+      elseif st=="active" and was[1]~="active" then if not message then ui.notify(n..": moving items",P.accent) end
+      elseif st~="active" and was[1]=="active" then ui.ok(n..": done"..(why and " · "..why or "")) end
+    end
+    signal(name,table.unpack(e,2))
   elseif name=="logistics_released" then
     -- The open Fleet screen shows the listing; elsewhere one footer line.
     local n,who=0,tostring(e[2])

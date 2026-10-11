@@ -3,7 +3,7 @@ local serialization=require('serialization')
 -- Compile all acceptance/UI-driver code before taking deployment baselines.
 local measure=assert(loadfile('/home/program/deployment-memory.lua'))()
 local config=assert(loadfile('/home/program/cycle-config.lua'))()
-for _,n in ipairs({'map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
+for _,n in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
 fs.makeDirectory('/lib/logistics');fs.makeDirectory('/lib/warehouse')
 assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
 for _,n in ipairs({'view','ui'}) do assert(fs.copy('/home/program/lib/warehouse/'..n..'.lua','/lib/warehouse/'..n..'.lua')) end

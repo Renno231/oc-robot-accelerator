@@ -5,6 +5,7 @@ local state = require('mes_state')
 local event = require('event')
 local computer = require('computer')
 local world = state.world()
+world.onMachine=function(name) event.push('mes_machine',name) end
 local queue, head = {}, 1
 local installed, pumping = false, false
 local history, active, nextRun, none = {}, {}, 0, { status = 'idle', stages = {}, active = {} }
@@ -183,6 +184,7 @@ function M.start(opts, prepare)
   require('map')
   wh = require('warehouse')
   require('stations')
+  require('stats')
   require('iochest')
   client = require('craft_client')
   persist = require('mes_persist')
@@ -207,6 +209,7 @@ function M.start(opts, prepare)
     installed = false
     return nil, tostring(rows)
   end
+  require('mes_alerts').start(world)
   local function signal()
     enqueue(nil, 'observe_jobs', {})
     M.pump()
@@ -364,6 +367,8 @@ function M.resources(cfg)
   for name, g in pairs(wh.groups()) do
     if g.type ~= 'crafter' then
       o.machines[name] = state.copy(world.machines[name] or { state = 'idle', type = g.type, loads = {} })
+      local plan,t=require('mes_timing').seconds(world,{name=name,type=g.type,mt=(cfg.machineTypes or {})[g.type]})
+      o.machines[name].seconds={plan=plan,lo=t.lo,hi=t.hi,samples=t.samples,source=t.hi<math.huge and 'learned' or t.lo>0 and 'relearn' or 'estimate'}
     end
   end
   return o
