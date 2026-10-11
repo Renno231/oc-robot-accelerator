@@ -1713,9 +1713,14 @@
       ],
       "cards": [
         "graphicscard3",
-        "wlancard2"
+        "datacard3",
+        "wlancard2",
+        "internetcard"
       ],
       "storage": [
+        "hdd3",
+        "hdd3",
+        "hdd3",
         "hdd3"
       ],
       "bootDrive": 0

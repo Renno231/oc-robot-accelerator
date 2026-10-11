@@ -24,7 +24,8 @@ class ComputerScenarioTests(unittest.TestCase):
         self.assertEqual(n['computer']['kind'],'rack')
         self.assertEqual(n['computer']['hardware']['memory'],['ram6']*4)
         self.assertEqual(n['computer']['hardware']['buses'],['componentbus3']*3)
-        self.assertEqual(n['computer']['hardware']['cards'],['graphicscard3','wlancard2'])
+        self.assertEqual(n['computer']['hardware']['cards'],['graphicscard3','datacard3','wlancard2','internetcard'])
+        self.assertEqual(n['computer']['hardware']['storage'],['hdd3']*4)
         with tempfile.TemporaryDirectory() as t:
             root=Path(t)/'src';root.mkdir();(root/'program').mkdir();(root/'program/main.lua').write_text('return true')
             (root/'eeprom.lua').write_text('computer.shutdown()')
