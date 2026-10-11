@@ -53,7 +53,7 @@ local function import(r)
  end;save(r)
 end
 local function report(r,p)
- if p.state=='setup' then r.reason=p.reason;save(r)
+ if p.state=='setup' then if r.reason~=p.reason then r.reason=p.reason;save(r) end
  elseif (not r.refresh or p.reply==r.refresh) and (not r.seq or p.seq>r.seq) then r.seq=p.seq;r.listing=listing(p.listing);r.reason=nil
   local ready=p.reply==r.refresh;if ready then r.refresh=nil end
   if r.role=='import' and ready then import(r) else save(r) end
