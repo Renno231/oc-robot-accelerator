@@ -15,7 +15,7 @@ class MappingFixturesTests(unittest.TestCase):
                 self.assertEqual('second-program',spec.normalized['secondComputer']['program']['directory'])
                 self.assertEqual('baseline',spec.normalized['execution']['mode'])
                 for program in ('program','client'):
-                    for path in ('lib/map.lua','lib/mapclient.lua','bin/mapd.lua','bin/mapclient.lua'):
+                    for path in ('lib/map.lua','lib/cbor.lua','lib/store.lua','lib/mapclient.lua','bin/mapd.lua','bin/mapclient.lua'):
                         self.assertEqual((source/path).read_bytes(),(root/program/path).read_bytes())
                 with tempfile.TemporaryDirectory() as t:
                     destination=Path(t)/'inputs';hashes=runner_scenario.freeze(spec,destination)

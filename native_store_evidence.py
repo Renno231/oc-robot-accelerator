@@ -78,7 +78,7 @@ def read_store(path):
     return result
 
 
-STORE_PATHS = ('/etc/warehouse.db', '/etc/warehouse.flight',
+STORE_PATHS = ('/etc/map.db', '/etc/warehouse.db', '/etc/warehouse.flight',
                '/etc/logistics.state', '/etc/mes.state')
 
 
