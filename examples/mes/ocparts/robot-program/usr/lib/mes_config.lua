@@ -66,7 +66,7 @@ local function definition(def)
   assert(type(def)=="table","Type definition required")
   local d=copy(def);list(d.inputs,"input roles");assert(text(d.output),"Output role required")
   assert(integer(d.batch),"Batch must be a positive integer")
-  assert(finite(d.seconds) and d.seconds>=0,"Seconds must be finite and non-negative")
+  assert(d.seconds==nil or finite(d.seconds) and d.seconds>=0,"Seconds must be finite and non-negative")
   assert(type(d.blocking)=="boolean","Blocking is required and must be boolean")
   if d.fuel~=nil then
     assert(type(d.fuel)=="table" and text(d.fuel.role),"Fuel role required")
