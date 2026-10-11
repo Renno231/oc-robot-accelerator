@@ -362,7 +362,7 @@ def load(path, forbidden_roots=(), check=lambda: None, on_normalized=lambda valu
         eeprom_entries = []
         if drone_mode:
             from runner_drones import eeprom_inputs
-            eeprom_entries = eeprom_inputs(root, value.get('drones', []), check)
+            eeprom_entries = eeprom_inputs(root, value.get('drones', []) + value.get('microcontrollers', []), check)
         if program is not None:
             entry = program / (normalized['computer']['program'] if 'computer' in normalized else normalized['program'])['entry']
             if not entry.is_file(): raise ValueError('entry Lua file missing')

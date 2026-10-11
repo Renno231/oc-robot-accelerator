@@ -231,7 +231,7 @@ def _stop_tree(process):
         process.wait(timeout=3)
 
 
-def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present=False, second_present=False, robot_count=0):
+def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present=False, second_present=False, robot_count=0, microcontroller_count=0):
     path = root / 'result.json'
     _no_link(path)
     if path.stat().st_size > RESULT_LIMIT:
@@ -251,7 +251,7 @@ def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present
     if scenario_id is not None:
         if drone_count or computer_present or robot_count:
             from runner_drones import completed_result
-            completed_result(value, scenario_id, drone_count, computer_present,second_present,robot_count)
+            completed_result(value, scenario_id, drone_count, computer_present,second_present,robot_count,microcontroller_count)
             return value
         if (value.get('runnerSchemaVersion') != 1 or value.get('scenarioId') != scenario_id or
                 not isinstance(value.get('program'), dict) or value['program'].get('status') != 'returned'):
@@ -260,7 +260,7 @@ def _result(root, mode, ticks, scenario_id=None, drone_count=0, computer_present
 
 
 def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
-            prepare=None, scenario_id=None, on_launch=lambda pid: None, drone_count=0, computer_present=False,second_present=False,robot_count=0):
+            prepare=None, scenario_id=None, on_launch=lambda pid: None, drone_count=0, computer_present=False,second_present=False,robot_count=0,microcontroller_count=0):
     """Structured process owner. Caller preparation shares the same budget and cancellation.
 
     ``prepare`` only installs already-frozen scenario inputs; it does not own a process.
@@ -308,6 +308,17 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
             report['runtimeProfile'] = runtime_profile.PROFILE_ID
             libraries = getattr(args,'runtime_libraries',None) or Path(__file__).resolve().parent / '.cache/runtime-libraries'
             report['sha256'].update(runtime_profile.apply(root, libraries, check))
+        # ROBOT_RUNNER_EXTRA_MODS names a directory of extra mod jars copied into
+        # this job's server after the pinned-profile checks. Unset means unchanged behaviour.
+        extra_mods = os.environ.get('ROBOT_RUNNER_EXTRA_MODS')
+        if extra_mods:
+            for jar_path in sorted(_no_link(Path(extra_mods)).glob('*.jar')):
+                dest = root / 'mods' / jar_path.name
+                if dest.exists():
+                    raise ValueError('extra mod collides with existing mod: ' + jar_path.name)
+                shutil.copyfile(_no_link(jar_path), dest)
+                report['sha256']['extra-mods/' + jar_path.name] = _digest(dest, deadline, check)
+            report['profile'] = 'extended'
         _inventory(root, COPY_BYTES_LIMIT, RUNTIME_FILES_LIMIT, deadline, check=check)
         java_path = shutil.which(args.java)
         if java_path is None:
@@ -362,7 +373,7 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
         report['return_code'] = process.returncode
         if process.returncode != 0:
             raise ValueError('server nonzero exit: ' + str(process.returncode))
-        _result(root, args.mode, args.ticks, scenario_id, drone_count, computer_present,second_present,robot_count)
+        _result(root, args.mode, args.ticks, scenario_id, drone_count, computer_present,second_present,robot_count,microcontroller_count)
         if scenario_id is not None:
             report['runtimeLogging'] = runtime_profile.verify_proof(root)
         check()
