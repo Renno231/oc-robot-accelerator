@@ -10,19 +10,27 @@ def number(value, label, low=0):
 
 def normalize(value, region, directory='program'):
     from runner_scenario import _object, _integer, _component_name, _array, _inside, relative
-    _object(value, ['position', 'hardware', 'program'], ['position', 'hardware', 'program'])
-    h = _object(value['hardware'], ['tier', 'cpu', 'memory', 'cards', 'storage', 'bootDrive'],
+    _object(value, ['kind', 'position', 'hardware', 'program'], ['position', 'hardware', 'program'])
+    kind = value.get('kind', 'case')
+    if kind not in ('case', 'rack'): raise ValueError('controller kind must be case or rack')
+    rack = kind == 'rack'
+    h = _object(value['hardware'], ['tier', 'cpu', 'memory', 'cards', 'storage', 'bootDrive'] + (['buses'] if rack else []),
                 ['tier', 'cpu', 'memory', 'storage', 'bootDrive'])
     hardware = {'tier': _integer(h['tier'], 1, 3), 'cpu': _component_name(h['cpu'])}
-    for key, limit in [('memory', 2), ('cards', 3), ('storage', 2)]:
+    for key, limit in [('memory', 4 if rack else 2), ('cards', 4 if rack else 3), ('storage', 4 if rack else 2)] + ([('buses', 3)] if rack else []):
         hardware[key] = [_component_name(n) for n in _array(h.get(key, []), limit)]
     if not hardware['memory'] or not hardware['storage']: raise ValueError('computer requires memory and storage')
     hardware['bootDrive'] = _integer(h['bootDrive'], 0, len(hardware['storage']) - 1)
     p = _object(value['program'], ['directory', 'entry'], ['directory'])
     relative(p['directory']); entry = relative(p.get('entry', 'main.lua'))
     if not entry.endswith('.lua'): raise ValueError('computer entry must be a Lua file')
-    return {'position': _inside(value['position'], region), 'hardware': hardware,
-            'program': {'directory': directory, 'entry': entry}}
+    result = {'position': _inside(value['position'], region), 'hardware': hardware,
+              'program': {'directory': directory, 'entry': entry}}
+    if 'kind' in value: result['kind'] = kind
+    if rack:
+        x, y, z = result['position']
+        _inside([x-1, y, z], region); _inside([x-1, y+1, z], region)
+    return result
 
 
 def blocks(values, region):

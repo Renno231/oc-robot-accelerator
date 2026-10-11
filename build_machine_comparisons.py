@@ -13,9 +13,10 @@ def prepare(source,destination,mode,observe=True):
     path=destination/'scenario.json'
     value=json.loads(path.read_text())
     value.setdefault('execution',{})['mode']=mode
-    if observe and 'computer' in value:
-        program=destination/value['computer']['program']['directory']
-        entry=program/value['computer']['program'].get('entry','main.lua')
+    controller=value.get('computer',value.get('controller'))
+    if observe and controller is not None:
+        program=destination/controller['program']['directory']
+        entry=program/controller['program'].get('entry','main.lua')
         entry.rename(program/'native-main.lua')
         entry.write_text(Path(__file__).with_name('machine_evidence.lua').read_text())
         shutil.copyfile(Path(__file__).with_name('machine_component_counter.lua'),

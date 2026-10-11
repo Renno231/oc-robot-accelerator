@@ -18,6 +18,19 @@ public class RunnerComputerScenarioTest {
     @Test public void computerOnlyNativeContract() throws Exception {
         RunnerScenario s=RunnerScenario.parse(fixture().toString());assertNotNull(s.v4.computer);assertEquals(0,s.v4.drones.size());assertEquals(1,s.v4.placedBlocks.size());
     }
+    @Test public void rackKeepsNativeServerCapacityAndStrictFields() throws Exception {
+        JsonObject v=fixture(),c=v.getAsJsonObject("computer"),h=c.getAsJsonObject("hardware");
+        c.addProperty("kind","rack");
+        h.add("memory",new JsonParser().parse("[\"ram6\",\"ram6\",\"ram6\",\"ram6\"]"));
+        h.add("buses",new JsonParser().parse("[\"componentbus3\",\"componentbus3\",\"componentbus3\"]"));
+        h.add("cards",new JsonParser().parse("[\"graphicscard3\",\"wlancard2\"]"));
+        assertEquals("rack",RunnerScenario.parse(v.toString()).v4.computer.get("kind").getAsString());
+        h.getAsJsonArray("memory").add(new JsonPrimitive("ram6"));rejects(v);h.getAsJsonArray("memory").remove(4);
+        h.getAsJsonArray("buses").add(new JsonPrimitive("componentbus3"));rejects(v);h.getAsJsonArray("buses").remove(3);
+        c.addProperty("unexpected",true);rejects(v);c.remove("unexpected");
+        c.addProperty("kind","creative");rejects(v);
+        c.addProperty("kind","case");rejects(v);
+    }
     @Test public void secondComputerHasSeparateProgramAndPosition() throws Exception {
         JsonObject v=fixture();JsonObject second=new JsonParser().parse(v.get("computer").toString()).getAsJsonObject();
         second.add("position",new JsonParser().parse("[-1,65,0]"));second.getAsJsonObject("program").addProperty("directory","second-program");v.add("secondComputer",second);
