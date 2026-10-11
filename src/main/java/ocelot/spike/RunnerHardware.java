@@ -85,7 +85,7 @@ final class RunnerHardware {
         if(driver==null || !kind.equals(driver.slot(stack))) throw new IllegalArgumentException(
             "hardware "+li.cil.oc.api.Items.get(stack).name()+" is not a robot "+kind);
     }
-    private static int[] place(InventoryBasic inventory,AssemblerTemplates.Slot[] slots,int offset,List<ItemStack> items,String label) {
+    static int[] place(InventoryBasic inventory,AssemblerTemplates.Slot[] slots,int offset,List<ItemStack> items,String label) {
         boolean[][] fits=new boolean[items.size()][slots.length];
         for(int i=0;i<items.size();i++) for(int s=0;s<slots.length;s++) fits[i][s]=slots[s].validate(inventory,offset+s,items.get(i));
         int[] assignment=match(fits,slots.length);
