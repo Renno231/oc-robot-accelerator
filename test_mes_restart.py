@@ -152,8 +152,7 @@ class MesRestartTests(unittest.TestCase):
             slots=27,freeSlots=25,verified=true,time=TIME});catalogue:flush();catalogue:close()
           function reboot()
             BOOT=TIME;TIMERS={};LISTEN={};EVENTS={}
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','housekeeping'}) do package.loaded[name]=nil end
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','mes_alerts','mes_alert_sources'}) do package.loaded[name]=nil end
+            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','housekeeping','mes_alerts','mes_alert_sources'}) do package.loaded[name]=nil end
             lg=require('logistics');wh=require('warehouse');M=require('mes');assert(M.start{config=CFG})
             answerStatus();drain();require('mes_service').pump()
           end
@@ -161,8 +160,6 @@ class MesRestartTests(unittest.TestCase):
             TIME=TIME+0.1
             for i=#PHYSICAL,1,-1 do local p=PHYSICAL[i];if p.at<=TIME then table.remove(PHYSICAL,i);p.fn() end end
             if FAKE.working then finishPhysical(true) else drain() end
-            for _,t in ipairs(TIMERS) do if not t.cancelled and t.at<=TIME then
-              t.times=t.times-1;if t.times==0 then t.cancelled=true else t.at=TIME+t.period end;t.fn()
             for i=1,#TIMERS do local t=TIMERS[i];if not t.cancelled and TIME>=t.at then
               t.times=t.times-1;t.cancelled=t.times==0;t.at=TIME+t.period;t.fn()
             end end;drain();require('mes_service').pump()
