@@ -46,6 +46,19 @@ for _,a in ipairs(args) do
   -- `learn` (with `timing`): 10 s in, pressA learns a lower bound and
   -- signals ('mes','timing','pressA') as mes_timing.persist does.
   if a=="learn" then local function fire() require("mes").labLearn() end;labTimers[#labTimers+1]=event.timer(10,fire) end
+  -- `alerts3`: three active alerts of different kinds at start (fakes/mes_alerts.lua).
+  if a=="alerts3" then require("mes_alerts").labThree() end
+  -- `alertcycle`: one-shot timers, 10 s apart from 15 s: drone3 held too
+  -- long is raised; drone5 lost clears; furnaceA load 3 stuck is dismissed
+  -- (as from another screen); run 7 failed is raised.
+  if a=="alertcycle" then
+    local al=require("mes_alerts")
+    local function held() al.labRaise("droneHeld","drone3","Cargo held: drone3") end
+    local function found() al.labClear("droneLost","drone5") end
+    local function elsewhere() al.labDismiss("machineStuck","furnaceA:3") end
+    local function failed() al.labRaise("runFailed","7","Run failed: 7") end
+    for k,f in ipairs({held,found,elsewhere,failed}) do labTimers[#labTimers+1]=event.timer(5+k*10,f) end
+  end
 end
 if args[2]=="mem" then
   -- settled: the most free over the last 10 samples, i.e. after the
@@ -54,7 +67,8 @@ if args[2]=="mem" then
   opts.status=function()
     local f=computer.freeMemory();low=math.min(low,f)
     table.insert(last,f);if #last>10 then table.remove(last,1) end
-    return string.format("free %dk (low %dk, settled %dk) of %dk",f//1024,low//1024,math.max(table.unpack(last))//1024,computer.totalMemory()//1024)
+    -- settled first: an alert bar may leave room for only part of this.
+    return string.format("settled %dk · free %dk · low %dk · of %dk",math.max(table.unpack(last))//1024,f//1024,low//1024,computer.totalMemory()//1024)
   end
   timer=event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
 end

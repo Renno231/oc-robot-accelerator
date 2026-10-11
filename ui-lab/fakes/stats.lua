@@ -45,7 +45,10 @@ function M.item(i)
 end
 function M.settings() local t={};for k,v in pairs(C) do t[k]=v end;return t end
 function M.set(k,v)
-  assert(C[k] and type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1),'invalid setting')
+  assert(C[k],'unknown setting '..tostring(k))
+  assert(type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1)
+    and (k~='fillWarn' or v<C.fillBad) and (k~='fillBad' or v>C.fillWarn),
+    k..' must be '..(k=='fullSoonHours' and 'finite and >= 0' or '0-1; fillWarn < fillBad'))
   C[k]=v
 end
 function M.warnings()
