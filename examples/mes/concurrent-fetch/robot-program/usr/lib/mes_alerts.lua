@@ -9,7 +9,7 @@ local quiet=data.quiet or {}
 local cfg=data.settings or {heldMinutes=10,stuckFactor=1}
 local seq=data.serial or 0
 local index,timers={},{}
-local M,refresh={}
+local M,refresh,save,expiry,deadline={}
 local function pair(kind,key) return kind..':'..tostring(key) end
 local shift=now()-(data.time or now())
 for _,r in ipairs(rows) do
@@ -34,13 +34,19 @@ local function prune()
   if r.state=='dismissed' then quiet[k]=r.kind~='runFailed' and {r.kind,r.key,r.id} or nil;index[k]=nil end
   r.state='removed';emit(r);changed=true
  end
+ local due
+ for _,r in ipairs(rows) do if r.cleared then due=math.min(due or math.huge,r.cleared+86400) end end
+ if due~=deadline then
+  if expiry then event.cancel(expiry) end
+  deadline=due;expiry=due and event.timer(due-now(),save,1)
+ end
  return changed
 end
-local function save()
+function save()
  prune();disk:put('state',{rows=rows,quiet=quiet,settings=cfg,serial=seq,time=now()});disk:flush()
 end
 local function has(kind,key) local k=pair(kind,key);return index[k] or quiet[k] end
-local function observe(kind,key,present,text,due,machine,load)
+local function observe(kind,key,present,text,due,machine,load,item)
  local k=pair(kind,key);local r=index[k];local timer=timers[k]
  if not present then
   if timer then event.cancel(timer.id);timers[k]=nil end
@@ -54,7 +60,7 @@ local function observe(kind,key,present,text,due,machine,load)
    end
   else
    if timer then event.cancel(timer.id);timers[k]=nil end
-   seq=seq+1;r={id=seq,kind=kind,key=key,text=text,raised=now(),state='active',machine=machine,load=load}
+   seq=seq+1;r={id=seq,kind=kind,key=key,text=text,raised=now(),state='active',machine=machine,load=load,item=item}
    rows[#rows+1]=r;index[k]=r;emit(r);save()
   end
  end

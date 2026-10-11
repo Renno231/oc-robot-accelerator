@@ -215,10 +215,10 @@ class StatsTests(unittest.TestCase):
           local function rejects(k,v,text)
             local ok,msg=pcall(stats.set,k,v);assert(not ok and msg:find(text,1,true),tostring(msg))
           end
-          rejects('fillWarn',1.1,'0-1');rejects('fillBad',-1,'0-1')
+          rejects('fillWarn',1.1,'fillWarn must be between 0 and 1');rejects('fillBad',-1,'fillBad must be between 0 and 1')
           rejects('fullSoonHours',math.huge,'finite and >= 0')
-          rejects('fillWarn',.95,'fillWarn < fillBad');rejects('fillBad',.8,'fillWarn < fillBad')
-          rejects('fillWarn',.96,'fillWarn < fillBad');rejects('fillBad',.7,'fillWarn < fillBad')
+          rejects('fillWarn',.95,'fillWarn must be below fillBad');rejects('fillBad',.8,'fillWarn must be below fillBad')
+          rejects('fillWarn',.96,'fillWarn must be below fillBad');rejects('fillBad',.7,'fillWarn must be below fillBad')
           rejects('nope',.5,'unknown setting')
           assert(PUTS==0 and #SIGNALS==0 and stats.settings().fillWarn==.8)
           stats.set('fillWarn',0);stats.set('fillBad',1);stats.set('fullSoonHours',0)

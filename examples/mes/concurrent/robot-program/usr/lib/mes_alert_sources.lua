@@ -53,7 +53,7 @@ function M.start(world,observe,has,settings,seed)
  for _,name in ipairs({'logistics_drone','logistics','logistics_work','logistics_held','logistics_released'}) do event.listen(name,drones) end
  event.listen('mes_machine',machines)
  event.listen('warehouse',stock);event.listen('stats',stock);event.listen('io',chests)
- event.listen('mes',function(_,kind,id,state,item) if kind=='done' and state=='failed' then observe('runFailed',id,true,'Run failed: '..(item or id)) end end)
+ event.listen('mes',function(_,kind,id,state,item) if kind=='done' and state=='failed' then observe('runFailed',id,true,'Run failed: '..(item or id),nil,nil,nil,item) end end)
  return function() drones();machines();stock();chests() end
 end
 return M

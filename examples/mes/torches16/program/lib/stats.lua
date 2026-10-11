@@ -75,9 +75,9 @@ end
 function M.settings() local t={};for k,v in pairs(C) do t[k]=v end;return t end
 function M.set(k,v)
 assert(C[k],'unknown setting '..tostring(k))
-assert(type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1)
-and (k~='fillWarn' or v<C.fillBad) and (k~='fillBad' or v>C.fillWarn),
-k..' must be '..(k=='fullSoonHours' and 'finite and >= 0' or '0-1; fillWarn < fillBad'))
+assert(type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1),
+k..' must be '..(k=='fullSoonHours' and 'finite and >= 0' or 'between 0 and 1'))
+assert((k~='fillWarn' or v<C.fillBad) and (k~='fillBad' or v>C.fillWarn),'fillWarn must be below fillBad')
 if C[k]==v then return end
 C[k]=v;db:put('settings',C);db:flush()
 cache=nil

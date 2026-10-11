@@ -79,7 +79,7 @@ class AlertTests(unittest.TestCase):
           IO[1].reason=nil;emit('io');assert(not active('importBlocked'))
           IO={{name='out',role='export',reason='export chest full: take items'}};emit('io');assert(active('exportFull'))
           IO[1].reason=nil;emit('io');assert(not active('exportFull'))
-          assert(timerCount()==0 and not calls.read)
+          assert(timerCount()==1 and not calls.read)
         ''')
 
     def test_dismiss_suppresses_until_clear_and_recurrence(self):
@@ -101,8 +101,8 @@ class AlertTests(unittest.TestCase):
           tick(599);assert(not active('droneHeld'));tick(600);assert(active('droneHeld') and timerCount()==0)
           emit('logistics');assert(TCALLS==1)
           D[1].state='idle';emit('logistics_released');assert(not active('droneHeld'))
-          D[1].state='held';emit('logistics_held');assert(TCALLS==2 and timerCount()==1)
-          tick(650);D[1].state='idle';emit('logistics_drone');assert(timerCount()==0 and CANCELS>=1)
+          D[1].state='held';emit('logistics_held');assert(TCALLS==3 and timerCount()==2)
+          tick(650);D[1].state='idle';emit('logistics_drone');assert(timerCount()==1 and CANCELS>=1)
           tick(2000);assert(not active('droneHeld'))
         ''')
 
@@ -114,8 +114,8 @@ class AlertTests(unittest.TestCase):
           load.due=110;emit('mes_machine');assert(timerCount()==1 and TCALLS==2)
           tick(130);assert(not active('machineStuck'));tick(130.001);local r=active('machineStuck');assert(r and r.key=='furnace:1')
           load.remaining.brick=0;emit('mes_machine');assert(not active('machineStuck'))
-          load.sequence=2;load.due=200;load.remaining.brick=1;emit('mes_machine');assert(timerCount()==1)
-          load.quarantined=true;emit('mes_machine');assert(timerCount()==0)
+          load.sequence=2;load.due=200;load.remaining.brick=1;emit('mes_machine');assert(timerCount()==2)
+          load.quarantined=true;emit('mes_machine');assert(timerCount()==1)
           load.quarantined=nil;emit('mes_machine');tick(220.001);assert(active('machineStuck'))
           load.quarantined=true;emit('mes_machine');assert(not active('machineStuck'))
         ''')
@@ -210,9 +210,9 @@ class AlertTests(unittest.TestCase):
     def test_failed_run_subject_is_persisted_without_reads(self):
         self.lua.execute('''
           TIME=20;emit('mes','done','0123456789abcdef0123456789abcdef','failed','minecraft:torch:0')
-          local r=active('runFailed');assert(r.text=='Run failed: minecraft:torch:0')
+          local r=active('runFailed');assert(r.text=='Run failed: minecraft:torch:0' and r.item=='minecraft:torch:0')
           TIME=30;alerts.dismiss(r.id);TIME=5;reload();r=alerts.list('dismissed')[1]
-          assert(r.text=='Run failed: minecraft:torch:0' and r.raised==-5)
+          assert(r.text=='Run failed: minecraft:torch:0' and r.item=='minecraft:torch:0' and r.raised==-5)
         ''')
 
     def test_machine_fields_are_separate_and_restart_preserves_identity(self):
@@ -222,6 +222,26 @@ class AlertTests(unittest.TestCase):
           assert(r.key=='furnace:west:7' and r.machine=='furnace:west' and r.load==7)
           TIME=60;alerts.dismiss(r.id);TIME=5;reload();r=alerts.list('dismissed')[1]
           assert(r.machine=='furnace:west' and r.load==7 and r.key=='furnace:west:7' and r.raised==-5)
+        ''')
+
+    def test_one_shot_expiry_uses_earliest_clear_and_rearms_on_restart(self):
+        self.lua.execute('''
+          assert(timerCount()==0)
+          D={{name='a',state='lost'},{name='b',state='lost'}};emit('logistics_drone')
+          TIME=10;D[1].state='idle';emit('logistics_drone');assert(timerCount()==1 and TCALLS==1)
+          TIME=20;D[2].state='idle';emit('logistics_drone');assert(timerCount()==1 and TCALLS==1)
+          alerts.list();emit('logistics_drone');assert(TCALLS==1)
+          tick(86409);assert(#EVENTS==4 and timerCount()==1)
+          tick(86410);assert(lastEvent()[4]=='removed' and timerCount()==1 and TCALLS==2)
+          local saved=require('store').open('/etc/mes.alerts','log'):load().state
+          assert(#saved.rows==1 and saved.rows[1].key=='b')
+          TIME=5;reload();assert(timerCount()==1 and TCALLS==3)
+          local t=TIMERS[next(TIMERS)];assert(t.at==15)
+          tick(14);assert(timerCount()==1);tick(15)
+          assert(lastEvent()[4]=='removed' and timerCount()==0)
+          saved=require('store').open('/etc/mes.alerts','log'):load().state;assert(#saved.rows==0)
+          assert(#alerts.list()==0 and timerCount()==0)
+          reload();assert(timerCount()==0)
         ''')
 
     def test_alert_ranges_name_key_units_and_survive_restart(self):
