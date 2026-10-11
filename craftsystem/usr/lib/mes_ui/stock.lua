@@ -64,11 +64,28 @@ function S:action(v,i)
   local e=self:selected(i);if not e then return end
   if v=="craft" then require("mes_ui.choice").craft(ui.id(e.item))
   elseif v=="fetch" then
-    require("mes_ui.flows").pickStorage("Fetch "..ui.label(e.item).." to…",{},function(to)
+    local function count(to,io)
       ui.prompt("Fetch "..ui.label(e.item),"How many? (have "..ui.num(e.count)..")",math.min(e.count,64),function(n)
-        local id=ui.try(wh.fetch,e.item,n,to);if id then ui.ok("Job #"..tostring(id)..": fetching "..n.." "..ui.label(e.item).." → "..to) end
+        if not io then local id=ui.try(wh.fetch,e.item,n,to);if id then ui.ok("Job #"..tostring(id)..": fetching "..n.." "..ui.label(e.item).." → "..to) end;return end
+        -- An export chest takes what fits; the reason says why it is short.
+        local ok,id,why=pcall(io.fetch,e.item,n,to)
+        if not ok then ui.fail((tostring(id):gsub("^[^:]+:%d+: ","")))
+        elseif not id then ui.fail(tostring(why or "nothing fetched"))
+        elseif why then ui.notify("Job #"..tostring(id)..": "..ui.label(e.item).." → "..to.." · "..why)
+        else ui.ok("Job #"..tostring(id)..": fetching "..n.." "..ui.label(e.item).." → "..to) end
       end,{integer=true,min=1})
-    end)
+    end
+    local function other() require("mes_ui.flows").pickStorage("Fetch "..ui.label(e.item).." to…",{},count) end
+    -- Export chests first; with exactly one it is preselected.
+    local okio,io=pcall(require,"iochest");local rows={}
+    if okio then for _,r in ipairs(ui.try(io.list) or {}) do if r.role=="export" then
+      rows[#rows+1]={text=ui.fit(r.name,16)..ui.fit(r.sensor or "no sensor",14)..(r.reason or ""),value=r.name,fg=r.reason and ui.P.warn or nil}
+    end end end
+    if #rows==0 then other();return end
+    local one=#rows==1
+    table.insert(rows,1,{text="Export chests",fg=ui.P.accent,locked=true})
+    rows[#rows+1]={text="Another storage…",value=false}
+    ui.pick("Fetch "..ui.label(e.item).." to…",rows,function(to) if to then count(to,io) else other() end end,{nofilter=true,at=not one and 1 or nil})
   elseif v=="where" then
     local list={};for _,f in ipairs(wh.find(e.item)) do list[#list+1]={text=ui.fit(f.storage,24)..ui.right(ui.num(f.count),8),locked=true} end
     if #list==0 then list[1]={text="nowhere: count is zero",locked=true} end
