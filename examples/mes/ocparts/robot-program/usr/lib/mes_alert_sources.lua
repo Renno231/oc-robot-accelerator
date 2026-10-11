@@ -9,9 +9,9 @@ function M.start(world,observe,has,settings,seed)
  for _,v in ipairs(seed) do known[v[1]..':'..tostring(v[2])]=v end
  local function scan(kinds,fn)
   local seen={}
-  fn(function(kind,key,on,text,due)
+  fn(function(kind,key,on,text,due,machine,load)
    local k=kind..':'..tostring(key);seen[k]=true;known[k]={kind,key}
-   observe(kind,key,on,text,due)
+   observe(kind,key,on,text,due,machine,load)
   end)
   for k,v in pairs(known) do if kinds[v[1]] and not seen[k] then observe(v[1],v[2],false);known[k]=nil end end
  end
@@ -30,7 +30,7 @@ function M.start(world,observe,has,settings,seed)
     local pending=false;for _,n in pairs(l.remaining) do if n>0 then pending=true end end
     if l.due and l.duration then
      send('machineStuck',name..':'..l.sequence,pending and not l.quarantined,'Machine stuck: '..name,
-       l.due+settings().stuckFactor*l.duration+.001)
+       l.due+settings().stuckFactor*l.duration+.001,name,l.sequence)
     end
    end end
   end)
@@ -53,7 +53,7 @@ function M.start(world,observe,has,settings,seed)
  for _,name in ipairs({'logistics_drone','logistics','logistics_work','logistics_held','logistics_released'}) do event.listen(name,drones) end
  event.listen('mes_machine',machines)
  event.listen('warehouse',stock);event.listen('stats',stock);event.listen('io',chests)
- event.listen('mes',function(_,kind,id,state) if kind=='done' and state=='failed' then observe('runFailed',id,true,'Run failed: '..id) end end)
+ event.listen('mes',function(_,kind,id,state,item) if kind=='done' and state=='failed' then observe('runFailed',id,true,'Run failed: '..(item or id)) end end)
  return function() drones();machines();stock();chests() end
 end
 return M
