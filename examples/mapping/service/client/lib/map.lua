@@ -1,5 +1,13 @@
 -- Standalone named flight graph. Coordinates are block coordinates, not a sensor.
 local serialization = require("serialization")
+local store=require('store')
+local filesystem=require('filesystem')
+local db
+local function record(key,value)
+  db=db or store.open('/etc/map.db','log')
+  if value==nil then db:delete(key) else db:put(key,value) end
+end
+local function linkKey(a,b) return 'l:'..(a<b and a..'|'..b or b..'|'..a) end
 local M, nodes, links, storages = {}, {}, {}, {}
 local created=0
 local revision,clearHalf=0,nil
@@ -146,14 +154,17 @@ function M.add(name,x,y,z,opts)
   if not stamp then created=math.max(os.time(),created+1);stamp=created end
   nodes[name]={x=x,y=y,z=z,faces=faces,charger=opts.charger==true,created=stamp};links[name]=links[name] or {}
   for _,s in pairs(storages) do if s.node==name then faces[s.side]=true end end
+  record('n:'..name,nodes[name])
   edited()
   return M.node(name)
 end
 function M.remove(name)
   edited()
+  for other in pairs(links[name] or {}) do record(linkKey(name,other)) end
+  record('n:'..name)
   nodes[name]=nil;links[name]=nil
   for _,adj in pairs(links) do adj[name]=nil end
-  for s,e in pairs(storages) do if e.node==name then storages[s]=nil end end
+  for s,e in pairs(storages) do if e.node==name then storages[s]=nil;record('s:'..s) end end
 end
 function M.name(storage,node,side)
   assert(type(storage)=="string" and storage~="","storage name required")
@@ -166,11 +177,13 @@ function M.name(storage,node,side)
     end
   end
   assert(count<5,"node already has five storages")
-  storages[storage]={node=node,side=side};nodes[node].faces[side]=true
+  storages[storage]={node=node,side=side}
+  if not nodes[node].faces[side] then nodes[node].faces[side]=true;record('n:'..node,nodes[node]) end
+  record('s:'..storage,storages[storage])
   edited()
   return M.storage(storage)
 end
-function M.unname(storage) local existed=storages[storage]~=nil;storages[storage]=nil;edited();return existed end
+function M.unname(storage) local existed=storages[storage]~=nil;storages[storage]=nil;record('s:'..storage);edited();return existed end
 function M.storage(storage) return storages[storage] and copy(storages[storage]) end
 function M.storages() return copy(storages) end
 function M.node(name) return nodes[name] and copy(nodes[name]) end
@@ -184,12 +197,14 @@ end
 function M.link(a,b)
   assert(nodes[a] and nodes[b] and a~=b,"unknown/same node")
   links[a][b]=true;links[b][a]=true
+  record(linkKey(a,b),true)
   edited()
 end
 function M.unlink(a,b)
   edited()
   if links[a] then links[a][b]=nil end
   if links[b] then links[b][a]=nil end
+  record(linkKey(a,b))
 end
 -- Any-angle A*: same graph neighbours and deterministic tie ordering as route.
 function M.theta(a,b,half,avoid)
@@ -236,16 +251,46 @@ function M.route(a,b,avoid)
   end
 end
 function M.save()
-  local file=assert(io.open("/etc/map.cfg","w"));file:write(serialization.serialize({nodes=nodes,links=links,storages=storages}));file:close()
+  db=db or store.open('/etc/map.db','log');db:flush()
 end
 function M.load()
-  local file=io.open("/etc/map.cfg","r");if not file then return false end
-  local data=serialization.unserialize(file:read("*a"));file:close()
-  assert(type(data)=="table" and type(data.nodes)=="table" and type(data.links)=="table","invalid map file")
-  nodes,links,storages=data.nodes,data.links,data.storages or {}
+  local exists=filesystem.exists('/etc/map.db')
+  local file=not exists and io.open('/etc/map.cfg','r')
+  local data
+  if file then
+    local text=file:read('*a');file:close()
+    local ok,value=pcall(function()
+      assert(#text>0,'empty map.cfg')
+      local v=serialization.unserialize(text)
+      assert(type(v)=='table' and type(v.nodes)=='table' and type(v.links)=='table','invalid map.cfg')
+      v.storages=v.storages or {}
+      return v
+    end)
+    if not ok then M.loadError=tostring(value);io.stderr:write('map: '..M.loadError..'\n');return false,M.loadError end
+    data=value
+  end
+  db=db or store.open('/etc/map.db','log')
+  if data then
+    for n,p in pairs(data.nodes) do db:put('n:'..n,p) end
+    for a,adj in pairs(data.links) do for b in pairs(adj) do if a<b then db:put(linkKey(a,b),true) end end end
+    for n,s in pairs(data.storages) do db:put('s:'..n,s) end
+    db:flush();assert(filesystem.rename('/etc/map.cfg','/etc/map.cfg.bak'))
+    nodes,links,storages=data.nodes,data.links,data.storages
+  else
+    local records=db:load()
+    nodes,links,storages={},{},{}
+    for key,value in pairs(records) do
+      local kind,n=key:sub(1,2),key:sub(3)
+      if kind=='n:' then nodes[n]=value;links[n]={} elseif kind=='s:' then storages[n]=value end
+    end
+    for key in pairs(records) do if key:sub(1,2)=='l:' then
+      local a,b=key:sub(3):match('^(.-)|(.+)$');links[a][b]=true;links[b][a]=true
+    end end
+  end
+  M.loadError=nil
   edited()
   for _,node in pairs(nodes) do created=math.max(created,node.created or 0) end
-  return true
+  return exists or data~=nil
 end
 M.load()
 return M

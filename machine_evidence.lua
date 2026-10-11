@@ -159,7 +159,7 @@ if lg then
     data.fleet[#data.fleet+1]={name=d.name,address=d.address,state=d.state,node=d.node,cargo=d.cargo,releasePending=d.releasePending,boots=d.boots}
   end
 end
-for _,path in ipairs({'/etc/map.cfg','/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes','/etc/warehouse.cfg','/etc/warehouse.stacks'}) do
+for _,path in ipairs({'/etc/logistics.cfg','/etc/logistics.drones','/etc/logistics.routes','/etc/warehouse.cfg','/etc/warehouse.stacks'}) do
   local f=io.open(path,'r')
   if f then local s=f:read('*a');f:close();data.files[path]=assert(serialization.unserialize(s)) end
 end
