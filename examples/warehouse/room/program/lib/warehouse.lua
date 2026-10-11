@@ -893,19 +893,25 @@ function M.collect(from,requests,opts)
     for index,r in ipairs(requests) do
       -- An item never seen yet is planned at 64; the drone's report teaches the real limit.
       local i=r.item;local maximum=limits[limitKey(i)] or 64;local remaining=r.count
+      local to=r.to and manyEndpoint(r.to)
       for _,c in ipairs(storeTargets(stock,i,from,source,maximum,planned)) do
         if remaining==0 then break end
+        if not to or sameInventory(c.storage,to) then
         local n=math.min(remaining,c.capacity)
         local put={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
+        local take=stock[inventory(from.storage)] and sourceReservation(from.storage,i,n)
         planned[#planned+1]=put
-        addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=from.slots},c.storage,nil,put)
+        addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=from.slots},to or c.storage,take,put)
         remaining=remaining-n
+        end
       end
       assert(remaining==0 or opts and opts.partial,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i));missing[index]=remaining
     end
-    local o=copy(opts or {});o.partial=nil;o.retries=0
+    local o=copy(opts or {});o.partial=nil;o.oneTour=nil;o.retries=0
     local left={};for _,p in ipairs(pieces) do local i=p.requestIndex;left[i]=left[i] or requests[i].waitFor or 0;p.waitFor=math.min(left[i],p.count);left[i]=left[i]-p.waitFor end
-    return packedJobs(requests,pieces,missing,cargoSlots(),o)
+    local jobs=packedJobs(requests,pieces,missing,cargoSlots(),o)
+    if opts and opts.oneTour then while #jobs>1 do table.remove(jobs) end end
+    return jobs
   end)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)

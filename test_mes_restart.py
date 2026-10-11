@@ -12,10 +12,12 @@ class MesRestartTests(unittest.TestCase):
         lib = (Path(__file__).parent / 'craftsystem/usr/lib').as_posix()
         lua.execute(f'package.path="{lib}/?.lua;"..package.path')
         lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
+        lua.globals().HOUSEKEEPING = Path('drone-logistics/lib/housekeeping.lua').read_text()
         lua.execute(r'''
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
           package.preload.stations=function() return {} end
           package.preload.stats=function() return assert(load(STATS))() end
+          package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
           package.preload.iochest=function() return {} end
           local serialization=require('serialization');local serialize=serialization.serialize
           COUNTS={};local store=require('store');local open=store.open;local cbor=require('cbor')
@@ -60,7 +62,8 @@ class MesRestartTests(unittest.TestCase):
           package.preload.craft_tools=function() return {list=function() return {} end} end
           local computer=require('computer');computer.uptime=function() return TIME-BOOT end
           local event=require('event')
-          event.timer=function(period,fn) TIMERS[#TIMERS+1]={period=period,fn=fn};return #TIMERS end
+          event.timer=function(period,fn,times) TIMERS[#TIMERS+1]={period=period,at=TIME+period,fn=fn,times=times or 1};return #TIMERS end
+          event.cancel=function(id) TIMERS[id].cancelled=true end
           local raw={name='mod:raw',damage=0,label='Raw'}
           function held(node,id) return (INV[node] or {})[id] or 0 end
           function add(node,id,n) INV[node][id]=held(node,id)+n;assert(INV[node][id]>=0) end
@@ -143,7 +146,7 @@ class MesRestartTests(unittest.TestCase):
             slots=27,freeSlots=25,verified=true,time=TIME});catalogue:flush();catalogue:close()
           function reboot()
             BOOT=TIME;TIMERS={};LISTEN={};EVENTS={}
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats'}) do package.loaded[name]=nil end
+            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','housekeeping'}) do package.loaded[name]=nil end
             lg=require('logistics');wh=require('warehouse');M=require('mes');assert(M.start{config=CFG})
             answerStatus();drain();require('mes_service').pump()
           end
@@ -151,7 +154,9 @@ class MesRestartTests(unittest.TestCase):
             TIME=TIME+0.1
             for i=#PHYSICAL,1,-1 do local p=PHYSICAL[i];if p.at<=TIME then table.remove(PHYSICAL,i);p.fn() end end
             if FAKE.working then finishPhysical(true) else drain() end
-            for _,t in ipairs(TIMERS) do t.fn() end;drain();require('mes_service').pump()
+            for _,t in ipairs(TIMERS) do if not t.cancelled and t.at<=TIME then
+              t.times=t.times-1;if t.times==0 then t.cancelled=true else t.at=TIME+t.period end;t.fn()
+            end end;drain();require('mes_service').pump()
           end
           function untilFact(fn)
             for i=1,2000 do if fn() then return end;step() end
