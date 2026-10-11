@@ -51,7 +51,7 @@ function S:rebuild()
   add("Machine types",P.accent,"heading")
   for _,t in ipairs(sorted(types)) do local d=types[t]
     local io="in→"..table.concat(d.inputs,",").."  out←"..d.output..(d.fuel and "  fuel→"..d.fuel.role or "")
-    add("  "..ui.fit(t,14)..ui.fit(io,44).."×"..(byType[t] or 0).."  batch "..d.batch,nil,"type",t)
+    add("  "..ui.fit(t,14)..ui.fit(io,44).."×"..(byType[t] or 0).."  batch "..ui.fit(d.batch,6)..(d.seconds and d.seconds.." s/item" or "time learned"),nil,"type",t)
   end
   add("  + New machine type",P.good,"newType")
   add("",nil,"heading")

@@ -11,14 +11,45 @@ local function changed() event.push("mes","changed") end
 function M.types() return copy(types) end
 function M.crafters() return copy(crafters) end
 function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");types[name]=copy(def);changed();return true end
+-- Learned bounds per machine as mes_timing keeps them (seconds per input
+-- item); a machine not listed has none (lo=0, hi=inf, 0 samples).
+local inf=math.huge
+local timing={furnaceA={lo=9.8,hi=11.6,samples=3}}
+-- mes_timing.seconds and mes_service.resources' source rule.
+local function seconds(name,kind,groups)
+  local t=timing[name] or {lo=0,hi=inf,samples=0};local est=(types[kind] or {}).seconds
+  if not est then
+    local v={};for n,x in pairs(timing) do if groups[n] and groups[n].type==kind and x.hi<inf then v[#v+1]=x.hi end end
+    table.sort(v);local k=#v;est=k>0 and (v[(k+1)//2]+v[k//2+1])/2 or nil
+  end
+  return {plan=t.hi<inf and t.hi or math.max(est or 0,2*t.lo),lo=t.lo,hi=t.hi,samples=t.samples,source=t.hi<inf and "learned" or t.lo>0 and "relearn" or "estimate"}
+end
 -- Fleet board: cpu1 busy on a run, cpu2 idle; furnaceA holds two loads.
 function M.resources()
-  local o={crafters={},machines={}}
+  local o={crafters={},machines={}};local groups=wh.groups()
   for n,c in pairs(crafters) do o.crafters[n]=n=="cpu1" and {state="busy",robot=c.robot,buffer=c.buffer,run=3,step=2} or {state="idle",robot=c.robot,buffer=c.buffer} end
-  for n,g in pairs(wh.groups()) do if g.type~="crafter" then
+  for n,g in pairs(groups) do if g.type~="crafter" then
     o.machines[n]=n=="furnaceA" and {state="busy",type=g.type,loads={{run=3,step=1,item="minecraft:clay_ball",count=64},{run=3,step=1,item="minecraft:clay_ball",count=32}}} or {state="idle",type=g.type,loads={}}
+    o.machines[n].seconds=seconds(n,g.type,groups)
   end end
   return o
+end
+-- Lab `timing`: every timing case at once. furnaceA learned narrow, furnaceB
+-- the furnace estimate only, furnaceC only a lower bound (hi infinite),
+-- maceratorA learned, maceratorB its type median, pressA unknown (a type
+-- without seconds and no learned machine).
+function M.labTiming()
+  local D=require("lab_data")
+  types.macerator={roles={"input","output"},inputs={"input"},output="output",batch=64}
+  types.press={roles={"input","output"},inputs={"input"},output="output",batch=16}
+  for i,n in ipairs({"furnaceC","maceratorA","maceratorB","pressA"}) do
+    local roles={};for j,role in ipairs(n=="furnaceC" and types.furnace.roles or types.macerator.roles) do
+      local node=(16+i)..":"..(63+j)..":4";local s=n.."."..role
+      D.nodes[node]={x=16+i,y=63+j,z=4,faces={},charger=false};D.storages[s]={node=node,side=0};roles[role]=s
+    end
+    D.groups[n]={type=n:match("^(%a-)%u") or n:match("^%a+"),roles=roles}
+  end
+  timing.furnaceC={lo=12.5,hi=inf,samples=4};timing.maceratorA={lo=4.1,hi=4.4,samples=6}
 end
 function M.removeType(name) types[name]=nil;changed();return true end
 function M.setCrafter(name,c) assert(c.robot and c.buffer,"robot and buffer required");crafters[name]=copy(c);wh.group(name,"crafter",{buffer=c.buffer});changed();return true end
