@@ -11,6 +11,7 @@ class MesTests(LuaCase):
         self.lua.execute('''
             DB, STOCK, ORES = {}, {}, {}
             package.preload.stations=function() return {} end
+            package.preload.stats=function() return {} end
             package.preload.recipes=function() return {getAll=function(id) return DB[id] end} end
             package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
             package.preload.craft_tools=function() return {list=function() return {} end} end

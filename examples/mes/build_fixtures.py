@@ -159,7 +159,7 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
         value['expect']['robots'] = [
             {'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 33)]} for i in range(2)]
     (target / 'scenario.json').write_text(json.dumps(value, indent=2) + '\n')
-    for relative in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'lib/cbor.lua', 'lib/store.lua', 'drone/agent.lua'):
+    for relative in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'lib/stats.lua', 'lib/cbor.lua', 'lib/store.lua', 'drone/agent.lua'):
         dest = program / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'drone-logistics' / relative, dest)

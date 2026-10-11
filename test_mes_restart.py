@@ -11,9 +11,11 @@ class MesRestartTests(unittest.TestCase):
         lua = test_logistics_restart.LogisticsRestartTests().start(mode)
         lib = (Path(__file__).parent / 'craftsystem/usr/lib').as_posix()
         lua.execute(f'package.path="{lib}/?.lua;"..package.path')
+        lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
         lua.execute(r'''
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
           package.preload.stations=function() return {} end
+          package.preload.stats=function() return assert(load(STATS))() end
           local serialization=require('serialization');local serialize=serialization.serialize
           COUNTS={};local store=require('store');local open=store.open;local cbor=require('cbor')
           store.open=function(path,...)
@@ -139,7 +141,7 @@ class MesRestartTests(unittest.TestCase):
             slots=27,freeSlots=25,verified=true,time=TIME});catalogue:flush();catalogue:close()
           function reboot()
             BOOT=TIME;TIMERS={};LISTEN={};EVENTS={}
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics'}) do package.loaded[name]=nil end
+            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats'}) do package.loaded[name]=nil end
             lg=require('logistics');wh=require('warehouse');M=require('mes');assert(M.start{config=CFG})
             answerStatus();drain();require('mes_service').pump()
           end
