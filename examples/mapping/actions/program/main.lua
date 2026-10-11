@@ -8,7 +8,8 @@ local event=require("event");local computer=require("computer");local component=
 local map=require("map")
 if case=="actions" then
   fs.makeDirectory("/lib/logistics")
-  assert(fs.copy("/home/program/lib/logistics.lua","/lib/logistics.lua"));assert(fs.copy("/home/program/drone/agent.lua","/lib/logistics/agent.lua"))
+  for _,name in ipairs({"cbor","store","logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
+  assert(fs.copy("/home/program/drone/agent.lua","/lib/logistics/agent.lua"))
   map.add("H",0,65,0,{charger=true});map.add("A",0,65,2);map.add("B",6,65,4);map.add("C",6,65,2);map.link("H","A");map.save()
   local logistics=require("logistics");local deadline=computer.uptime()+15
   while #logistics.pending()==0 and computer.uptime()<deadline do event.pull(0.1) end

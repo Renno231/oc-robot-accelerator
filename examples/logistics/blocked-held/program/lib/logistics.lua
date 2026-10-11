@@ -53,7 +53,7 @@ local function observeSubmission(job,endpoints,observers)
   if #endpoints==0 or not next(observers) then return end
   for _,callback in pairs(observers) do
     local snapshot=serialization.unserialize(serialization.serialize(endpoints))
-    local ok,err=pcall(callback,job.id,snapshot)
+    local ok,err=pcall(callback,job.id,snapshot,job.steps)
     if not ok then event.push("logistics_observer_error",job.id,tostring(err)) end
   end
 end
@@ -483,6 +483,10 @@ function M.forget(name)
   local d=fleet[name];if not d then return false end
   if d.job then return nil,"drone is active" end
   registry[name]=nil;fleet[name]=nil;addresses[d.address]=nil;persist();return true
+end
+function M.sensors()
+  local a={};for n,r in pairs(registry) do if r.kind=="sensor" then a[#a+1]=n end end
+  table.sort(a);return a
 end
 function M.drones()
   local out={};for _,d in pairs(fleet) do

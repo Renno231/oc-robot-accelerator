@@ -11,6 +11,23 @@ class LogisticsMutationTests(unittest.TestCase):
         fixture.load_logistics()
         self.lua = fixture.lua
 
+    def test_optional_steps_argument_carries_claim_without_changing_old_observers(self):
+        self.lua.execute('''
+          OLD=0
+          lg.onMutation('old',function(id,endpoints)
+            OLD=OLD+1;assert(endpoints[1].node=='source')
+          end)
+          lg.onMutation('claim',function(id,endpoints,steps)
+            assert(steps[1].take.slots[1]==2)
+            steps[1].claimed=16
+          end)
+          local id=lg.job({{take={storage='source',slots={2}},item={name='mod:x'},count=32},
+            {put='dest',item={name='mod:x'},rest=true}})
+          local s=lg.status(id)
+          assert(OLD==1 and s.steps[1].claimed==16 and s.steps[2].claimed==nil)
+          assert(s.steps[1].count==32 and s.steps[1].take.slots[1]==2)
+        ''')
+
     def test_normalized_private_receipts_before_return_and_transfer(self):
         self.lua.execute('''
           CALLS={}
