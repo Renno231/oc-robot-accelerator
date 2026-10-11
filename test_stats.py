@@ -13,12 +13,12 @@ class StatsTests(unittest.TestCase):
         self.lua.execute('''
           package.preload.serialization=function() return {
             serialize=function(a) return a[1]..'|'..a[2]..'|'..(a[3] or '') end,
-            unserialize=function(s) local n,d,l=s:match('^(.-)|(%d+)|(.*)$');return {n,tonumber(d),l~='' and l or nil} end} end
+            unserialize=function(s) DECODES=(DECODES or 0)+1;local n,d,l=s:match('^(.-)|(%d+)|(.*)$');return {n,tonumber(d),l~='' and l or nil} end} end
         ''')
         install_store(self.lua)
         self.lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
         self.lua.execute('''
-          TIME=0;LISTEN={};TIMERS={};ROWS={};RESERVED=0;READS=0;JOBS=0;PUTS=0;SIGNALS={};TCALLS=0
+          TIME=0;LISTEN={};TIMERS={};ROWS={};RESERVED=0;READS=0;JOBS=0;PUTS=0;SIGNALS={};TCALLS=0;ENTRIES=0;DECODES=0;VERSION=0
           package.loaded.computer={uptime=function() return TIME end}
           package.loaded.event={listen=function(n,f) LISTEN[n]=f end,
             push=function(n) SIGNALS[#SIGNALS+1]=n end,
@@ -26,7 +26,8 @@ class StatsTests(unittest.TestCase):
             timer=function(seconds,f,times) assert(times==1);TCALLS=TCALLS+1;TIMERS[TCALLS]=f;return TCALLS end}
           local wh={}
           local function matches(a,b) return a.name==b.name and (a.damage or 0)==(b.damage or 0) and (not b.label or a.label==b.label) end
-          function wh.entries() return ROWS end
+          function wh.entries() ENTRIES=ENTRIES+1;return ROWS end
+          function wh.revision() return VERSION end
           function wh.totals()
             local t={};for _,fs in pairs(ROWS) do for _,v in pairs(fs[1].entry and fs[1].entry.items or {}) do
               if v.count>0 then local k=require('serialization').serialize({v.item.name,v.item.damage or 0,v.item.label})
@@ -56,9 +57,12 @@ class StatsTests(unittest.TestCase):
               items={seed={item=i,count=count}}} or nil}}
           end
           function reload() LISTEN={};TIMERS={};stats=assert(load(STATS))() end
+          function warehouseChange()
+            VERSION=VERSION+1;LISTEN.warehouse('warehouse','changed')
+          end
           function change(used,count)
             ROWS.a[1].entry.freeSlots=100-used;ROWS.a[1].entry.items.seed.count=count
-            LISTEN.warehouse('warehouse','changed')
+            warehouseChange()
           end
           function timerFire() for _,f in pairs(TIMERS) do f();return end;error('no hour timer') end
           function timerCount() local n=0;for _ in pairs(TIMERS) do n=n+1 end;return n end
@@ -148,7 +152,7 @@ class StatsTests(unittest.TestCase):
           local a=ROWS.a[1].entry
           a.items.x={item={name='mod:seed',damage=0,label='X'},count=6}
           a.items.y={item={name='mod:seed',damage=0,label='Y'},count=12}
-          LISTEN.warehouse('warehouse','changed');closeHour()
+          warehouseChange();closeHour()
           assert(stats.item{name='mod:seed'}.perHour1==18)
           assert(stats.item{name='mod:seed',label='X'}.perHour1==6)
           TIME=TIME+30*3600;timerFire();assert(stats.item{name='mod:seed'}.perHour6==0)
@@ -164,8 +168,101 @@ class StatsTests(unittest.TestCase):
           stats.set('fillBad',.9);assert(#SIGNALS==2)
         ''')
 
+    def test_summary_cache_invalidation_and_unread_names(self):
+        self.lua.execute('''
+          storage('a',100,1,64);storage('unread-a');storage('unread-b');reload()
+          local r=stats.summary();local count=ENTRIES
+          for n=1,10 do assert(stats.summary()==r);stats.warnings() end
+          assert(ENTRIES==count and r.unknown==2 and #r.unread==2)
+          local names={};for _,name in ipairs(r.unread) do names[name]=true end
+          assert(names['unread-a'] and names['unread-b'])
+          change(2,128);local changed=stats.summary();assert(changed~=r and changed.items==128)
+          assert(ENTRIES==count+1);stats.warnings();assert(ENTRIES==count+1)
+          closeHour();local rolled=stats.summary();assert(rolled~=changed and ENTRIES==count+2)
+          stats.set('fillWarn',.7);assert(stats.summary()~=rolled and ENTRIES==count+3)
+          assert(READS==0 and JOBS==0)
+        ''')
+
+    def test_item_rate_index_decodes_once_per_bucket_change(self):
+        self.lua.execute('''
+          storage('a',100,0,0);reload()
+          local a=ROWS.a[1].entry
+          a.items.x={item={name='mod:seed',damage=0,label='X'},count=6}
+          a.items.y={item={name='mod:seed',damage=0,label='Y'},count=12}
+          warehouseChange();closeHour()
+          assert(stats.item{name='mod:seed'}.perHour1==18);local count=DECODES
+          for n=1,10 do
+            assert(stats.item{name='mod:seed',label='X'}.perHour1==6)
+            assert(stats.item{name='mod:seed',label='Y'}.perHour1==12)
+          end
+          assert(DECODES==count and count==2)
+          closeHour();assert(stats.item{name='mod:seed'}.perHour1==0 and DECODES==count+2)
+        ''')
+
+    def test_age_updates_but_pre_restart_observations_are_unknown(self):
+        self.lua.execute('''
+          storage('a',100,1,64);TIME=10
+          local a=ROWS.a[1].entry;a.time=5;a.beforeRestart=true;reload()
+          local r=stats.summary().perStorage[1];assert(r.age==nil and r.beforeRestart)
+          a.time=10;a.beforeRestart=false;warehouseChange()
+          r=stats.summary().perStorage[1];assert(r.age==0 and not r.beforeRestart)
+          TIME=25;assert(stats.summary().perStorage[1].age==15)
+        ''')
+
+    def test_setting_errors_include_range_and_threshold_order(self):
+        self.lua.execute('''
+          reload()
+          local function rejects(k,v,text)
+            local ok,msg=pcall(stats.set,k,v);assert(not ok and msg:find(text,1,true),tostring(msg))
+          end
+          rejects('fillWarn',1.1,'0-1');rejects('fillBad',-1,'0-1')
+          rejects('fullSoonHours',math.huge,'finite and >= 0')
+          rejects('fillWarn',.95,'fillWarn < fillBad');rejects('fillBad',.8,'fillWarn < fillBad')
+          rejects('fillWarn',.96,'fillWarn < fillBad');rejects('fillBad',.7,'fillWarn < fillBad')
+          rejects('nope',.5,'unknown setting')
+          assert(PUTS==0 and #SIGNALS==0 and stats.settings().fillWarn==.8)
+          stats.set('fillWarn',0);stats.set('fillBad',1);stats.set('fullSoonHours',0)
+          assert(stats.settings().fillWarn==0 and stats.settings().fillBad==1)
+        ''')
+
+    def test_cache_handles_reverse_subscriber_order_and_duplicate_events(self):
+        self.lua.execute('''
+          storage('a',100,1,64);reload();local original=stats.summary();local count=ENTRIES
+          ROWS.a[1].entry.freeSlots=10;ROWS.a[1].entry.items.seed.count=640;VERSION=VERSION+1
+          -- The alert/UI subscriber queries first, before the stats subscriber.
+          local fresh=stats.summary();assert(fresh~=original and fresh.freeSlots==10 and fresh.items==640)
+          assert(#stats.warnings()==2 and ENTRIES==count+1)
+          LISTEN.warehouse('warehouse','changed');assert(stats.summary()==fresh and ENTRIES==count+1)
+          LISTEN.warehouse('warehouse','changed');assert(stats.summary()==fresh and ENTRIES==count+1)
+          closeHour();assert(stats.item{name='mod:seed'}.perHour1==576)
+          assert(stats.summary().trend.usedPerHour1==89 and ENTRIES==count+2)
+        ''')
+
 
 class WarehouseStatsIntegrationTests(unittest.TestCase):
+    def test_observation_boot_flag_is_runtime_only_and_alias_safe(self):
+        f = test_stations.StationsTests();f.setUp();lua=f.lua
+        lua.execute('''
+          map.name('a','home1',0);map.name('alias','home2',0)
+          wh.add('a',{inventory='shared'});wh.add('alias',{inventory='shared'})
+          wh.scan();finishAll();local rows=wh.entries()
+          for _,v in ipairs(rows.shared) do assert(v.entry.beforeRestart==false) end
+          require('event').timer=function() return 1 end;require('event').cancel=function() end
+          stats=assert(load(STATS))();local r=stats.summary().perStorage[1]
+          assert(r.age==0 and r.beforeRestart==false)
+          local data=require('store').open('/etc/warehouse.db','log'):load()
+          assert(data.shared.beforeRestart==nil)
+          package.loaded.warehouse=nil;wh=require('warehouse');rows=wh.entries()
+          for _,v in ipairs(rows.shared) do assert(v.entry.beforeRestart==true) end
+          stats=assert(load(STATS))();r=stats.summary().perStorage[1]
+          assert(r.age==nil and r.beforeRestart==true)
+          wh.scan();finishAll();rows=wh.entries()
+          for _,v in ipairs(rows.shared) do assert(v.entry.beforeRestart==false) end
+          r=stats.summary().perStorage[1];assert(r.age==0 and r.beforeRestart==false)
+          data=require('store').open('/etc/warehouse.db','log'):load()
+          assert(data.shared.beforeRestart==nil)
+        ''')
+
     def test_generated_mes_fixture_includes_stats(self):
         from test_mes_fixtures import generator
         with tempfile.TemporaryDirectory() as folder:
