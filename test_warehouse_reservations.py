@@ -20,7 +20,8 @@ class ReservationTests(unittest.TestCase):
           storages={stock={node='stock',side=0},alias={node='stock',side=1},buffer={node='buffer',side=0}}
           package.preload.map=function() return {
             storage=function(s) return storages[s] end,
-            storages=function() return storages end,place=function(s) return storages[s].node end} end
+            storages=function() return storages end,place=function(s) return storages[s] and storages[s].node or s end,
+            distances=function() return setmetatable({},{__index=function() return 1 end}) end} end
           package.preload.logistics=function() return {
             plan=function() return {{x=0,y=0,z=0},{x=1,y=0,z=0}} end,
             status=function(id) return jobs[id] end,

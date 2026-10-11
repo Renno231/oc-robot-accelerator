@@ -51,8 +51,10 @@ class MesRestartTests(unittest.TestCase):
           end
           CFG={crafters={cpu={robot='robot'}},machineTypes={furnace={inputs={'input'},output='output',
             roles={'input','output'},roleSlots={input={1},output={1}},batch=1,seconds=1,blocking=true}}}
+          local previous='dest'
           for i,name in ipairs({'input','output','buffer'}) do
             map.add(name,6+i*2,0,0);map.name(name..'_face',name,0)
+            map.link(previous,name);previous=name -- Same collinear distances as the direct-flight stub.
           end
           local config={members={stock={filter={{name='mod:raw',damage=0},{name='mod:metal',damage=0},
             {name='mod:crafted',damage=0},{name='minecraft:brick',damage=0},
@@ -501,6 +503,7 @@ class MesRestartTests(unittest.TestCase):
           CFG.machineTypes.furnace.fuel={role='fuel',item='minecraft:coal',per=8}
           CFG.machineTypes.furnace.roles={'input','fuel','output'};CFG.machineTypes.furnace.roleSlots.fuel={1}
           INV.source={};INV.fuel={};map.add('fuel',14,0,0);map.name('fuel_face','fuel',0)
+          map.link('buffer','fuel')
           local all={};for id in pairs(INITIAL) do all[id]=true end
           for _,t in ipairs(PLAN.tasks) do
             all[t.item]=true;for _,id in pairs(t.recipe) do if id~='minecraft:air' then all[id]=true end end

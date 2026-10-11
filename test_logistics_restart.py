@@ -24,6 +24,7 @@ class LogisticsRestartTests(unittest.TestCase):
           item={name=ITEM_NAME,damage=0,label='Stock'}
           package.loaded.map=map
           map.add('home',0,0,0);map.add('source',2,0,0);map.add('dest',4,0,0)
+          map.link('home','source');map.link('source','dest') -- Straight-line fixture graph.
           map.name('stock','source',0);map.name('out','dest',0)
           map.theta=function(a,b) return {a,b} end
           files['/lib/logistics/agent.lua']='return true'
