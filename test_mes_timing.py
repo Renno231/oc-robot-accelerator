@@ -10,6 +10,7 @@ class TimingTests(unittest.TestCase):
         source = Path('craftsystem/usr/lib/mes_timing.lua').read_text()
         self.lua.execute('T=(function()\n' + source + '\nend)()')
         self.lua.execute('''
+          SIGNALS={};package.preload.event=function() return {push=function(...) SIGNALS[#SIGNALS+1]={...} end} end
           w={now=0,machines={a={type='furnace'},b={type='furnace'},c={type='furnace'}}}
           g={name='a',mt={seconds=10,roleSlots={output={1}},output='output'},
              fuel={credit=100,admitted=0},loads={},quarantined={}}
@@ -26,6 +27,33 @@ class TimingTests(unittest.TestCase):
             T.observe(w,g,{bundle={action={submittedAt=early,ids={1}},run={jobs={[1]={steps=steps or {}}}}}})
           end
           function clear() g.loads={} end
+        ''')
+
+    def test_source_learned(self):
+        self.lua.execute("T.seconds(w,g);w.timing.a.hi=4;local n,t,s=T.seconds(w,g);assert(n==4 and s=='learned')")
+
+    def test_source_lower(self):
+        self.lua.execute("T.seconds(w,g);w.timing.a.lo=6;local n,t,s=T.seconds(w,g);assert(n==12 and s=='lower');w.timing.a.lo=5;n,t,s=T.seconds(w,g);assert(s=='config')")
+
+    def test_source_config(self):
+        self.lua.execute("local n,t,s=T.seconds(w,g);assert(n==10 and s=='config');g.mt.seconds=0;n,t,s=T.seconds(w,g);assert(n==0 and s=='config')")
+
+    def test_source_type(self):
+        self.lua.execute("g.mt.seconds=nil;w.timing={b={hi=8},c={hi=12}};local n,t,s=T.seconds(w,g);assert(n==10 and s=='type')")
+
+    def test_source_none(self):
+        self.lua.execute("g.mt.seconds=nil;local n,t,s=T.seconds(w,g);assert(n==0 and s=='none')")
+
+    def test_timing_signal_matches_persisted_changes(self):
+        self.lua.execute('''
+          puts=0;p={db={},known={},store={put=function() puts=puts+1 end}}
+          T.seconds(w,g);T.persist(p,w);assert(puts==0 and #SIGNALS==0)
+          w.timing.a.hi=10;T.persist(p,w);assert(puts==1 and #SIGNALS==1)
+          assert(SIGNALS[1][1]=='mes' and SIGNALS[1][2]=='timing' and SIGNALS[1][3]=='a')
+          w.timing.a.hi=10.4;T.persist(p,w);w.timing.a.hi=10.5;T.persist(p,w)
+          assert(puts==1 and #SIGNALS==1)
+          w.timing.a.hi=10.501;T.persist(p,w);T.persist(p,w)
+          assert(puts==2 and #SIGNALS==2)
         ''')
 
     def test_sequential_bonus_interval(self):
