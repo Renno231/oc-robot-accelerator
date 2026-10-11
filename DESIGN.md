@@ -23,6 +23,11 @@ attempt have been removed.
 - **Mapping** stands alone. **Logistics** requires mapping. **Warehouse** (the
   optional inventory-management system, formerly "inventory management") may use
   mapping and logistics. Logistics never depends on warehouse.
+- Mapping writes only affected node, canonical link and storage records to
+  the CBOR log `/etc/map.db`; `map.save()` only flushes it. Stations flush at
+  their existing phase boundaries, alongside their own store. Never serialize
+  the whole graph for persistence: truncating the old file before serialization
+  lost the map when SCALE commissioning exhausted the controller's memory.
 - Logistics is an OpenOS library: `require` returns its API table. The
   controller (fleet state, drone registry, pairing, scheduling) is internal to
   it. One instance per computer, shared by every program that requires it.
