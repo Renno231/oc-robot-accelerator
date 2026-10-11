@@ -108,7 +108,7 @@ class LibraryApiTests(unittest.TestCase):
         ''')
 
     def load(self, library, variable):
-        if library in ('warehouse', 'logistics') and not self.lua.globals().STORE_SOURCE:
+        if library in ('map', 'warehouse', 'logistics') and not self.lua.globals().STORE_SOURCE:
             install_store(self.lua, preserve_io=True)
         self.lua.globals().SOURCE = Path(f'drone-logistics/lib/{library}.lua').read_text()
         self.lua.execute(f'{variable}=assert(load(SOURCE))()')
@@ -132,7 +132,7 @@ class LibraryApiTests(unittest.TestCase):
           names=map.names();map.link('a','z');assert(map.names()~=names)
           names=map.names();map.unlink('a','z');assert(map.names()~=names)
           map.save();map.remove('a');assert(#map.names()==1 and #map.storageNames()==0)
-          map.load();assert(#map.names()==2 and map.storageNames()[1]=='aa')
+          map.load();assert(#map.names()==1 and #map.storageNames()==0)
           names=map.names();map.add('a',2,0,0);assert(map.names()~=names)
         ''')
 
@@ -186,7 +186,7 @@ class LibraryApiTests(unittest.TestCase):
           map.name('stock','rack',0);verify(128,false) -- observation survives restoration
           map.name('alias','rack',1);verify(128,true) -- aliases never double count
           map.save();map.remove('rack');verify(0,false)
-          map.load();verify(128,true)
+          map.load();verify(0,true) -- load includes the persisted per-record removal
           -- Checking both revision and totals on unchanged redraws is allocation-free.
           collectgarbage('collect');collectgarbage('stop');local memory=collectgarbage('count')
           local before=copies

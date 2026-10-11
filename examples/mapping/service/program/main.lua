@@ -1,5 +1,5 @@
 local fs=require("filesystem")
-for _,name in ipairs({"map","mapclient"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
+for _,name in ipairs({"cbor","store","map","mapclient"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
 for _,name in ipairs({"mapd","mapclient"}) do assert(fs.copy("/home/program/bin/"..name..".lua","/bin/"..name..".lua")) end
 local key="mapping-native-key"
 local f=assert(io.open("/etc/mapd.cfg","w"));f:write('{key="'..key..'"}');f:close()
@@ -8,7 +8,7 @@ local event=require("event");local computer=require("computer");local component=
 local map=require("map")
 if case=="actions" then
   fs.makeDirectory("/lib/logistics")
-  for _,name in ipairs({"cbor","store","logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
+  for _,name in ipairs({"logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
   assert(fs.copy("/home/program/drone/agent.lua","/lib/logistics/agent.lua"))
   map.add("H",0,65,0,{charger=true});map.add("A",0,65,2);map.add("B",6,65,4);map.add("C",6,65,2);map.link("H","A");map.save()
   local logistics=require("logistics");local deadline=computer.uptime()+15
