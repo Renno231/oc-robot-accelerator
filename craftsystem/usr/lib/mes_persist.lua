@@ -14,7 +14,7 @@ end
 local function ref(r)
  if r then return {run=r.run.id,stage=r.stage.index,group=r.group} end
 end
-local af='kind token ids submitted error partialOk sourceRetry accounted problem'
+local af='kind token ids submitted submittedAt error partialOk sourceRetry accounted problem'
 local function act(a) return a and pick(a,af) end
 local function pack(b)
  if not b then return end
@@ -39,7 +39,7 @@ function M.plan(p,run)
  p.store:put(key,{plan=run.plan,opts=opts(run.opts)});p.known[key]=true
 end
 function M.save(p,w,h,active,seq,snap)
- local keep={}
+ local keep={timing=true};require('mes_timing').persist(p,w)
  local function put(k,v) keep[k]=true;p.known[k]=true;p.store:put(k,v) end
  local finished={};local old={}
  for _,id in ipairs(p.done) do old[id]=true end
@@ -125,7 +125,7 @@ function M.restore(p,w,config,ports,client,now)
  local cfg
  local db=p.db;local h,active,watched={},{},{}
  local seq=(db.ids or {}).run or 0
- ov(w,db.world);w.now=now;w.stuck={}
+ ov(w,db.world);w.now=now;w.stuck={};w.timing=S.copy(db.timing or {})
  for _,id in ipairs(p.done) do h[id]=db['done_'..id] end
  for key,v in pairs(db) do
   local name=key:match('^mach_(.*)')
@@ -208,6 +208,7 @@ function M.restore(p,w,config,ports,client,now)
     l.bundle=rb(l.bundle,r,s);g.loads[#g.loads+1]=l;loads[l.sequence]=l
    end
    g.loading=loads[v.loading]
+   if g.loading then g.loading.timingRestart=true end
    if g.collection then
     local c=g.collection;local owner
     for _,l in ipairs(g.loads) do for _,n in pairs(l.remaining) do if n>0 then owner=owner or l.request end end end

@@ -2,7 +2,7 @@
 return function(obstacle)
   local fs=require('filesystem')
   fs.makeDirectory('/lib/logistics')
-  for _,n in ipairs({'map','logistics'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
+  for _,n in ipairs({'cbor','store','map','logistics'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
   assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
   local event,computer=require('event'),require('computer')
   local serialization=require('serialization')

@@ -29,17 +29,36 @@ for _,a in ipairs(args) do if a=="announce" then
   local function fire() require("logistics").labAnnounce();require("mes").labAnnounce() end
   announce=event.timer(6,fire)
 end end
+-- `sensor`: 6 s in, a sensor announces. `deposit`: 6 s in, items land in
+-- IO chest in1 (its sensor reports them). `sensorlist`: logistics gets the
+-- proposed sensors() (not in the real API).
+local labTimers={}
+for _,a in ipairs(args) do
+  if a=="sensor" then local function fire() require("logistics").labAnnounceSensor() end;labTimers[#labTimers+1]=event.timer(6,fire) end
+  if a=="deposit" then local function fire() require("iochest").labDeposit() end;labTimers[#labTimers+1]=event.timer(6,fire) end
+  if a=="sensorlist" then require("logistics").labSensorList() end
+  -- `whchange`: 10 s in, 640 cobblestone arrive (a warehouse "changed").
+  if a=="whchange" then local function fire() require("warehouse").labChange() end;labTimers[#labTimers+1]=event.timer(10,fire) end
+  -- `stats76` (default), `stats96`, `statsempty`, `statsunread`: the stats scenario.
+  if a:match("^stats%w+$") then require("stats").labScenario(a:sub(6)) end
+  -- `timing`: machines in every learned-timing case (fakes/mes.lua).
+  if a=="timing" then require("mes").labTiming() end
+end
 if args[2]=="mem" then
-  local low=math.huge
+  -- settled: the most free over the last 10 samples, i.e. after the
+  -- kernel's periodic full collection (live memory, garbage excluded).
+  local low,last=math.huge,{}
   opts.status=function()
     local f=computer.freeMemory();low=math.min(low,f)
-    return string.format("free %dk (low %dk) of %dk",f//1024,low//1024,computer.totalMemory()//1024)
+    table.insert(last,f);if #last>10 then table.remove(last,1) end
+    return string.format("free %dk (low %dk, settled %dk) of %dk",f//1024,low//1024,math.max(table.unpack(last))//1024,computer.totalMemory()//1024)
   end
   timer=event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
 end
 require("mes_ui").run(opts)
 if timer then event.cancel(timer) end
 if announce then event.cancel(announce) end
+for _,t in ipairs(labTimers) do event.cancel(t) end
 """
 
 lab = Path(__file__).resolve().parent
