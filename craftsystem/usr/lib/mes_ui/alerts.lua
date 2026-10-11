@@ -20,6 +20,8 @@ local function wrap(s,w)
 end
 local sections={{"active","Active",""},{"dismissed","Dismissed"," · hidden on every screen until the cause clears"},{"cleared","Cleared"," · kept for 24 h"}}
 local stateFg={active="bad",dismissed="warn",cleared="dim"}
+-- The engine keeps dismissed=true on a dismissed alert that then cleared.
+local function state(r) return r.state=="cleared" and (r.dismissed and "dismissed, then cleared " or "cleared ")..ago(r.cleared) or r.state end
 
 function S:open()
   local a=ui.area();self.rows={};self.n={}
@@ -49,33 +51,33 @@ end
 function S:row(i,w)
   local r=self.rows[i];local P=ui.P
   if r.heading then return r.heading,r.fg,true end
-  local st=r.state=="cleared" and "cleared "..ago(r.cleared) or r.state
-  return "  "..ui.fit(ui.alertKinds[r.kind] or r.kind,22)..ui.fit(ui.alertSubject(r),w-60)..ui.fit(ago(r.raised),14)..ui.fit(st,22),P[stateFg[r.state]]
+  return "  "..ui.fit(ui.alertKinds[r.kind] or r.kind,20)..ui.fit(ui.alertSubject(r),w-66)..ui.fit(ago(r.raised),11)..ui.fit(state(r),33),P[stateFg[r.state]]
 end
 -- Cause and what clears it, from the alert table (ALERTS spec).
 function S:lines(r,w)
   local P,c=ui.P,self.cfg;local k,who=r.kind,ui.alertSubject(r);local cause,clears
-  if k=="runFailed" then cause="Run "..tostring(r.key).." ended failed.";clears="Only dismissing it: the failure is in the past, so nothing else clears it."
+  if k=="runFailed" then cause=who:sub(1,4)=="run " and "Run "..who:sub(5).." ended failed." or "The run making "..who.." ended failed.";clears="Only dismissing it: the failure is in the past, so nothing else clears it."
   elseif k=="droneLost" then cause="Logistics marked "..who.." lost.";clears="The drone is found (Fleet: Enter on it marks it found) or reports ready again."
   elseif k=="droneHeld" then cause=who.." has been held, keeping its cargo, for longer than "..tostring(c.heldMinutes).." min.";clears="It is no longer held: its cargo is released (Fleet: Enter on it)."
   elseif k=="stockFull" then cause="Stock is "..pct(c.fillBad).." full or more, or at this rate it will be full within "..tostring(c.fullSoonHours).." h."
     clears="Fill drops below "..pct((c.fillBad or 0)-.02).." and stock is no longer forecast to be full soon."
-  elseif k=="machineStuck" then local mn,ln=tostring(r.key):match("^(.*):(%d+)$")
-    cause="Load "..(ln or "?").." on machine "..(mn or who).." is past its due time by more than "..tostring(c.stuckFactor).."× its duration, and its output has not been collected."
+  elseif k=="machineStuck" then local mn,ln=r.machine,r.load;if mn==nil then mn,ln=tostring(r.key):match("^(.*):(%d+)$") end
+    cause="Load "..tostring(ln or "?").." on machine "..(mn or who).." is past its due time by more than "..tostring(c.stuckFactor).."× its duration, and its output has not been collected."
     clears="Its output is collected, or the load is quarantined."
   elseif k=="importBlocked" then cause="Import chest "..who.." cannot put its items away: stock is full.";clears="The chest no longer reports stock full (there is room in stock)."
   elseif k=="exportFull" then cause="Export chest "..who.." is full.";clears="The chest no longer reports it is full (take items out of it)."
   else cause=tostring(r.text);clears="Its cause clears." end
   local lines={{ui.alertKinds[k] or k,P.accent},who,""}
   local function add(t,fg) for _,l in ipairs(wrap(t,w)) do lines[#lines+1]={l,fg} end end
-  lines[#lines+1]=ui.fit("Raised",10)..ago(r.raised).." · alert #"..r.id
-  lines[#lines+1]={ui.fit("State",10)..(r.state=="cleared" and "cleared "..ago(r.cleared) or r.state),P[stateFg[r.state]]}
+  lines[#lines+1]=ui.fit("Raised",10)..ago(r.raised).." · alert #"..r.id..(k=="runFailed" and " · run "..tostring(r.key):sub(1,8) or "")
+  lines[#lines+1]={ui.fit("State",10)..state(r),P[stateFg[r.state]]}
   lines[#lines+1]="";lines[#lines+1]={"Cause",P.dim};add(cause)
   if (k=="importBlocked" or k=="exportFull") and r.text then add("Reported: "..r.text,P.warn) end
   lines[#lines+1]="";lines[#lines+1]={"Clears when",P.dim};add(clears)
   lines[#lines+1]=""
   if r.state=="active" then add("D dismisses it on every screen.",P.dim)
-  elseif r.state=="dismissed" then add(k=="runFailed" and "Dismissed on every screen." or "Dismissed on every screen. If the cause clears and comes back, that is a new alert.",P.dim) end
+  elseif r.state=="dismissed" then add(k=="runFailed" and "Dismissed on every screen." or "Dismissed on every screen. If the cause clears and comes back, that is a new alert.",P.dim)
+  elseif r.dismissed then add("It was dismissed on every screen while active; its cause has since cleared.",P.dim) end
   return lines
 end
 function S:pane(i)
@@ -89,7 +91,7 @@ function S:draw()
   if self.dirty then self:rebuild();self.list:refresh() end
   local a=ui.area();local n=self.n
   ui.title("Alerts",n.active.." active · "..n.dismissed.." dismissed · "..n.cleared.." cleared")
-  ui.text(1,a.y,ui.fit(ui.fit("  Alert",24)..ui.fit("Subject",self.lw-60)..ui.fit("Raised",14).."State",self.lw),ui.P.dim)
+  ui.text(1,a.y,ui.fit(ui.fit("  Alert",22)..ui.fit("Subject",self.lw-66)..ui.fit("Raised",11).."State",self.lw),ui.P.dim)
   self:pane()
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
@@ -115,18 +117,32 @@ function S:detail(i)
 end
 
 -- Settings: every key settings() returns, edited through set(), which
--- checks it; a refusal shows the engine's own error. The stock thresholds
--- belong to the stats service and also set the Stock tab's warnings.
+-- checks it; owners() says which belong to the stats service (they also set
+-- the Stock tab's warnings). A refusal the UI knows is put in the screen's
+-- terms (percent, names); any other shows the engine's own text.
 local defs={heldMinutes={"Drone held alert after","min"},stuckFactor={"Machine stuck alert when overdue by","× duration"},
   fillBad={"Stock full alert when stock is","% full"},fullSoonHours={"Stock full alert when full within","h"},
   fillWarn={"Stock warning (not an alert) at","% full"}}
 local order={"heldMinutes","stuckFactor","fillBad","fullSoonHours","fillWarn"}
 local function show(k,v) local d=defs[k];local p=d and d[2]:sub(1,1)=="%";if type(v)~="number" then return tostring(v) end
   return string.format("%g",p and v*100 or v)..(d and (p and "" or " ")..d[2] or "") end
+local fill=" must be 0-1; fillWarn < fillBad"
+-- Short: the prompt's note line is about 48 columns.
+local refusals={heldMinutes={" must be a whole number of minutes >= 1","whole minutes, 1 or more"},
+  stuckFactor={" must be a finite multiplier > 0","a multiplier above 0, e.g. 0.5 or 2"},
+  fullSoonHours={" must be finite and >= 0","hours, 0 or more"},fillWarn={fill},fillBad={fill}}
+-- v as entered (percent for the fill levels).
+local function refusal(k,v,err,cfg)
+  local e=tostring(err):gsub("^[^:]+:%d+: ","");local r=refusals[k]
+  if e=="unknown setting "..k then return "the engine has no such setting" end
+  if not r or e~=k..r[1] then return e end
+  if r[2] then return r[2] elseif v<0 or v>100 then return "a percent from 0 to 100" end
+  return k=="fillWarn" and "must be below the full alert, "..show("fillBad",cfg.fillBad) or "must be above the warning, "..show("fillWarn",cfg.fillWarn)
+end
 function S.settings()
   local m=engine();if not m then ui.fail("the alert engine is not available");return end
   local cfg=ui.try(m.settings);if not cfg then return end
-  local okS,st=pcall(require,"stats");local fromStats=okS and ui.try(st.settings) or {}
+  local owners=ui.try(m.owners) or {}
   local list={};for _,k in ipairs(order) do if cfg[k]~=nil then list[#list+1]=k end end
   local extra={};for k in pairs(cfg) do if not defs[k] then extra[#extra+1]=k end end;table.sort(extra)
   for _,k in ipairs(extra) do list[#list+1]=k end
@@ -134,7 +150,7 @@ function S.settings()
   ui.modal({title="Alert settings",w=92,h=#list+4,build=function(md)
     L=ui.list(md.menu,{name="s",x=md.ix,y=md.iy,w=md.iw,h=#list,bg=ui.P.box,count=function() return #list end,
       row=function(i) local k=list[i];local d=defs[k]
-        return ui.fit(d and d[1] or k,md.iw-48)..ui.right(show(k,cfg[k]),16).."   "..ui.fit(fromStats[k]~=nil and "stock stats · "..k or "alerts · "..k,29) end,
+        return ui.fit(d and d[1] or k,md.iw-48)..ui.right(show(k,cfg[k]),16).."   "..ui.fit((owners[k]=="stats" and "stock stats" or "alerts").." · "..k,29) end,
       activate=function(i)
         local k=list[i];local d=defs[k];local p=d and d[2]:sub(1,1)=="%"
         local label=(d and d[1] or k)..(p and " (percent)" or d and " ("..d[2]..")" or "")
@@ -142,7 +158,7 @@ function S.settings()
           cfg=ui.try(m.settings) or cfg;L:refresh();ui.ok("Saved: "..(d and d[1] or k).." "..show(k,cfg[k]))
         end,{number=true,check=function(v)
           local ok,err=pcall(m.set,k,p and v/100 or v)
-          if ok then return true end;return nil,"Refused: "..(tostring(err):gsub("^[^:]+:%d+: ",""))
+          if ok then return true end;return nil,"Refused: "..refusal(k,v,err,cfg)
         end})
       end})
     md.paint=function() ui.text(md.ix,md.y+md.h-2,ui.fit("Enter edits · saved at once · ⌫ close",md.iw),ui.P.dim,ui.P.box) end
