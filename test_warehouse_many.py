@@ -78,7 +78,7 @@ class WarehouseManyTests(unittest.TestCase):
             end
             local delivered=0
             for _,s in ipairs(job.submitted) do
-              local r={item=clone(s.item),count=s.count,maxSize=s.maxSize,expectedIndex=s.expectedIndex}
+              local r={item=clone(s.item),count=s.count,maxSize=s.maxSize,expectedIndex=s.expectedIndex,claimed=s.claimed}
               local key=s.item.name..':'..s.item.damage
               if s.take then
                 local n=s.item.name==shortItem and math.min(s.count,shortCount or 0) or s.count
