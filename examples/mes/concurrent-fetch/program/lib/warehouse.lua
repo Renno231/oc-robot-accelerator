@@ -585,8 +585,7 @@ local function node(endpoint)
   return endpoint.storage and assert(map.place(endpoint.storage)) or endpoint.node
 end
 local function distance(a,b)
-  local ok,path=pcall(logistics.plan,a,b);if not ok then return math.huge end
-  local d=0;for k=2,#path do local p,q=path[k-1],path[k];d=d+math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2) end;return d
+  return map.distances(map.place(b))[map.place(a)] or math.huge
 end
 -- Something else read this inventory whole (a robot its buffer): those counts are the truth.
 function M.observed(storage,counts)
@@ -666,7 +665,7 @@ function M.store(i,n,from,opts)
   -- Interleave takes and puts, allowing a large request to split naturally.
   local steps,reservations,remaining,used={},{},n,{};local source=node(from)
   for _,c in ipairs(candidates) do if remaining==0 then break end
-    if not used[c.key] and distance(source,c.storage)<math.huge then
+    if not used[c.key] and distance(c.storage,source)<math.huge then
       used[c.key]=true;total=total+c.capacity;local amount=math.min(remaining,c.capacity)
       steps[#steps+1]={take=from,item=i,count=amount};steps[#steps+1]={put=c.storage,item=i,count=amount};remaining=remaining-amount
       reservations[#reservations+1]={key=c.key,storage=c.storage,item=i,count=amount,direction='put',maximum=maximum}
@@ -904,7 +903,7 @@ function storeTargets(stock,i,from,source,maximum,planned)
       local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or entry.freeSlots>0 and 4 or nil
       local capacity=entry.full and entry.full[itemKey(i)] and 0 or math.max(0,
         entry.freeSlots*maximum+room-incomingCapacity(face.key,i,maximum,planned))
-      if tier and capacity>0 and distance(source,face.storage)<math.huge then
+      if tier and capacity>0 and distance(face.storage,source)<math.huge then
         candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,
           priority=face.settings.priority or 0,capacity=capacity,freeSlots=entry.freeSlots}
       end
