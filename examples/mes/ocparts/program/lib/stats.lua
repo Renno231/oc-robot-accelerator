@@ -6,7 +6,7 @@ local db=require('store').open('/etc/stats','log')
 local D=db:load()
 local C=D.settings or {fillWarn=.8,fillBad=.95,fullSoonHours=2}
 local H=D.hours or {}
-local M={}
+local M,timer={}
 local h0=math.floor(c.uptime()/3600)
 local B={u=0,i={}}
 local function key(i) return ser.serialize({i.name,i.damage or 0,i.label},false) end
@@ -19,6 +19,7 @@ while #H>24 do table.remove(H,1) end
 H.serial=(H.serial or 0)+1
 h0=h;B={u=0,i={}}
 db:put('hours',H);db:flush()
+e.push('stats');e.cancel(timer);timer=e.timer(3600-c.uptime()%3600,roll,1)
 end
 local function rate(k)
 local x,y,p,q=0,0,0,0
@@ -63,7 +64,9 @@ end
 function M.settings() local t={};for k,v in pairs(C) do t[k]=v end;return t end
 function M.set(k,v)
 assert(C[k] and type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1),'invalid setting')
+if C[k]==v then return end
 C[k]=v;db:put('settings',C);db:flush()
+e.push('stats')
 end
 function M.warnings()
 local r=M.summary();local out={}
@@ -83,5 +86,5 @@ for k in pairs(L) do if not N[k] then N[k]=0 end end
 for k,v in pairs(N) do local d=v-(L[k] or 0);if d~=0 then B.i[k]=(B.i[k] or 0)+d end;if v==0 then N[k]=nil end end
 L=N
 end)
-e.timer(60,roll,math.huge)
+timer=e.timer(3600-c.uptime()%3600,roll,1)
 return M
