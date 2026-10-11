@@ -48,15 +48,18 @@ for _,a in ipairs(args) do
   if a=="learn" then local function fire() require("mes").labLearn() end;labTimers[#labTimers+1]=event.timer(10,fire) end
   -- `alerts3`: three active alerts of different kinds at start (fakes/mes_alerts.lua).
   if a=="alerts3" then require("mes_alerts").labThree() end
+  -- `alertshist`: failed runs (item, old id-only), a stuck machine named
+  -- with a colon, a dismissed-then-cleared alert, one pruned 20 s in.
+  if a=="alertshist" then require("mes_alerts").labHistory() end
   -- `alertcycle`: one-shot timers, 10 s apart from 15 s: drone3 held too
   -- long is raised; drone5 lost clears; furnaceA load 3 stuck is dismissed
-  -- (as from another screen); run 7 failed is raised.
+  -- (as from another screen); a run making stone bricks fails.
   if a=="alertcycle" then
     local al=require("mes_alerts")
     local function held() al.labRaise("droneHeld","drone3","Cargo held: drone3") end
     local function found() al.labClear("droneLost","drone5") end
     local function elsewhere() al.labDismiss("machineStuck","furnaceA:3") end
-    local function failed() al.labRaise("runFailed","7","Run failed: 7") end
+    local function failed() al.labRaise("runFailed","7b3e90c1d24f6a85e0c9b7d13a2f4e68","Run failed: minecraft:stonebrick") end
     for k,f in ipairs({held,found,elsewhere,failed}) do labTimers[#labTimers+1]=event.timer(5+k*10,f) end
   end
 end
@@ -67,8 +70,8 @@ if args[2]=="mem" then
   opts.status=function()
     local f=computer.freeMemory();low=math.min(low,f)
     table.insert(last,f);if #last>10 then table.remove(last,1) end
-    -- settled first: an alert bar may leave room for only part of this.
-    return string.format("settled %dk · free %dk · low %dk · of %dk",math.max(table.unpack(last))//1024,f//1024,low//1024,computer.totalMemory()//1024)
+    -- settled, then low: an alert bar may leave room for only part of this.
+    return string.format("settled %dk · low %dk · free %dk · of %dk",math.max(table.unpack(last))//1024,low//1024,f//1024,computer.totalMemory()//1024)
   end
   timer=event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
 end
