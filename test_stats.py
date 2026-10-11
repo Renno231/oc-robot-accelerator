@@ -18,10 +18,12 @@ class StatsTests(unittest.TestCase):
         install_store(self.lua)
         self.lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
         self.lua.execute('''
-          TIME=0;LISTEN={};TIMERS={};ROWS={};RESERVED=0;READS=0;JOBS=0;PUTS=0
+          TIME=0;LISTEN={};TIMERS={};ROWS={};RESERVED=0;READS=0;JOBS=0;PUTS=0;SIGNALS={};TCALLS=0
           package.loaded.computer={uptime=function() return TIME end}
           package.loaded.event={listen=function(n,f) LISTEN[n]=f end,
-            timer=function(_,f) TIMERS[#TIMERS+1]=f end}
+            push=function(n) SIGNALS[#SIGNALS+1]=n end,
+            cancel=function(id) TIMERS[id]=nil end,
+            timer=function(seconds,f,times) assert(times==1);TCALLS=TCALLS+1;TIMERS[TCALLS]=f;return TCALLS end}
           local wh={}
           local function matches(a,b) return a.name==b.name and (a.damage or 0)==(b.damage or 0) and (not b.label or a.label==b.label) end
           function wh.entries() return ROWS end
@@ -58,7 +60,9 @@ class StatsTests(unittest.TestCase):
             ROWS.a[1].entry.freeSlots=100-used;ROWS.a[1].entry.items.seed.count=count
             LISTEN.warehouse('warehouse','changed')
           end
-          function closeHour() TIME=TIME+3600;TIMERS[1]() end
+          function timerFire() for _,f in pairs(TIMERS) do f();return end;error('no hour timer') end
+          function timerCount() local n=0;for _ in pairs(TIMERS) do n=n+1 end;return n end
+          function closeHour() TIME=TIME+3600;timerFire() end
           function near(a,b) assert(math.abs(a-b)<1e-9,tostring(a)..' ~= '..tostring(b)) end
         ''')
 
@@ -81,7 +85,7 @@ class StatsTests(unittest.TestCase):
           storage('a',100,0,0);reload()
           for h=1,8 do
             if h<=4 then TIME=(h-1)*3600+100;change(h*10,h*640) end
-            TIME=h*3600;TIMERS[1]()
+            TIME=h*3600;timerFire()
             local r=stats.summary()
             if h>=3 and h<=7 then assert(r.trend.state=='growing' and r.trend.fullInHours)
               near(r.trend.fullInHours,r.freeSlots/r.trend.usedPerHour6)
@@ -147,7 +151,17 @@ class StatsTests(unittest.TestCase):
           LISTEN.warehouse('warehouse','changed');closeHour()
           assert(stats.item{name='mod:seed'}.perHour1==18)
           assert(stats.item{name='mod:seed',label='X'}.perHour1==6)
-          TIME=TIME+30*3600;TIMERS[1]();assert(stats.item{name='mod:seed'}.perHour6==0)
+          TIME=TIME+30*3600;timerFire();assert(stats.item{name='mod:seed'}.perHour6==0)
+        ''')
+
+    def test_hour_event_one_shot_and_no_change_suppression(self):
+        self.lua.execute('''
+          storage('a',100,0,0);reload();assert(timerCount()==1 and #SIGNALS==0)
+          stats.summary();stats.summary();assert(TCALLS==1 and #SIGNALS==0)
+          closeHour();assert(timerCount()==1 and TCALLS==2 and #SIGNALS==1 and SIGNALS[1]=='stats')
+          stats.summary();assert(TCALLS==2 and #SIGNALS==1)
+          stats.set('fillBad',.9);assert(#SIGNALS==2)
+          stats.set('fillBad',.9);assert(#SIGNALS==2)
         ''')
 
 
@@ -168,6 +182,7 @@ class WarehouseStatsIntegrationTests(unittest.TestCase):
           wh.group('machine','test',{buffer='s7'})
           wh.scan();finishAll()
           require('event').timer=function() return 1 end
+          require('event').cancel=function() end
           stats=assert(load(STATS))();local before=#HISTORY
           local rows=wh.entries();local n=0;for _ in pairs(rows) do n=n+1 end;assert(n==7)
           rows.s1[1].entry.slots=999;assert(wh.contents('s1').slots==27)
