@@ -122,13 +122,14 @@ local function indexes(endpoint,size)
 end
 local function take(endpoint,item,wanted)
   local size=inv.getInventorySize(endpoint.side);if not size then return 0,nil,"source has no inventory",0 end
-  local taken,maxSize,left=0,nil,0
+  local taken,maxSize,left,emptied=0,nil,0,0
   for _,source in ipairs(indexes(endpoint,size)) do
-    local remaining=0
+    local remaining,had=0,false
     if source<=size then
       for cargo=1,slots do
         local stack=inv.getStackInSlot(endpoint.side,source)
         remaining=match(stack,item) and stack.size or 0
+        had=had or remaining>0
         if not match(stack,item) or taken>=wanted then break end
         maxSize=stack.maxSize
         local held=inv.getStackInInternalSlot(cargo)
@@ -143,9 +144,10 @@ local function take(endpoint,item,wanted)
       end
     end
     left=left+remaining
+    if had and remaining==0 then emptied=emptied+1 end
     if taken>=wanted then break end
   end
-  return taken,maxSize,nil,left
+  return taken,maxSize,nil,left,emptied
 end
 local function put(endpoint,item,wanted)
   local size=inv.getInventorySize(endpoint.side);if not size then return 0,"destination has no inventory" end
@@ -186,8 +188,8 @@ local function cargoRoom(item)
   return false
 end
 local function waitingTake(endpoint,item,wanted,wait,reserve,minimum)
-  local total,maxSize,reason,left=take(endpoint,item,wanted)
-  if not wait then return total,maxSize,reason,false,left end
+  local total,maxSize,reason,left,emptied=take(endpoint,item,wanted)
+  if not wait then return total,maxSize,reason,false,left,emptied end
   local deadline=computer.uptime()+wait.timeout;local delay=0.05
   while total<(minimum or wanted) and computer.uptime()<deadline do
     if computer.energy()<reserve then return total,maxSize,"wait interrupted to charge",true,left end
@@ -195,9 +197,10 @@ local function waitingTake(endpoint,item,wanted,wait,reserve,minimum)
     computer.pullSignal(math.min(delay,math.max(0,deadline-computer.uptime())))
     delay=math.min(0.5,delay*2)
     local got,maximum,why,remaining=take(endpoint,item,wanted-total);left=remaining
+    emptied=nil
     total=total+got;maxSize=maximum or maxSize;reason=why
   end
-  return total,maxSize,reason,false,left
+  return total,maxSize,reason,false,left,emptied
 end
 local function runSteps(task,id,result)
   local ledger={};result.steps={};result.cargo={}
@@ -231,8 +234,9 @@ local function runSteps(task,id,result)
       end
     elseif step.take and step.count>0 then
       goTo(step.take.node)
-      local got,maximum,why,recharge,left=waitingTake(step.take,step.item,step.count,task.wait,task.reserve,step.waitFor)
+      local got,maximum,why,recharge,left,empty=waitingTake(step.take,step.item,step.count,task.wait,task.reserve,step.waitFor)
       r.moved=got;r.taken=got;r.maxSize=maximum
+      r.emptied=empty;r.knownTaken=empty and got or 0
       ledger[#ledger+1]={step=i,source=step.take,item=step.item,count=got}
       if step.all then r.complete=got<step.count and cargoRoom(step.item);r.short=r.complete or nil
       elseif got<step.count and cargoRoom(step.item) then r.short=not recharge or nil;result.reason=why or "source shortfall" end
@@ -318,7 +322,8 @@ while true do
           return
         end
         travel(task.routes.take)
-        local left;result.taken,result.maxSize,result.reason,result.recharge,left=waitingTake(task.from,task.item,task.count,task.wait,task.reserve)
+        local left;result.taken,result.maxSize,result.reason,result.recharge,left,result.emptied=waitingTake(task.from,task.item,task.count,task.wait,task.reserve)
+        result.knownTaken=result.emptied and result.taken or 0
         result.short=not result.recharge and result.taken<task.count and cargoRoom(task.item) or nil
         result.left=result.short and left or nil
         report(id,{state="progress",taken=result.taken,moved=0,held=cargoCount()})
