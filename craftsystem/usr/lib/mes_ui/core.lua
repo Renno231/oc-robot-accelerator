@@ -343,13 +343,11 @@ function ui.setStatus(text) if text~=status then status=text;headerDirty=true en
 -- re-read, never counted as new); with none it draws nothing.
 ui.alertKinds={runFailed="Run failed",droneLost="Drone lost",droneHeld="Drone held too long",stockFull="Stock full",
   machineStuck="Machine stuck",importBlocked="Import blocked",exportFull="Export chest full"}
--- A failed run's item is in its text "Run failed: <item>"; older records
--- have the run id there. A stuck machine has machine and load; older
--- records only the key "name:load".
+-- A failed run has its item; older records only the run id (the key). A
+-- stuck machine has machine and load; older records only the key "name:load".
 function ui.alertSubject(r)
   local k,key=r.kind,tostring(r.key)
-  if k=="runFailed" then local it=tostring(r.text):match("^Run failed: (.+)$")
-    return it and it~=key and ui.label(it) or "run "..key:sub(1,8) elseif k=="stockFull" then return "stock" end
+  if k=="runFailed" then return r.item and ui.label(r.item) or "run "..key:sub(1,8) elseif k=="stockFull" then return "stock" end
   if k=="machineStuck" then local m,n=r.machine,r.load;if m==nil then m,n=key:match("^(.*):(%d+)$") end
     if m then return m..", load "..tostring(n) end end
   return key

@@ -126,18 +126,19 @@ local defs={heldMinutes={"Drone held alert after","min"},stuckFactor={"Machine s
 local order={"heldMinutes","stuckFactor","fillBad","fullSoonHours","fillWarn"}
 local function show(k,v) local d=defs[k];local p=d and d[2]:sub(1,1)=="%";if type(v)~="number" then return tostring(v) end
   return string.format("%g",p and v*100 or v)..(d and (p and "" or " ")..d[2] or "") end
-local fill=" must be 0-1; fillWarn < fillBad"
 -- Short: the prompt's note line is about 48 columns.
+local pcent={" must be between 0 and 1","a percent from 0 to 100"}
 local refusals={heldMinutes={" must be a whole number of minutes >= 1","whole minutes, 1 or more"},
   stuckFactor={" must be a finite multiplier > 0","a multiplier above 0, e.g. 0.5 or 2"},
-  fullSoonHours={" must be finite and >= 0","hours, 0 or more"},fillWarn={fill},fillBad={fill}}
--- v as entered (percent for the fill levels).
-local function refusal(k,v,err,cfg)
+  fullSoonHours={" must be finite and >= 0","hours, 0 or more"},fillWarn=pcent,fillBad=pcent}
+local function refusal(k,err,cfg)
   local e=tostring(err):gsub("^[^:]+:%d+: ","");local r=refusals[k]
   if e=="unknown setting "..k then return "the engine has no such setting" end
-  if not r or e~=k..r[1] then return e end
-  if r[2] then return r[2] elseif v<0 or v>100 then return "a percent from 0 to 100" end
-  return k=="fillWarn" and "must be below the full alert, "..show("fillBad",cfg.fillBad) or "must be above the warning, "..show("fillWarn",cfg.fillWarn)
+  if e=="fillWarn must be below fillBad" then
+    if k=="fillWarn" then return "must be below the full alert, "..show("fillBad",cfg.fillBad) end
+    if k=="fillBad" then return "must be above the warning, "..show("fillWarn",cfg.fillWarn) end
+  end
+  return r and e==k..r[1] and r[2] or e
 end
 function S.settings()
   local m=engine();if not m then ui.fail("the alert engine is not available");return end
@@ -158,7 +159,7 @@ function S.settings()
           cfg=ui.try(m.settings) or cfg;L:refresh();ui.ok("Saved: "..(d and d[1] or k).." "..show(k,cfg[k]))
         end,{number=true,check=function(v)
           local ok,err=pcall(m.set,k,p and v/100 or v)
-          if ok then return true end;return nil,"Refused: "..refusal(k,v,err,cfg)
+          if ok then return true end;return nil,"Refused: "..refusal(k,err,cfg)
         end})
       end})
     md.paint=function() ui.text(md.ix,md.y+md.h-2,ui.fit("Enter edits · saved at once · ⌫ close",md.iw),ui.P.dim,ui.P.box) end
