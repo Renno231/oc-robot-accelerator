@@ -355,7 +355,7 @@ def load(path, forbidden_roots=(), check=lambda: None, on_normalized=lambda valu
         for other in forbidden_roots:
             if overlap(root, other): raise ValueError('scenario and output/template roots overlap')
         drone_mode = 'drones' in normalized
-        program_spec = value.get('computer', {}).get('program') if 'computer' in normalized else value.get('program')
+        program_spec = value.get('computer', value.get('controller', {})).get('program') if 'computer' in normalized else value.get('program')
         program = _source(root, program_spec['directory']) if program_spec is not None else None
         program_entries = () if program is None else _scan(program, PROGRAM_BYTES, PROGRAM_ENTRIES, check)
         if any(size is not None and size > PROGRAM_FILE_BYTES for _, size in program_entries): raise ValueError('program file byte bound exceeded')

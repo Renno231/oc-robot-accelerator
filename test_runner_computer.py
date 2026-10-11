@@ -13,6 +13,33 @@ def valid():
 
 
 class ComputerScenarioTests(unittest.TestCase):
+    def test_rack_controller_shape_and_source_freeze(self):
+        from examples.mes.build_fixtures import rack_controller
+        v=valid();old=v.pop('computer')
+        v['controller']=rack_controller(old['position'],old['program'])
+        # Include the physical screen west of the controller in the region.
+        v['world']['region']['min'][0]=min(v['world']['region']['min'][0],old['position'][0]-1)
+        n=scenario.normalize(v)
+        self.assertEqual(n,scenario.normalize(n))
+        self.assertEqual(n['computer']['kind'],'rack')
+        self.assertEqual(n['computer']['hardware']['memory'],['ram6']*4)
+        self.assertEqual(n['computer']['hardware']['buses'],['componentbus3']*3)
+        self.assertEqual(n['computer']['hardware']['cards'],['graphicscard3','wlancard2'])
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t)/'src';root.mkdir();(root/'program').mkdir();(root/'program/main.lua').write_text('return true')
+            (root/'eeprom.lua').write_text('computer.shutdown()')
+            (root/'scenario.json').write_text(json.dumps(v))
+            spec=scenario.load(root/'scenario.json');scenario.freeze(spec,Path(t)/'inputs')
+            self.assertEqual((Path(t)/'inputs/program/main.lua').read_text(),'return true')
+        bad=copy.deepcopy(v);bad['computer']=old
+        with self.assertRaises(ValueError): scenario.normalize(bad)
+        for key,raw in [('kind','creative'),('kind','unknown')]:
+            bad=copy.deepcopy(v);bad['controller'][key]=raw
+            with self.assertRaises(ValueError): scenario.normalize(bad)
+        for key,count in [('memory',5),('buses',4),('cards',5),('storage',5)]:
+            bad=copy.deepcopy(v);bad['controller']['hardware'][key]*=count
+            with self.assertRaises(ValueError): scenario.normalize(bad)
+
     def test_coordinated_computer_and_second_computer_keep_baseline_default(self):
         v=valid();self.assertEqual('baseline',scenario.normalize(v)['execution']['mode'])
         v['execution']={'mode':'coordinated'}

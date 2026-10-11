@@ -14,14 +14,18 @@ final class RunnerComputerScenario {
     }
     static void validate(RunnerScenario spec,JsonObject computer,JsonArray blocks,String directory) {
         if(computer!=null) {
-            RunnerScenario.fields(computer,"position,hardware,program");spec.inside(RunnerScenario.position(computer.get("position")));
-            JsonObject h=RunnerScenario.object(computer.get("hardware"),"tier,cpu,memory,cards,storage,bootDrive");
+            RunnerScenario.fields(computer,"position,hardware,program"+(computer.has("kind")?",kind":""));spec.inside(RunnerScenario.position(computer.get("position")));
+            String kind=computer.has("kind")?RunnerScenario.string(computer.get("kind")):"case";
+            if(!kind.equals("case") && !kind.equals("rack")) throw RunnerScenario.bad("controller kind");
+            boolean rack=kind.equals("rack");
+            JsonObject h=RunnerScenario.object(computer.get("hardware"),"tier,cpu,memory,cards,storage,bootDrive"+(rack?",buses":""));
             RunnerScenario.integer(h.get("tier"),1,3);RunnerScenario.componentName(h.get("cpu"));
             for(String key:new String[]{"memory","cards","storage"}) {
-                JsonArray a=RunnerScenario.array(h.get(key),key.equals("cards")?3:2);
+                JsonArray a=RunnerScenario.array(h.get(key),rack?4:key.equals("cards")?3:2);
                 if(!key.equals("cards") && a.size()==0) throw RunnerScenario.bad("computer memory/storage");
                 for(JsonElement part:a) RunnerScenario.componentName(part);
             }
+            if(rack) for(JsonElement part:RunnerScenario.array(h.get("buses"),3)) RunnerScenario.componentName(part);
             RunnerScenario.integer(h.get("bootDrive"),0,h.getAsJsonArray("storage").size()-1);
             JsonObject p=RunnerScenario.object(computer.get("program"),"directory,entry");
             if(!directory.equals(RunnerScenario.string(p.get("directory")))) throw RunnerScenario.bad("computer program directory");
