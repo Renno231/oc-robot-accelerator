@@ -82,6 +82,9 @@ attempt have been removed.
 - Robot reboot fixtures reuse the installed `/usr` files on subsequent boots;
   gate bootstrap installation with their persisted cycle marker. Native
   `component.eeprom.set` is a void setter: call it directly, then continue.
+- Native IO fixtures select an installation whose runner schema includes
+  microcontrollers. Installation capability is checked before submitting an
+  IO scenario; the Lua fixture cannot add schema support to an older runner.
 - Power-cycle fixtures select the carrier from the active job's public
   `tripTimings`, and generate relocation hooks from the fixture's drone list.
   Record lost, held cargo, physical relocation and Found before assessing completion.
@@ -320,10 +323,10 @@ names; it never stores positions or sides.
   `warehouse.ungroup(name)`, `warehouse.groups(type?)`. A group is one machine
   whose faces are storages (e.g. a furnace: input, fuel, output). `type` is an
   opaque label; the warehouse gives it no meaning. Group storages are not stock.
-- Store targets accept an item through a matching filter, an existing stack of
-  that item, or a wholly empty inventory. For imports into occupied stock, use
-  an inventory already holding that item or configure its filter for the item.
-  An occupied, unfiltered inventory accepts its existing item types.
+- Store targets prefer matching filters, existing stacks of the item, then
+  wholly empty inventories (tiers 1–3). Occupied, unfiltered inventories with
+  free slots are tier 4: use them after those tiers, most free slots first,
+  ties by storage name. This allows new item kinds without losing consolidation.
 - Catalogue, per inventory: item counts, slot count, free slots, `maxSize` per
   item seen, time of last read. Counts are last-known, not guarantees. It is
   learned from:
@@ -334,8 +337,16 @@ names; it never stores positions or sides.
   3. shortfalls: a take that found less than expected sets that item's count
      in that storage to what the drone actually found.
   No periodic sweeps.
-  Mutations estimate slot occupancy from the counted items and reported stack sizes;
-  a full-face short sets the count to observed remaining stock (zero if exhausted,
+  Takes report `emptied` slots and the `knownTaken` quantity covered by that
+  exact delta. Use it when `knownTaken==taken`, nothing was returned, and the
+  matching catalogue item entry is unambiguous. A label-optional request
+  spanning several labelled entries uses the conservative bound: its scalar
+  emptied count cannot be assigned independently to each entry.
+  Otherwise retain the upper stack bound `min(oldStacks,count)`, releasing
+  only provably unused slots; same-item room uses the same bound. Repeated
+  waiting passes and legacy receipts use this conservative path. Zero count
+  clears any earlier conservative occupied-stack bound.
+  A full-face short sets the count to observed remaining stock (zero if exhausted,
   possibly nonzero for unmergeable NBT cargo), and a refused put marks it full until a later read. Only explicit reads survey inventories.
 - Queries: `find(item)` → `{{storage, count}}`, `count(item)`,
   `contents(storage)`, `stackSize(item)`. Contents of observed nonmembers remain
@@ -346,8 +357,9 @@ names; it never stores positions or sides.
   sources skipped. Store route-checks candidates in tier/priority order until full.
 - `store(item, n, from, opts)` → logistics job id. Destination tiers: (1)
   members whose filter accepts the item, (2) members already holding it with
-  room, (3) empty members. Within a tier, higher `priority` first. Members
-  with a filter that rejects the item are never used.
+  room, (3) empty members, (4) occupied unfiltered members with free slots.
+  Tiers 1–3 use higher `priority` first; tier 4 uses most free slots, then name.
+  Members with a filter that rejects the item are never used.
 - Items match by name and damage, label optional, as in logistics. Items that
   differ only in NBT are merged (OC hides NBT by default).
 - Persistent: `/etc/warehouse.cfg` (members, groups), `/etc/warehouse.db`

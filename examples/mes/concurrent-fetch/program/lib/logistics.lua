@@ -276,7 +276,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           job.moved=0
           for i,s in ipairs(job.steps) do
             local r=(progress.steps or {})[i] or {};s.moved=s.moved+(r.moved or 0);s.maxSize=r.maxSize or s.maxSize
-            for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+            for _,key in ipairs({"taken","returned","overflow","refused","emptied","knownTaken"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
             s.short=s.short or r.short
             if r.short then s.found=(r.left or 0)+(r.returned or 0)
             elseif s.found then s.found=math.max(0,s.found-(r.taken or 0)+(r.returned or 0)) end
@@ -413,7 +413,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           if r.short and (r.left or 0)==0 and not s.all then job.blocked=true;job.reason=result.reason or "source empty" end
           s.moved=s.moved+(r.moved or 0);if r.listing then s.listing=r.listing;s.size=r.size end
           s.maxSize=r.maxSize or s.maxSize
-          for _,key in ipairs({"taken","returned","overflow","refused"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
+          for _,key in ipairs({"taken","returned","overflow","refused","emptied","knownTaken"}) do if r[key] then s[key]=(s[key] or 0)+r[key] end end
           s.short=s.short or r.short
           if r.short then s.found=(r.left or 0)+(r.returned or 0)
           elseif s.found then s.found=math.max(0,s.found-(r.taken or 0)+(r.returned or 0)) end
@@ -435,7 +435,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         return
       end
       job.moved=job.moved+(result.moved or 0);job.remaining=job.requested-job.moved;job.trips=job.trips+1
-      job.maxSize=result.maxSize or job.maxSize;job.taken=job.taken+(result.taken or 0);job.returned=job.returned+(result.returned or 0);job.overflow=job.overflow+(result.overflow or 0)
+      job.maxSize=result.maxSize or job.maxSize
+      for _,key in ipairs({"taken","returned","overflow","emptied","knownTaken"}) do job[key]=(job[key] or 0)+(result[key] or 0) end
       job.refused=(job.refused or 0)+(result.refused or 0)
       job.short=job.short or result.short
       if result.short then job.found=(result.left or 0)+(result.returned or 0)
@@ -540,7 +541,7 @@ function M.transfer(item,count,from,to,opts)
 end
 function M.status(id)
   local job=jobs[id];if not job then return nil end
-  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","steps","blockedReports","scan","test","item","from","to","refused","queuedAt","dispatchedAt","finishedAt","tripTimings"}) do out[key]=job[key] end
+  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","emptied","knownTaken","steps","blockedReports","scan","test","item","from","to","refused","queuedAt","dispatchedAt","finishedAt","tripTimings"}) do out[key]=job[key] end
   out.perItem=perItems(job)
   if out.perItem then
     out.requested=0;for _,r in ipairs(out.perItem) do out.requested=out.requested+r.requested end
