@@ -5,6 +5,7 @@ local state = require('mes_state')
 local event = require('event')
 local computer = require('computer')
 local world = state.world()
+world.onMachine=function(name) event.push('mes_machine',name) end
 local queue, head = {}, 1
 local installed, pumping = false, false
 local history, active, nextRun, none = {}, {}, 0, { status = 'idle', stages = {}, active = {} }
@@ -208,6 +209,7 @@ function M.start(opts, prepare)
     installed = false
     return nil, tostring(rows)
   end
+  require('mes_alerts').start(world)
   local function signal()
     enqueue(nil, 'observe_jobs', {})
     M.pump()

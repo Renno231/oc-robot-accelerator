@@ -74,6 +74,7 @@ local function send(d,...)
   d.sent=(d.sent or 0)+1;modem.send(d.address,port,d.token,...)
 end
 local function wakeScheduler() event.push("logistics_work") end
+local function state(d,s) if d.state~=s then d.state=s;event.push("logistics_drone",d.name,s) end end
 local function perItems(job)
   if not job.opts.expectedItems then return nil end
   local out={}
@@ -291,7 +292,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       end
       d.trip=nil;d.job=nil;d.lost=true;d.position=nil;d.node=nil
     end
-    d.state=d.lost and "lost" or "booting"
+    state(d,d.lost and "lost" or "booting")
     for i=1,chunks do send(d,"code",i,chunks,source:sub((i-1)*2048+1,i*2048)) end
     if d.lost then send(d,"start") else
       local p=assert(map.node(d.home),"missing drone home");send(d,"start",p.x,p.y,p.z)
@@ -299,7 +300,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   elseif kind=="cargo" and id==d.release and type(payload)=="string" and #payload<7000 then
     local listing=serialization.unserialize(payload)
     if type(listing)~="table" then return end
-    d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle"
+    d.cargo=listing;d.release=nil;state(d,next(listing) and "held" or "idle")
     d.held=nil;for _,s in pairs(listing) do d.held=d.held or {};d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
     wakeScheduler();event.push("logistics_released",d.name,"ok")
   elseif kind=="navigate" and d.trip~=id then
@@ -326,9 +327,9 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         save(job)
       end
     elseif id==0 and result.state=="ready" then
-      if result.notAtHome then d.lost=true;d.state="lost" end
+      if result.notAtHome then d.lost=true;state(d,"lost") end
       if d.lost then return end
-      d.state=(result.held or 0)>0 and "held" or "idle";d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
+      state(d,(result.held or 0)>0 and "held" or "idle");d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
       if result.cargo then
         d.held={};for _,s in pairs(result.cargo) do d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
       end
@@ -459,7 +460,7 @@ function M.found(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
   if not d.lost then return nil,"drone is not lost" end
   local p=assert(map.node(d.home),"missing drone home")
-  d.lost=nil;d.state="booting";send(d,"found",p.x,p.y,p.z);return true
+  d.lost=nil;state(d,"booting");send(d,"found",p.x,p.y,p.z);return true
 end
 -- Restore below cannot yield; it finishes before listeners run. Move this if restore yields.
 event.listen("modem_message",receive)
