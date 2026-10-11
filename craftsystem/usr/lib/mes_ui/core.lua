@@ -7,8 +7,8 @@ local component=require("component");local event=require("event");local computer
 local unicode=require("unicode");local keyboard=require("keyboard");local keys=keyboard.keys
 local qmenu=require("qmenu")
 
-local ui={tabs={"craft","stock","setup","recipes","jobs","fleet","manage"},
-  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs",fleet="Fleet",manage="Manage"},badges={},keys=keys}
+local ui={tabs={"craft","stock","setup","recipes","jobs","fleet","alerts","manage"},
+  titles={craft="Craft",stock="Stock",setup="Setup",recipes="Recipes",jobs="Jobs",fleet="Fleet",alerts="Alerts",manage="Manage"},badges={},keys=keys}
 local P={bg=0x10161C,bar=0x1D2731,box=0x26323E,fg=0xD6DDE4,dim=0x6E7C88,accent=0x4FB3E8,
   good=0x7BC96F,warn=0xE6B450,bad=0xE0646E,sel=0x4FB3E8,selFg=0x10161C}
 ui.P=P
@@ -19,6 +19,7 @@ local running,repaintAll,footerDirty,headerDirty,guarded
 local status,statusAt="",-math.huge
 local termFg,termBg
 local ioLast={} -- IO chest name -> {state,reason} last signalled
+local alertText,alertHit -- the alert bar's text; its first column on the tab bar
 -- F starts search: typed characters edit the filter until Enter.
 ui.filterText="";ui.searching=false
 
@@ -336,6 +337,23 @@ function ui.newHardware()
   ui.badge("fleet",#d+#r+#s);return d,r,s
 end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
+-- Alerts (mes_alerts): kind and subject in plain words. The alert bar is
+-- the count and the newest active one at the right of the tab bar, read at
+-- start and on each "alert" signal; with none it draws nothing.
+ui.alertKinds={runFailed="Run failed",droneLost="Drone lost",droneHeld="Drone held too long",stockFull="Stock full",
+  machineStuck="Machine stuck",importBlocked="Import blocked",exportFull="Export chest full"}
+function ui.alertSubject(r)
+  local k,key=r.kind,tostring(r.key)
+  if k=="runFailed" then return "run "..key elseif k=="stockFull" then return "stock" end
+  local m,n=key:match("^(.*):(%d+)$");if k=="machineStuck" and m then return m..", load "..n end
+  return key
+end
+function ui.readAlerts()
+  local ok,al=pcall(require,"mes_alerts");local n,new=0
+  if ok then for _,r in ipairs(ui.try(al.list,"active") or {}) do n=n+1;if not new or r.id>new.id then new=r end end end
+  alertText=new and "▲ "..n.." alert"..(n==1 and "" or "s").." · newest: "..(ui.alertKinds[new.kind] or new.kind).." · "..ui.alertSubject(new) or nil
+  headerDirty=true
+end
 local function header()
   ui.fill(1,1,W,1,P.bar);local x=2
   ui.text(x,1,"◆ MES",P.accent,P.bar);x=x+7
@@ -345,7 +363,12 @@ local function header()
     if name==current then ui.text(x,1,t,P.selFg,P.sel) else ui.text(x,1,t,P.fg,P.bar) end
     tabHits[k]={x,x+len(t)-1,name};x=x+len(t)+1
   end
-  local s=ui.fit(status,math.max(0,W-x-2));ui.text(W-len(s),1,s,P.dim,P.bar)
+  alertHit=nil
+  if alertText and W-x>8 then
+    local a=" "..ui.fit(alertText,math.min(len(alertText),W-x-4)).." ";alertHit=W-len(a)+1;ui.text(alertHit,1,a,P.selFg,P.bad)
+  end
+  local e=alertHit and alertHit-1 or W
+  local s=ui.fit(status,math.max(0,e-x-2));ui.text(e-len(s),1,s,P.dim,P.bar)
   headerDirty=false
 end
 local function footer()
@@ -406,6 +429,7 @@ local function hit(menu,x,y)
 end
 local function touch(x,y)
   local m=modals[#modals]
+  if not m and y==1 and alertHit and x>=alertHit then if stack[1].tab~="alerts" then ui.switch("alerts") end;return end
   if not m and y==1 then for _,t in ipairs(tabHits) do if x>=t[1] and x<=t[2] then ui.switch(t[3]);return end end;return end
   local menu=m and m.menu or current().menu
   local o=hit(menu,x,y)
@@ -492,6 +516,7 @@ function handle(e)
   elseif name=="interrupted" then running=false
   elseif name=="screen_resized" then W,H=gpu.getResolution();repaintAll=true
   elseif name=="warehouse" or name=="logistics" or name=="mes" or name=="logistics_work" then signal(name,table.unpack(e,2))
+  elseif name=="alert" then ui.readAlerts();signal(name,table.unpack(e,2))
   elseif name=="logistics_announce" or name=="mes_robot_announce" then
     -- The open Fleet screen re-reads them itself.
     if stack[1].tab~="fleet" then ui.newHardware();ui.notify("New "..(e[3]=="sensor" and "sensor" or name=="mes_robot_announce" and "robot" or "drone").." waiting: register it on Fleet",P.accent) end
@@ -555,6 +580,7 @@ function ui.suspend(fn,...)
   pcall(function() require("term").setCursorBlink(false) end)
   W,H=gpu.getResolution();repaintAll=true
   if ui.statusSource then statusAt=computer.uptime();status=ui.statusSource() end
+  ui.readAlerts()
   if not r[1] then
     pcall(function() local f=io.open("/tmp/mes_ui.log","a");f:write(r[2],"\n");f:close() end)
     return nil,(tostring(r[2]):match("^[^\n]*"):gsub("^[^:]+:%d+: ",""))
@@ -575,7 +601,7 @@ function ui.run(opts)
     local idle,total=0,0;for _,d in ipairs(lg.drones()) do total=total+1;if d.state=="idle" then idle=idle+1 end end
     return total>0 and (total.." drones · "..(total-idle).." busy") or "no drones"
   end
-  ui.setStatus(ui.statusSource());statusAt=computer.uptime();ui.newHardware()
+  ui.setStatus(ui.statusSource());statusAt=computer.uptime();ui.newHardware();ui.readAlerts()
   running=true;ui.switch(opts.tab or "craft")
   if opts.push then ui.push(opts.push,opts.arg) end
   ui.flush()
