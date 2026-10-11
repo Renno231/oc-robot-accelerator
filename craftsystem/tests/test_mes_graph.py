@@ -17,6 +17,7 @@ class MesGraphTests(LuaCase):
             package.preload.stats=function() return {} end
             package.preload.iochest=function() return {} end
             package.preload.housekeeping=function() return {} end
+            package.preload.mes_alerts=function() return {start=function() end} end
             package.preload.mes_config=function() return {installRobots=function() end,
                 config=function(opts) return opts and opts.config or CFG end} end
             MOVES={}; SCANS={}; CLIENTS={}; MAX_CLIENTS=0; ACTIVE_CLIENTS=0

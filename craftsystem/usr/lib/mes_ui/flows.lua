@@ -101,7 +101,7 @@ end
 
 ---------------------------------------------------------------- machine types
 function F.editType(name,def,done)
-  def=def or {roles={"input","output"},inputs={"input"},output="output",batch=64,seconds=10}
+  def=def or {roles={"input","output"},inputs={"input"},output="output",batch=64}
   local fields
   local function list(t) return table.concat(t,", ") end
   fields={
@@ -140,8 +140,8 @@ function F.editType(name,def,done)
       end,{nofilter=true}) end},
     {label="Batch",show=function() return def.batch.." input items per load" end,edit=function(r)
       ui.prompt("Batch","Most input items loaded at once",def.batch,function(v) def.batch=v;r() end,{integer=true,min=1}) end},
-    {label="Time",show=function() return def.seconds.." s per output" end,edit=function(r)
-      ui.prompt("Time","Seconds per output (for the wait deadline)",def.seconds,function(v) def.seconds=v;r() end,{number=true,min=0}) end},
+    {label="Time",show=function() return def.seconds and def.seconds.." s per input item" or "empty · learned from runs" end,edit=function(r)
+      ui.prompt("Time","Seconds per input item. Leave empty to learn it",def.seconds,function(v) def.seconds=v or nil;r() end,{number=true,min=0,optional=true}) end},
   }
   ui.form(name and ("Machine type "..name) or "New machine type",fields,"Save type",function(close)
     if not name then ui.fail("give the type a name");return end

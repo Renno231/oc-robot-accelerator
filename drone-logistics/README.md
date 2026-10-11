@@ -4,6 +4,30 @@ Deploy the canonical `lib/`, `bin/`, and `drone/` files from this directory.
 Nodes use integer block coordinates; a link declares the body's entire straight
 flight between its endpoints clear. Mapping is a declaration, not a terrain sensor.
 
+## Geolyzer survey
+
+Install `lib/survey.lua` as `/lib/survey.lua` and the drone module
+`drone/survey.lua` as `/lib/logistics/survey.lua`, beside the existing downloaded
+agent. Geolyzer carriers report `survey=true`; ordinary idle carriers take
+normal work first. Survey grids are temporary controller data, not saved maps.
+
+```lua
+local survey=require('survey')
+local id,reason=survey.request({x1=2,y1=64,z1=10,x2=5,y2=66,z2=10})
+-- Pull OpenOS events until survey.list() reports state="proposed".
+local proposal=survey.get(id)
+-- Inspect groups; set roles explicitly, and choose a reachable face when asked.
+survey.approve(id,{[1]={role='stock',prefix='new_wall'}})
+```
+
+`list()` returns summaries; `get(id)` returns the full proposal, trip diagnostics,
+and resulting station names. Approval starts S1 commissioning, not instant
+registration: check `stations.get(name).state` for each resulting station.
+`reject(id)` discards a proposal without changing the map. Caps are inclusive
+32×16×32 blocks (x/y/z). Known solid/air mismatches are reported, never repaired;
+same-density replacements are not detected. Machines remain unsupported (S2).
+There are no default roles or ambiguous faces; UI/glasses controls come later.
+
 ## Geometry and planning
 
 `map.route(from, to, avoid)` remains graph A*. Additional mapping APIs:

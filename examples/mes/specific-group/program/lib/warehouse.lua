@@ -26,7 +26,7 @@ local roleCache,pendingReads,pendingMutations,mutationCounts={},{},{},{}
 local identityIndex=nil
 local identityGeneration,mutationEpochs=0,{}
 local function metadataChanged()
-  roleCache={};identityIndex=nil;identityGeneration=identityGeneration+1;mutationEpochs={}
+  roleCache={};identityIndex=nil;identityGeneration=identityGeneration+1
 end
 local limits=read("/etc/warehouse.stacks",{})
 local limitsDirty=false
@@ -199,7 +199,16 @@ local function readCurrent(reads,e)
       for k,v in ipairs(r.slots) do if v~=e.slots[k] then same=false;break end end
     end
     if same then
-      if r.blocked or r.generation~=identityGeneration then return false end
+      if r.blocked then return false end
+      if r.generation~=identityGeneration then
+        local current={}
+        for _,key in ipairs(identities(e) or {}) do current[key]=true end
+        -- Epoch keys also preserve the endpoint's original identity set.
+        for key in pairs(r.epochs) do
+          if not current[key] then return false end;current[key]=nil
+        end
+        if next(current) then return false end
+      end
       for key,epoch in pairs(r.epochs) do
         if mutationCounts[key] or (mutationEpochs[key] or 0)~=epoch then return false end
       end
