@@ -1699,7 +1699,7 @@ local function finishRun(run)
   run.onStage = nil
   run.stopping = nil
   run.uncertain = nil
-  run.ports.emit('done', run.id, run.status)
+  run.ports.emit('done', run.id, run.status, run.item)
   -- Retain public ledgers, not planner blueprints and transient action graphs.
   for _, s in ipairs(run.stages) do
     for key in pairs(s) do

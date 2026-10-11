@@ -198,6 +198,66 @@ class AlertTests(unittest.TestCase):
           assert(timerCount()==0)
         ''')
 
+    def test_dismissal_history_survives_clear_and_rebased_restart(self):
+        self.lua.execute('''
+          TIME=20;D={{name='d',state='lost'}};emit('logistics_drone');local id=active('droneLost').id
+          TIME=30;alerts.dismiss(id);D[1].state='idle';TIME=40;emit('logistics_drone')
+          local r=alerts.list('cleared')[1];assert(r.dismissed==true and r.raised==20 and r.cleared==40)
+          TIME=5;reload();r=alerts.list('cleared')[1]
+          assert(r.id==id and r.dismissed==true and r.raised==-15 and r.cleared==5)
+        ''')
+
+    def test_failed_run_subject_is_persisted_without_reads(self):
+        self.lua.execute('''
+          TIME=20;emit('mes','done','0123456789abcdef0123456789abcdef','failed','minecraft:torch:0')
+          local r=active('runFailed');assert(r.text=='Run failed: minecraft:torch:0')
+          TIME=30;alerts.dismiss(r.id);TIME=5;reload();r=alerts.list('dismissed')[1]
+          assert(r.text=='Run failed: minecraft:torch:0' and r.raised==-5)
+        ''')
+
+    def test_machine_fields_are_separate_and_restart_preserves_identity(self):
+        self.lua.execute('''
+          TIME=50;world.groups['furnace:west']={loads={{sequence=7,due=30,duration=10,remaining={brick=1}}}}
+          emit('mes_machine');local r=active('machineStuck')
+          assert(r.key=='furnace:west:7' and r.machine=='furnace:west' and r.load==7)
+          TIME=60;alerts.dismiss(r.id);TIME=5;reload();r=alerts.list('dismissed')[1]
+          assert(r.machine=='furnace:west' and r.load==7 and r.key=='furnace:west:7' and r.raised==-5)
+        ''')
+
+    def test_alert_ranges_name_key_units_and_survive_restart(self):
+        self.lua.execute('''
+          for _,v in ipairs({0,.5,1.5}) do local ok,why=pcall(alerts.set,'heldMinutes',v)
+            assert(not ok and why:find('heldMinutes must be a whole number of minutes >= 1',1,true)) end
+          for _,v in ipairs({0,-1,math.huge,0/0}) do local ok,why=pcall(alerts.set,'stuckFactor',v)
+            assert(not ok and why:find('stuckFactor must be a finite multiplier > 0',1,true)) end
+          alerts.set('heldMinutes',2);alerts.set('stuckFactor',.5)
+          TIME=20;D={{name='d',state='lost'}};emit('logistics_drone');TIME=5;reload()
+          assert(alerts.settings().heldMinutes==2 and alerts.settings().stuckFactor==.5)
+          assert(active('droneLost').raised==5)
+        ''')
+
+    def test_setting_owners_are_detached_and_survive_restart(self):
+        self.lua.execute('''
+          local o=alerts.owners();assert(o.heldMinutes=='alerts' and o.stuckFactor=='alerts')
+          assert(o.fillWarn=='stats' and o.fillBad=='stats' and o.fullSoonHours=='stats')
+          o.heldMinutes='bad';assert(alerts.owners().heldMinutes=='alerts')
+          TIME=20;D={{name='d',state='lost'}};emit('logistics_drone');TIME=5;reload()
+          assert(alerts.owners().fillBad=='stats' and active('droneLost').raised==5)
+        ''')
+
+    def test_removed_signals_for_expiry_and_evicted_quiet_clear_after_restart(self):
+        self.lua.execute('''
+          TIME=20;D={{name='d',state='lost'}};emit('logistics_drone');local id=active('droneLost').id
+          TIME=30;D[1].state='idle';emit('logistics_drone');TIME=5;reload()
+          assert(alerts.list('cleared')[1].raised==-5)
+          TIME=86405;assert(#alerts.list()==0);local e=lastEvent();assert(e[2]==id and e[4]=='removed')
+          D={};for n=1,201 do D[n]={name='d'..n,state='lost'} end;emit('logistics_drone')
+          local old=alerts.list()[1];assert(alerts.dismiss(old.id));e=lastEvent();assert(e[2]==old.id and e[4]=='removed')
+          TIME=5;reload();EVENTS={};D[1].state='idle';emit('logistics_drone')
+          local found=false;for _,v in ipairs(EVENTS) do if v[2]==old.id then assert(v[4]=='removed');found=true end end
+          assert(found and #alerts.list{ id=old.id }==0)
+        ''')
+
 
 class AlertSignalTests(unittest.TestCase):
     def test_machine_callback_only_on_membership_due_or_quarantine_change(self):
