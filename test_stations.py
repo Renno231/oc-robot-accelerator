@@ -10,7 +10,7 @@ class StationsTests(unittest.TestCase):
         f = test_stock_api.LibraryApiTests(); f.setUp(); self.lua = f.lua
         self.lua.execute('oldIO=io.open')
         install_store(self.lua)
-        for name in ('map', 'logistics', 'warehouse', 'stations'):
+        for name in ('map', 'logistics', 'warehouse', 'stations', 'stats'):
             self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
         self.lua.execute('''
           local countedIO=io.open
@@ -55,6 +55,7 @@ class StationsTests(unittest.TestCase):
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
           package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
           package.preload.stations=function() return assert(load(STATIONS))() end
+          package.preload.stats=function() return assert(load(STATS))() end
           local open=require('store').open;PUTS=0;FLUSHES=0
           require('store').open=function(p,...)
             local h=open(p,...)
@@ -117,7 +118,7 @@ class StationsTests(unittest.TestCase):
             config=function() return {crafters={},machineTypes={}} end} end
           require('event').timer=function() return 1 end
           assert(require('mes_service').start())
-          assert(package.loaded.stations and LISTEN.logistics)
+          assert(package.loaded.stations and package.loaded.stats and LISTEN.logistics)
           for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
           finishAll()
           st=package.loaded.stations
