@@ -339,13 +339,19 @@ end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
 -- Alerts (mes_alerts): kind and subject in plain words. The alert bar is
 -- the count and the newest active one at the right of the tab bar, read at
--- start and on each "alert" signal; with none it draws nothing.
+-- start and on each "alert" signal (a "removed" one too: it is only a
+-- re-read, never counted as new); with none it draws nothing.
 ui.alertKinds={runFailed="Run failed",droneLost="Drone lost",droneHeld="Drone held too long",stockFull="Stock full",
   machineStuck="Machine stuck",importBlocked="Import blocked",exportFull="Export chest full"}
+-- A failed run's item is in its text "Run failed: <item>"; older records
+-- have the run id there. A stuck machine has machine and load; older
+-- records only the key "name:load".
 function ui.alertSubject(r)
   local k,key=r.kind,tostring(r.key)
-  if k=="runFailed" then return "run "..key elseif k=="stockFull" then return "stock" end
-  local m,n=key:match("^(.*):(%d+)$");if k=="machineStuck" and m then return m..", load "..n end
+  if k=="runFailed" then local it=tostring(r.text):match("^Run failed: (.+)$")
+    return it and it~=key and ui.label(it) or "run "..key:sub(1,8) elseif k=="stockFull" then return "stock" end
+  if k=="machineStuck" then local m,n=r.machine,r.load;if m==nil then m,n=key:match("^(.*):(%d+)$") end
+    if m then return m..", load "..tostring(n) end end
   return key
 end
 function ui.readAlerts()

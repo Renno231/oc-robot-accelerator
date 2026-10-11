@@ -1,5 +1,5 @@
 -- UI-lab fake of drone-logistics stats: same calls, field names, settings
--- check (same error text) and warnings rule. Scenarios (launcher arg
+-- check (same error text), "stats" signal on a change and warnings rule. Scenarios (launcher arg
 -- stats<name>): 76 (default; 412/540 slots, growing, full in ~3 h), 96 (bad,
 -- full within 2 h), empty (no storages, no items), unread (76 with 3 stock
 -- members never read). Sand: 64 reserved, in three storages. Used slots
@@ -49,7 +49,8 @@ function M.set(k,v)
   assert(type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1)
     and (k~='fillWarn' or v<C.fillBad) and (k~='fillBad' or v>C.fillWarn),
     k..' must be '..(k=='fullSoonHours' and 'finite and >= 0' or '0-1; fillWarn < fillBad'))
-  C[k]=v
+  if C[k]==v then return end
+  C[k]=v;require('event').push('stats')
 end
 function M.warnings()
   local r=M.summary();local out={}
