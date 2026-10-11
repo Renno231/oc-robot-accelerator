@@ -2,7 +2,7 @@
 -- Reads logistics, map and mes on open, R and their change signals only.
 local ui=require("mes_ui.core");local lg=require("logistics");local map=require("map");local wh=require("warehouse")
 local S={hints="Enter register · release · found · details · R refresh · H help",
-  help={{"Enter","new drone or robot: register · held drone: release cargo"},{"","lost drone: mark found · other rows: details"}}}
+  help={{"Enter","new drone, robot or sensor: register · held drone: release cargo"},{"","lost drone: mark found · other rows: details"}}}
 local function mes() return require("mes") end
 local stateColour={idle="good",working="accent",held="warn",charging="dim",booting="dim"}
 local FULL=5000
@@ -31,19 +31,22 @@ local function cargoText(d)
   return #s.." stack"..(#s==1 and "" or "s")..": "..table.concat(parts,", ")
 end
 local function energy(d) return d.energy and (math.floor(d.energy/FULL*100+0.5).."%") or "—" end
-local function nextName(drones)
+-- Sensors are not in drones(); logistics.sensors() names them when present.
+local function nextName(drones,base)
   local used={};for _,d in ipairs(drones) do used[d.name]=true end
-  local n=1;while used["drone"..n] do n=n+1 end;return "drone"..n
+  for _,n in ipairs(lg.sensors and lg.sensors() or {}) do used[n]=true end
+  local n=1;while used[base..n] do n=n+1 end;return base..n
 end
 function S:rebuild()
   local rows,P=self.rows,ui.P;for k=#rows,1,-1 do rows[k]=nil end
   local function add(text,fg,kind,ref) rows[#rows+1]={text=text,fg=fg,kind=kind,ref=ref,heading=kind=="heading"} end
-  local pending,robots=ui.newHardware();local drones=lg.drones();self.pending,self.drones=pending,drones
+  local pending,robots,sensors=ui.newHardware();local drones=lg.drones();self.pending,self.drones=pending,drones
   local res=ui.try(function() return mes().resources() end) or {crafters={},machines={}};self.res=res
-  if #pending+#robots>0 then
-    add("New hardware  "..#pending+#robots.." waiting",P.warn,"heading")
+  if #pending+#robots+#sensors>0 then
+    add("New hardware  "..#pending+#robots+#sensors.." waiting",P.warn,"heading")
     for _,a in ipairs(pending) do add("  drone · "..a:sub(1,8).."… · on a charger · Register",P.good,"new",a) end
     for _,a in ipairs(robots) do a=type(a)=="table" and a.address or a;add("  robot · "..a:sub(1,8).."… · unpaired cproc · Register",P.good,"newRobot",a) end
+    for _,a in ipairs(sensors) do add("  sensor · "..a:sub(1,8).."… · IO chest sensor · Register",P.good,"newSensor",a) end
     add("",nil,"heading")
   end
   local n={idle=0,working=0,held=0,lost=0}
@@ -110,7 +113,7 @@ end
 
 function S:register(address)
   local drones=self.drones
-  ui.prompt("Register drone","Name for drone "..address:sub(1,8).."…",nextName(drones),function(name)
+  ui.prompt("Register drone","Name for drone "..address:sub(1,8).."…",nextName(drones,"drone"),function(name)
     local homes={};for _,d in ipairs(drones) do if d.home then homes[d.home]=homes[d.home] and homes[d.home]..", "..d.name or d.name end end
     -- Free chargers first, so the pick starts on the first free one.
     local free,used={},{}
@@ -131,6 +134,18 @@ function S:register(address)
     if not v:match("^[%w_-]+$") then return nil,"letters, digits, _ and - only" end
     if #v>48 then return nil,"48 characters at most" end
     for _,d in ipairs(drones) do if d.name==v then return nil,"name already used" end end
+    return true
+  end})
+end
+-- Sensor: a name only; Setup's IO section attaches it to a chest.
+function S:registerSensor(address)
+  ui.prompt("Register sensor","Name for sensor "..address:sub(1,8).."…",nextName(self.drones,"sensor"),function(name)
+    if ui.try(lg.register,address,name,nil) then ui.ok("Registered sensor "..name..": attach it in Setup · IO") end
+    self:refresh()
+  end,{check=function(v)
+    if not v:match("^[%w_-]+$") then return nil,"letters, digits, _ and - only" end
+    if #v>48 then return nil,"48 characters at most" end
+    for _,d in ipairs(self.drones) do if d.name==v then return nil,"name already used" end end
     return true
   end})
 end
@@ -163,6 +178,7 @@ function S:activate(r)
   local k,P=r.kind,ui.P
   if k=="new" then self:register(r.ref)
   elseif k=="newRobot" then self:registerRobot(r.ref)
+  elseif k=="newSensor" then self:registerSensor(r.ref)
   elseif k=="drone" then
     local d;for _,x in ipairs(self.drones) do if x.name==r.ref then d=x end end;if not d then return end
     if d.lost then

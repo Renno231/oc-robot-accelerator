@@ -23,6 +23,6 @@ function M.contents(s) return {items={},slots=27,freeSlots=27} end
 function M.stackSize(i) return 64 end
 function M.inflight() return {} end
 function M.scan(list) if type(list)=="string" then list={list} end;local ids={};for _,s in ipairs(list or {"all"}) do ids[#ids+1]=lg().fake("read",{storage=s}) end;return ids end
-function M.fetch(i,n,to) local t=find(i);if not t or t.count<n then return nil,"requested "..n..", available "..(t and t.count or 0) end;t.count=t.count-n;changed();return lg().fake("fetch",{storage=to},i,n) end
+function M.fetch(i,n,to) local t=find(i);if not t or t.count<n then return nil,"requested "..n..", available "..(t and t.count or 0) end;t.count=t.count-n;changed();return lg().fake("fetch",{storage=to},i,n,6) end
 function M.store(i,n,from) return lg().fake("store",{storage=from},i,n) end
 return M
