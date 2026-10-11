@@ -11,6 +11,7 @@ local dirs={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}}
 local function copy(v) return ser.unserialize(ser.serialize(v)) end
 local function pos(p) return string.format('(%d,%d,%d)',p.x,p.y,p.z) end
 local function inventory(r,i)
+  if r.members[i].alias then return r.members[r.members[i].alias].storage end
   local pair=r.spec.pair or 1;return r.members[(i-1)//pair*pair+1].storage
 end
 local function move(r)
@@ -32,10 +33,19 @@ local function signal(r,state,reason)
 end
 local function cleanup(r)
   for _,m in ipairs(r.members) do map.unname(m.storage) end
-  for _,v in ipairs(r.created.links) do map.unlink(v[1],v[2]) end
+  for _,v in ipairs(r.created.links) do
+    local shared=false
+    for _,s in pairs(records) do if s~=r then for _,e in ipairs(s.pathEdges or {}) do
+      if e[1]==v[1] and e[2]==v[2] or e[2]==v[1] and e[1]==v[2] then shared=true end
+    end end end
+    if not shared then map.unlink(v[1],v[2]) end
+  end
   local used={}
   for _,s in pairs(map.storages()) do used[s.node]=true end
-  for _,s in pairs(records) do if s~=r then for _,m in ipairs(s.members) do used[m.node]=true end end end
+  for _,s in pairs(records) do if s~=r then
+    for _,m in ipairs(s.members) do used[m.node]=true end
+    for n in pairs(s.waypoints or {}) do used[n]=true end
+  end end
   for _,n in ipairs(r.created.nodes) do if not used[n] then map.remove(n) end end
   map.save();records['st_'..r.name]=nil;store:delete('st_'..r.name);store:flush()
   event.push('station',r.name,'removed')
@@ -49,6 +59,8 @@ start=function(r,replay)
   if r.state=='removing' then
     local err;r.jobs,err=move(r);if err then return signal(r,'failed',err) end
     if #r.jobs==0 then return cleanup(r) end
+  elseif r.phase=='path' then
+    local edge=r.pendingLinks[r.nextLink];r.jobs={lg.test(edge[1],edge[2])}
   elseif r.phase=='link' then
     local candidate=replay and r.tried[#r.tried]
     if not candidate and #r.tried<3 then
@@ -81,6 +93,7 @@ advance=function(r)
       return start(r,true)
     end
     if s.state~='done' and s.state~='failed' and s.state~='partial' then return end
+    if r.phase=='read' and not wh.settled(id) then return end
     results[#results+1]=s
   end
   if r.state=='removing' then
@@ -90,6 +103,12 @@ advance=function(r)
   if r.phase~='read' then
     local s=results[1]
     if s.test=='ok' then
+      if r.phase=='path' then
+        local edge=r.pendingLinks[r.nextLink]
+        map.link(edge[1],edge[2]);r.created.links[#r.created.links+1]=edge;map.save()
+        r.nextLink=r.nextLink+1
+        return phase(r,r.pendingLinks[r.nextLink] and 'path' or 'read')
+      end
       if r.phase=='link' then
         local a,b=r.tried[#r.tried],r.members[1].node
         map.link(a,b);r.created.links[#r.created.links+1]={a,b};map.save()
@@ -137,13 +156,13 @@ end
 local function integer(n) return type(n)=='number' and n%1==0 end
 local function validate(kind,s)
   local f,d=faces[s.face],faces[s.rowDir]
-  local count=kind=='storage' and 1 or s.count
+  local count=s.members and #s.members or kind=='storage' and 1 or s.count
   local name=kind=='storage' and s.name or s.prefix
-  assert(kind=='storage' or kind=='row','invalid kind')
+  assert(kind=='storage' or kind=='row' or kind=='wall' and s.members,'invalid kind')
   for _,k in ipairs({'x','y','z'}) do assert(integer(s[k]),'integer coordinates required') end
   assert(f and ({stock=1,other=1,import=1,export=1})[s.role],'invalid face or role')
-  assert(integer(count) and count>=1 and count<=64,'count must be 1..64')
-  assert(kind=='storage' or d and d~=f and d~=f~1 and (s.spacing==1 or s.spacing==2),'invalid row direction or spacing')
+  assert(integer(count) and count>=1 and (s.members or count<=64),'invalid member count')
+  assert(s.members or kind=='storage' or d and d~=f and d~=f~1 and (s.spacing==1 or s.spacing==2),'invalid row direction or spacing')
   assert(s.pair==nil or s.pair==1 or s.pair==2,'pair must be 1 or 2')
   local nodes,storages=map.nodes(),map.storages()
   local function free(n) assert(type(n)=='string' and n~='','name empty');assert(not nodes[n] and not storages[n] and not records['st_'..n],'name '..n..' already used') end
@@ -156,6 +175,12 @@ local function validate(kind,s)
     local storage=kind=='storage' and name or name..i;free(storage)
     local v,a=dirs[(d or 0)+1],dirs[f+1];local n=(i-1)*(s.spacing or 1)
     local m={storage=storage,side=f~1,x=s.x+v[1]*n,y=s.y+v[2]*n,z=s.z+v[3]*n}
+    if s.members then
+      local p=s.members[i]
+      for _,k in ipairs({'x','y','z'}) do assert(integer(p[k]),'integer member required');m[k]=p[k] end
+      m.alias=p.alias or i
+      assert(integer(m.alias) and m.alias>=1 and m.alias<=i,'invalid inventory alias')
+    end
     local h={x=m.x+a[1],y=m.y+a[2],z=m.z+a[3]};m.node=positions[pos(h)]
     if m.node then
       assert(not used[m.node..':'..m.side] and (counts[m.node] or 0)<5,'face already named or node full')
@@ -166,11 +191,44 @@ local function validate(kind,s)
     end
     r.members[i]=m
   end
+  if s.members then
+    assert(s.paths and #s.paths==count,'supplied paths required')
+    r.pendingLinks={};r.pathEdges={};r.nextLink=1;r.waypoints={};local edges={}
+    for i,path in ipairs(s.paths) do
+      local previous=path[1] and positions[pos(path[1])]
+      assert(previous and #map.links(previous)>0,'path must start on the network')
+      r.waypoints[previous]=path[1]
+      for j=2,#path do
+        local p=path[j];for _,k in ipairs({'x','y','z'}) do assert(integer(p[k]),'integer waypoint required') end
+        local key=pos(p);local node=positions[key]
+        if not node then
+          node=string.format('h%d_%d_%d',p.x,p.y,p.z)
+          if not r.waypoints[node] then
+            r.waypoints[node]=p
+            local exists=false;for _,n in ipairs(r.created.nodes) do if n==node then exists=true end end
+            if not exists then free(node);r.created.nodes[#r.created.nodes+1]=node end
+          end
+          positions[key]=node
+        end
+        r.waypoints[node]=p
+        if previous~=node then
+          r.pathEdges[#r.pathEdges+1]={previous,node}
+          local edge=previous<node and previous..':'..node or node..':'..previous
+          local linked=false;for _,n in ipairs(map.links(previous) or {}) do if n==node then linked=true end end
+          if not edges[edge] and not linked then r.pendingLinks[#r.pendingLinks+1]={previous,node};edges[edge]=true end
+        end
+        previous=node
+      end
+      assert(previous==r.members[i].node,'path must end at hover')
+    end
+    r.phase=#r.pendingLinks>0 and 'path' or 'read'
+  end
   return r
 end
 function M.add(kind,s)
   local ok,r=pcall(validate,kind,s);if not ok then return nil,r end
   local v=dirs[faces[s.face]+1]
+  for n,p in pairs(r.waypoints or {}) do if not map.node(n) then map.add(n,p.x,p.y,p.z) end end
   for _,m in ipairs(r.members) do
     if not map.node(m.node) then map.add(m.node,m.x+v[1],m.y+v[2],m.z+v[3]) end
     map.name(m.storage,m.node,m.side)
@@ -210,11 +268,13 @@ function M.list()
   local out={};for _,r in pairs(records) do out[#out+1]={name=r.name,kind=r.kind,state=r.state,phase=r.phase,reason=r.reason,note=r.note,count=#r.members} end
   table.sort(out,function(a,b) return a.name<b.name end);return out
 end
-event.listen('logistics',function(_,id)
+local function updated(_,id)
   for _,r in pairs(records) do if r.state=='checking' or r.state=='removing' then
-    for _,job in ipairs(r.jobs) do if job==id then advance(r);break end end
+    for _,job in ipairs(r.jobs) do if job==id or not id then advance(r);break end end
   end end
-end)
+end
+event.listen('logistics',updated)
+event.listen('warehouse',function() updated() end)
 for _,r in pairs(records) do if r.state=='checking' or r.state=='removing' then
   if #r.jobs==0 and r.state=='checking' then start(r) else advance(r) end
 end end

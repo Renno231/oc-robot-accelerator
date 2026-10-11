@@ -163,7 +163,9 @@ local function scheduleJob(job)
     local available=(job.openEnded or job.steps) and math.huge or job.remaining-reserved
     -- A job for one held drone delivers what that drone already carries.
     local ready=job.opts.drone==nil and d.state=="idle" or job.opts.drone==d.name and d.state=="held" and d.held~=nil
-    if available>0 and ready then
+    local ordinary=false
+    if d.survey and not job.survey and not job.opts.drone then for _,v in pairs(fleet) do if v.state=='idle' and not v.survey then ordinary=true;break end end end
+    if available>0 and ready and (not job.survey or d.survey) and not ordinary then
       local capacity=64*d.cargoSlots
       if job.opts.split==false and not job.steps and job.remaining>capacity then
         job.blocked=true;job.reason="requested "..job.remaining.." exceeds one trip "..capacity.." ("..d.cargoSlots.." slots x 64)"
@@ -262,6 +264,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     else event.push("logistics_sensor",d.name,kind,id) end;return
   end
   if kind=="boot" then
+    d.survey=id==true
     if d.trip or d.lost or not d.node then
       local job=jobs[d.job];local a=job and job.active[d.trip]
       if a then
@@ -292,7 +295,12 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       d.trip=nil;d.job=nil;d.lost=true;d.position=nil;d.node=nil
     end
     d.state=d.lost and "lost" or "booting"
-    for i=1,chunks do send(d,"code",i,chunks,source:sub((i-1)*2048+1,i*2048)) end
+    local code=source
+    if d.survey then
+      local f=assert(io.open('/lib/logistics/survey.lua'));code='local surveyStep=(function()\n'..f:read('*a')..'\nend)()\n'..code;f:close()
+    end
+    local count=math.ceil(#code/2048);assert(count<=16,'agent download bound')
+    for i=1,count do send(d,"code",i,count,code:sub((i-1)*2048+1,i*2048)) end
     if d.lost then send(d,"start") else
       local p=assert(map.node(d.home),"missing drone home");send(d,"start",p.x,p.y,p.z)
     end
@@ -312,6 +320,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   elseif kind=="report" and type(payload)=="string" and #payload<7000 then
     local result=serialization.unserialize(payload);if type(result)~="table" then return end
     d.energy=result.energy;d.position=result.position
+    if type(result.survey)=='boolean' then d.survey=result.survey end
     if result.cargoSlots then d.cargoSlots=result.cargoSlots end
     if id==0 and result.state=="lost" and d.lost then
       d.cargo=result.cargo
@@ -386,6 +395,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       end
       if assigned.timing then assigned.timing.finishedAt=uptime() end;job.active[id]=nil
       if job.action then
+        if result.survey then event.push('survey_result',job.id,serialization.serialize(result.survey,false)) end
         job.trips=job.trips+1;job.scan=result.scan;job.test=job.test or result.test
         job.remaining=0;d.state=(result.away or (result.held or 0)>0) and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil
         d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
@@ -486,7 +496,7 @@ function M.forget(name)
 end
 function M.drones()
   local out={};for _,d in pairs(fleet) do
-    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,held=d.held,home=d.home,releasePending=d.release~=nil,job=d.job,trip=d.trip,lost=d.lost==true}
+    out[#out+1]={name=d.name,address=d.address,state=d.state,node=d.node,survey=d.survey,energy=d.energy,cargoSlots=d.cargoSlots,freeMemory=d.freeMemory,boots=d.boots,agentBytes=#source,chunks=chunks,sent=d.sent or 0,received=d.received or 0,cargo=d.cargo,held=d.held,home=d.home,releasePending=d.release~=nil,job=d.job,trip=d.trip,lost=d.lost==true}
   end
   table.sort(out,function(a,b) return a.name<b.name end);return out
 end
@@ -574,6 +584,10 @@ local function action(kind,a,b)
 end
 function M.scan(node) return action("scan",map.place(node) or node) end
 function M.test(a,b) return action("test",map.place(a) or a,map.place(b) or b) end
+function M.probe(node,command)
+  local id=action('scan',node)
+  jobs[id].survey=true;jobs[id].action={kind='survey',node=node,command=command};save(jobs[id]);return id
+end
 function M.job(steps,opts)
   assert(type(steps)=="table" and #steps>0,"steps required")
   nextJob=nextJob+1;local id=nextJob
