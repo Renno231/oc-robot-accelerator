@@ -8,7 +8,8 @@ local cachedX,cachedY,cachedZ,cachedOffset
 local clear={}
 local minX,minY,minZ,maxX,maxY,maxZ,sizeY,sizeZ=0,0,0,0,0,0,1,1
 local namesCache,storageNamesCache
-local function edited() revision=revision+1;clearHalf=nil;namesCache=nil;storageNamesCache=nil end
+local distanceCache={}
+local function edited() revision=revision+1;clearHalf=nil;namesCache=nil;storageNamesCache=nil;distanceCache={} end
 function M.revision() return revision end
 -- SHARED/read-only name indexes, invalidated only by map edits.
 function M.names()
@@ -215,8 +216,8 @@ function M.theta(a,b,half,avoid)
   end
 end
 function M.route(a,b,avoid)
-  if not nodes[a] or not nodes[b] then return nil end
-  local open,g,f,previous={[a]=true},{[a]=0},{[a]=distance(nodes[a],nodes[b])},{}
+  if not nodes[a] or (b and not nodes[b]) then return nil end
+  local open,g,f,previous={[a]=true},{[a]=0},{[a]=b and distance(nodes[a],nodes[b]) or 0},{}
   while next(open) do
     local current
     for n in pairs(open) do if not current or f[n]<f[current] or (f[n]==f[current] and n<current) then current=n end end
@@ -230,10 +231,17 @@ function M.route(a,b,avoid)
       local blocked=avoid and (avoid[current..":"..n] or avoid[n..":"..current] or (avoid[current] and avoid[current][n]))
       local cost=g[current]+distance(nodes[current],nodes[n])
       if not blocked and (not g[n] or cost<g[n]) then
-        previous[n]=current;g[n]=cost;f[n]=cost+distance(nodes[n],nodes[b]);open[n]=true
+        previous[n]=current;g[n]=cost;f[n]=cost+(b and distance(nodes[n],nodes[b]) or 0);open[n]=true
       end
     end
   end
+  if not b then return g end
+end
+function M.distances(a)
+  for _,v in ipairs(distanceCache) do if v[1]==a then return v[2] end end
+  local g=M.route(a) or {};distanceCache[#distanceCache+1]={a,g}
+  if #distanceCache>4 then table.remove(distanceCache,1) end
+  return g
 end
 function M.save()
   local file=assert(io.open("/etc/map.cfg","w"));file:write(serialization.serialize({nodes=nodes,links=links,storages=storages}));file:close()
