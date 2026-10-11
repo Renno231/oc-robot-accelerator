@@ -295,6 +295,7 @@ function M.available(i)
   for key,list in pairs(entries()) do n=n+math.max(0,quantity(list[1].entry,i)-reserved(key,i,'take')) end
   return n
 end
+function M.entries() syncMapRevision();return copy(entries()) end
 -- SHARED/read-only: aggregate physical stock inventories once per change.
 function M.totals()
   syncMapRevision()
@@ -868,7 +869,7 @@ function M.collect(from,requests,opts)
     syncMapRevision();if type(from)=="string" then from={storage=from} end
     assert(type(from)=="table" and from.storage,"source storage required")
     assert(endpoint(from),"unknown source");requests=manyRequests(requests)
-    local stock=entries();local source=node(from);local planned,pieces={},{}
+    local stock=entries();local source=node(from);local planned,pieces,missing={},{},{}
     for index,r in ipairs(requests) do
       -- An item never seen yet is planned at 64; the drone's report teaches the real limit.
       local i=r.item;local maximum=limits[limitKey(i)] or 64;local remaining=r.count
@@ -880,11 +881,11 @@ function M.collect(from,requests,opts)
         addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=from.slots},c.storage,nil,put)
         remaining=remaining-n
       end
-      assert(remaining==0,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i))
+      assert(remaining==0 or opts and opts.partial,"requested "..r.count..", insufficient warehouse capacity for "..limitKey(i));missing[index]=remaining
     end
-    local o=copy(opts or {});o.retries=0
+    local o=copy(opts or {});o.partial=nil;o.retries=0
     local left={};for _,p in ipairs(pieces) do local i=p.requestIndex;left[i]=left[i] or requests[i].waitFor or 0;p.waitFor=math.min(left[i],p.count);left[i]=left[i]-p.waitFor end
-    return packedJobs(requests,pieces,{},cargoSlots(),o)
+    return packedJobs(requests,pieces,missing,cargoSlots(),o)
   end)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)

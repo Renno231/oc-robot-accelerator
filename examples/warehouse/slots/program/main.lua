@@ -1,6 +1,6 @@
 local fs=require('filesystem')
 fs.makeDirectory('/lib/logistics')
-for _,name in ipairs({'map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua')) end
+for _,name in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua')) end
 assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
 local map=require('map');local event=require('event');local computer=require('computer')
 local restarting=io.open('/home/warehouse-journal-reboot','r')

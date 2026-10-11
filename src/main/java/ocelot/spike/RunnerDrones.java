@@ -27,6 +27,7 @@ final class RunnerDrones {
     private final List<Vec3d> spawned=new ArrayList<>();
     private final List<RunnerDroneErrors> errors=new ArrayList<>();
     private final List<RunnerRobot> robots=new ArrayList<>();
+    private final List<RunnerMicrocontrollers> microcontrollers=new ArrayList<>();
     private final RunnerContainerEdits containerEdits;
     private final RunnerDroneActions droneActions;
     private RunnerRecording recording;
@@ -83,6 +84,7 @@ final class RunnerDrones {
         world.getMinecraftServer().saveAllWorlds(false);return true;
     }
     boolean owns(net.minecraft.tileentity.TileEntity tile) {
+        for(RunnerMicrocontrollers sensor:microcontrollers) if(sensor.owns(tile)) return true;
         for(RunnerRobot robot:robots) if(robot.owns(tile)) return true;
         return (computer!=null && computer.owns(tile)) || (secondComputer!=null && secondComputer.owns(tile));
     }
@@ -147,6 +149,7 @@ final class RunnerDrones {
         if(spec.v4.computer!=null) {computer=new RunnerComputer(spec.v4.computer,world,root);computer.setup();}
         if(spec.v4.secondComputer!=null) {secondComputer=new RunnerComputer(spec.v4.secondComputer,world,root);secondComputer.setup();}
         for(JsonElement e:spec.v4.robots) {RunnerRobot robot=new RunnerRobot(e.getAsJsonObject(),world,root);robots.add(robot);robot.setup();}
+        for(JsonElement e:spec.v4.microcontrollers) {RunnerMicrocontrollers sensor=new RunnerMicrocontrollers(e.getAsJsonObject(),world,root);microcontrollers.add(sensor);sensor.setup();}
         if(Files.isRegularFile(root.resolve("program/route-metrics-enabled"))) routeMetrics=new RunnerRouteMetrics(root);
     }
     static String state(Drone drone) throws Exception {
@@ -185,6 +188,7 @@ final class RunnerDrones {
             if(computer!=null && !computer.prepare(tick)) return null;
             if(secondComputer!=null && !secondComputer.prepare(tick)) return null;
             for(RunnerRobot robot:robots) if(!robot.prepare(tick)) return null;
+            for(RunnerMicrocontrollers sensor:microcontrollers) if(!sensor.prepare(tick)) return null;
             for(int i=0;i<drones.size();i++) {
                 Drone drone=drones.get(i);JsonObject d=spec.v4.drones.get(i).getAsJsonObject();
                 Connector power=(Connector)drone.machine().node();
@@ -199,6 +203,7 @@ final class RunnerDrones {
                 throw new IllegalStateException("drone "+i+" would not start: "+drones.get(i).machine().lastError());
             started=true;
         } else {
+            for(RunnerMicrocontrollers sensor:microcontrollers) {String error=sensor.tick(spec.v4.infiniteEnergy);if(error!=null) return error;}
             boolean stopped=true;
             boolean robotsReturned=true;
             for(int i=0;i<robots.size();i++) {
@@ -274,6 +279,9 @@ final class RunnerDrones {
         }
         return result;
     }
+    private JsonArray microcontrollerStates() {
+        JsonArray states=new JsonArray();for(int i=0;i<microcontrollers.size();i++) states.add(microcontrollers.get(i).snapshot(i));return states;
+    }
     private void sample(String kind,long tick) throws Exception {
         JsonObject value=new JsonObject();value.addProperty("schemaVersion",1);value.addProperty("sequence",sequence);value.addProperty("tick",tick);value.addProperty("kind",kind);
         value.addProperty("wallNanos",System.nanoTime());
@@ -284,6 +292,7 @@ final class RunnerDrones {
         }
         value.add("blocks",changes);JsonArray state=states();value.add("drones",state);
         if(!robots.isEmpty()) value.add("robots",robotStates());
+        if(!microcontrollers.isEmpty()) value.add("microcontrollers",microcontrollerStates());
         value.add("containers",RunnerContainers.result(spec,world));
         if(computer!=null) value.add("computer",computer.snapshot());
         if(secondComputer!=null) value.add("secondComputer",secondComputer.snapshot());
@@ -294,6 +303,8 @@ final class RunnerDrones {
         JsonObject result=new JsonObject();result.addProperty("runnerSchemaVersion",1);result.addProperty("scenarioId",spec.id);
         try {if(recording!=null) sample("final",tick);result.add("drones",states());result.add("containers",RunnerContainers.result(spec,world));}
         catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
+        if(!microcontrollers.isEmpty()) result.add("microcontrollers",microcontrollerStates());
+        for(RunnerMicrocontrollers sensor:microcontrollers) sensor.close();
         if(!robots.isEmpty()) {
             try {result.add("robots",robotStates());}
             catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}

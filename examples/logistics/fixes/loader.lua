@@ -6,7 +6,7 @@ modem.open(port)
 local token,controller,name=ee.getData():match("^([^|]+)|([^|]+)|([^|]+)$")
 if not token then
   while true do
-    modem.broadcast(port,"lgx_hello")
+    modem.broadcast(port,"lgx_hello",component.list("drone")() and "drone" or component.list("transposer")() and "sensor")
     local untilTime=computer.uptime()+1
     repeat
       local e={computer.pullSignal(math.max(0,untilTime-computer.uptime()))}
