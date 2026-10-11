@@ -97,6 +97,22 @@ local function travel(path)
   if rerouted then return goTo(path[#path].name) end
   return fly(path)
 end
+-- Probe stalls return to the last confirmed hover, without named-map rerouting.
+local function probeMove(p)
+  drone.move(p.x-x,p.y-y,p.z-z)
+  local best,progress=math.huge,computer.uptime()
+  while drone.getOffset()>=.02 or drone.getVelocity()>=.02 do
+    computer.pullSignal(.1)
+    local offset=drone.getOffset()
+    if offset<best-.1 then best=offset;progress=computer.uptime() end
+    if computer.uptime()-progress>=3 then
+      drone.move(x-p.x,y-p.y,z-p.z)
+      repeat computer.pullSignal(.1) until drone.getOffset()<.02 and drone.getVelocity()<.02
+      error('blocked probe hop')
+    end
+  end
+  x,y,z=p.x,p.y,p.z
+end
 local function match(stack,item)
   return stack and stack.name==item.name and stack.damage==(item.damage or 0) and (not item.label or stack.label==item.label)
 end
@@ -263,7 +279,7 @@ if not x or drone.getOffset()>=.02 then
     end
   end
 end
-report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
+report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
 local backoff=0.05
 while true do
   local e={computer.pullSignal(backoff)}
@@ -287,13 +303,17 @@ while true do
         end
         if task.steps then return runSteps(task,id,result) end
         if task.action then
+          local before=computer.energy()
           travel(task.routes.take)
-          if task.action.kind=="scan" then
+          if task.action.kind=="survey" then
+            result.survey=surveyStep(task.action.command,probeMove,function() return {x=x,y=y,z=z} end)
+          elseif task.action.kind=="scan" then
             result.scan={};for side=0,5 do result.scan[side]=inv.getInventorySize(side) end
           else
             testingCandidate=true;fly(task.routes.candidate);fly(task.routes.back);testingCandidate=false;result.test="ok"
           end
           travel(task.routes.home)
+          if result.survey then result.survey.tripEnergy=before-computer.energy() end
           if computer.energy()<task.reserve then report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve end
           return
         end
@@ -346,6 +366,6 @@ while true do
     end
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="status" then
     if last then modem.send(controller,port,token,"report",last[1],last[2]) end
-    report(0,{state="ready",freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing() or nil})
+    report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing() or nil})
   end
 end

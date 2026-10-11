@@ -14,6 +14,7 @@ class MesTests(LuaCase):
             package.preload.stats=function() return {} end
             package.preload.iochest=function() return {} end
             package.preload.housekeeping=function() return {} end
+            package.preload.mes_alerts=function() return {start=function() end} end
             package.preload.recipes=function() return {getAll=function(id) return DB[id] end} end
             package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
             package.preload.craft_tools=function() return {list=function() return {} end} end

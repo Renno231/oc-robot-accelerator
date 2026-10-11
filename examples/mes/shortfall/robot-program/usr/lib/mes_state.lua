@@ -844,6 +844,9 @@ local function robotAdvance(run, s)
   return false
 end
 local function publish(w, g)
+  local clock=''
+  for _,l in ipairs(g.loads) do clock=clock..l.sequence..':'..tostring(l.due)..':'..tostring(l.quarantined)..';' end
+  if clock~=(g.clock or '') then g.clock=clock;if w.onMachine then w.onMachine(g.name) end end
   local resource = w.machines[g.name]
   resource.loads = {}
   for _, load in ipairs(g.loads) do

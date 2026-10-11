@@ -1,4 +1,4 @@
--- Universal EEPROM; all larger code is downloaded on each native boot.
+-- Programs download on boot.
 local modem=component.proxy(component.list("modem")())
 local ee=component.proxy(component.list("eeprom")())
 local port=27103
@@ -22,12 +22,12 @@ if not token then
 end
 modem.setWakeMessage(token,true)
 local parts,total={},nil
-modem.send(controller,port,token,"boot")
+modem.send(controller,port,token,"boot",component.list("geolyzer")()~=nil)
 local retry=computer.uptime()+5
 while true do
   local e={computer.pullSignal(1)}
   if computer.uptime()>=retry then
-    modem.send(controller,port,token,"boot");retry=computer.uptime()+5
+    modem.send(controller,port,token,"boot",component.list("geolyzer")()~=nil);retry=computer.uptime()+5
   end
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token then
     if e[7]=="code" then
