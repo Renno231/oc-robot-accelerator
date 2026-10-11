@@ -56,11 +56,12 @@ assert(recipes.save(draft))
 
 
 def rack_controller(position, program):
-    """Reusable noncreative T3 rack controller; screen west, keyboard above it."""
+    """Fully populated noncreative T3 server; screen west, keyboard above it."""
     return {'kind': 'rack', 'position': list(position), 'program': copy.deepcopy(program),
             'hardware': {'tier': 3, 'cpu': 'cpu3', 'memory': ['ram6'] * 4,
-                         'buses': ['componentbus3'] * 3, 'cards': ['graphicscard3', 'wlancard2'],
-                         'storage': ['hdd3'], 'bootDrive': 0}}
+                         'buses': ['componentbus3'] * 3,
+                         'cards': ['graphicscard3', 'datacard3', 'wlancard2', 'internetcard'],
+                         'storage': ['hdd3'] * 4, 'bootDrive': 0}}
 
 
 def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPARTS_DRONES):
