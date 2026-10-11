@@ -143,7 +143,8 @@ class LibraryApiTests(unittest.TestCase):
             buildClear=function() end,
             storage=function(s) return {node=s,side=0} end,
             node=function(s) return {x=0,y=0,z=0,faces={[0]=true}} end,
-            place=function(s) return s end} end
+            place=function(s) return s end,
+            distances=function() return setmetatable({},{__index=function() return 1 end}) end} end
         ''')
         self.load('logistics', 'lg')
 
