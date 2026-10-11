@@ -503,3 +503,12 @@ OpenComputers source commit `8ca336fbeb92d2a29f86f9a658bb9d6bd6f07dbb`
 (1.12.2-forge/1.8.9a), Forge 1.12.2-14.23.5.2860. Claims cite that source or a
 native measurement. Worker reports with job IDs and full evidence:
 `C:/or/drone-jobs/T1-report.md` to `T6-report.md`.
+# Idle housekeeping
+
+Housekeeping relocates known stock through `warehouse.collect`, with per-item
+`to` and `oneTour=true`; stock takes and puts both reserve their inventories.
+Do not submit raw logistics steps or queue a multi-tour background plan. Real
+MES/logistics work pre-empts between bounded tours, not mid-flight. HK never
+reads inventories: catalogue slot gain is an estimate (NBT mergeability is not
+retained), while movement receipts are authoritative. Settings and the owned
+job ID use the existing CBOR store; startup follows MES restoration.

@@ -219,6 +219,7 @@ function M.start(opts, prepare)
     M.pump()
   end, math.huge)
   M.pump()
+  require('housekeeping')
   return true
 end
 function M.reconcile(cfg, opts)

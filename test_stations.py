@@ -10,7 +10,7 @@ class StationsTests(unittest.TestCase):
         f = test_stock_api.LibraryApiTests(); f.setUp(); self.lua = f.lua
         self.lua.execute('oldIO=io.open')
         install_store(self.lua)
-        for name in ('map', 'logistics', 'warehouse', 'stations', 'iochest', 'stats'):
+        for name in ('map', 'logistics', 'warehouse', 'stations', 'iochest', 'stats', 'housekeeping'):
             self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
         self.lua.execute('''
           local countedIO=io.open
@@ -56,6 +56,7 @@ class StationsTests(unittest.TestCase):
           package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
           package.preload.stations=function() return assert(load(STATIONS))() end
           package.preload.stats=function() return assert(load(STATS))() end
+          package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
           package.preload.iochest=function() return assert(load(IOCHEST))() end
           local open=require('store').open;PUTS=0;FLUSHES=0
           require('store').open=function(p,...)
@@ -103,6 +104,34 @@ class StationsTests(unittest.TestCase):
           end
           function single(name,x,z) return {name=name,x=x or 5,y=64,z=z or 2,face='top',role='stock'} end
           function row(name,count,spacing) return {prefix=name,x=5,y=64,z=2,face='top',role='stock',rowDir='east',count=count,spacing=spacing} end
+        ''')
+
+    def test_collect_explicit_target_reserves_stock_source(self):
+        self.lua.execute('''
+          INV['h1_65_2:0']={size=27,count=10}
+          INV['h3_65_2:0']={size=27,count=0};INV['h5_65_2:0']={size=27,count=0}
+          assert(st.add('storage',single('source',1,2)));finishAll()
+          assert(st.add('storage',single('alphabetical',3,2)));finishAll()
+          assert(st.add('storage',single('target',5,2)));finishAll()
+          local i={name='mod:seed',damage=0}
+          local ids=assert(wh.collect('source',{{item=i,count=3,to='target'}},{oneTour=true}))
+          assert(#ids==1 and wh.available(i)==7)
+          local s=lg.status(ids[1]);assert(s.steps[2].put.node=='h5_65_2')
+          local moves=wh.inflight();assert(#moves==2 and moves[1].count==3 and moves[2].count==3)
+          finishAll();assert(wh.count(i)==10 and wh.available(i)==10)
+          assert(INV['h1_65_2:0'].count==7 and INV['h5_65_2:0'].count==3)
+        ''')
+
+    def test_collect_one_tour_does_not_queue_successors(self):
+        self.lua.execute('''
+          INV['h1_65_2:0']={size=27,count=300};INV['h5_65_2:0']={size=27,count=0}
+          assert(st.add('storage',single('source',1,2)));finishAll()
+          assert(st.add('storage',single('target',5,2)));finishAll()
+          local i={name='mod:seed',damage=0}
+          local ids=assert(wh.collect('source',{{item=i,count=300,to='target'}},{oneTour=true}))
+          local n=lg.status(ids[1]).requested
+          assert(#ids==1 and n<=256 and wh.available(i)==300-n)
+          finishAll();assert(INV['h1_65_2:0'].count==300-n and INV['h5_65_2:0'].count==n)
         ''')
 
     def test_boot_mes_service_resumes_station_without_setup_or_station_require(self):

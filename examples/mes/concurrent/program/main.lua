@@ -3,7 +3,7 @@ local serialization=require('serialization');local component=require('component'
 assert(loadfile('/home/program/install.lua'))()
 local hosts=require('hosts');local fixtureWake='T13Fixture-controller'
 assert(hosts.addHost(component.modem.address,computer.address(),'controller',fixtureWake,{}))
-for _,name in ipairs({'cbor','store','map','logistics','warehouse','stations','iochest'}) do
+for _,name in ipairs({'cbor','store','map','logistics','warehouse','stations','iochest','stats','housekeeping'}) do
   assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua'))
 end
 fs.makeDirectory('/lib/logistics')
