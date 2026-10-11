@@ -55,6 +55,14 @@ assert(recipes.save(draft))
 """
 
 
+def rack_controller(position, program):
+    """Reusable noncreative T3 rack controller; screen west, keyboard above it."""
+    return {'kind': 'rack', 'position': list(position), 'program': copy.deepcopy(program),
+            'hardware': {'tier': 3, 'cpu': 'cpu3', 'memory': ['ram6'] * 4,
+                         'buses': ['componentbus3'] * 3, 'cards': ['graphicscard3', 'wlancard2'],
+                         'storage': ['hdd3'], 'bootDrive': 0}}
+
+
 def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPARTS_DRONES):
     if case not in ALL_CASES:
         raise ValueError('unknown MES case')
@@ -89,6 +97,13 @@ def build(target=None, case='torches16', mode='coordinated', ocparts_drones=OCPA
     for z in (7, 9):
         value['containers'].append({'position': [10, 64, z], 'block': 'minecraft:furnace', 'slots': []})
     hardware = copy.deepcopy(value['computer']['hardware'])
+    if case != 'bricks16':  # Retain the original T3 case as the comparison.
+        old_controller = value.pop('computer')
+        value['controller'] = rack_controller(old_controller['position'], old_controller['program'])
+        x, y, z = old_controller['position']
+        # Make room for the native screen and its keyboard, retaining the
+        # rest of the existing powered capacitor bank.
+        value['blocks'] = [b for b in value['blocks'] if b['position'] not in ([x-1,y,z], [x-1,y+1,z])]
     hardware.update(containers=[], upgrades=['craftingupgrade', 'inventorycontrollerupgrade', 'inventoryupgrade'])
     value['robots'] = [{'position': [8, 65, 0], 'facing': 'south', 'hardware': hardware,
                         'program': {'directory': 'robot-program', 'entry': 'main.lua'},

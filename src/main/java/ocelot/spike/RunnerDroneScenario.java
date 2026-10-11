@@ -19,8 +19,8 @@ final class RunnerDroneScenario {
             throw RunnerScenario.bad("infiniteEnergy boolean");
         infiniteEnergy=execution.has("infiniteEnergy") && execution.get("infiniteEnergy").getAsBoolean();
         boolean drone=root.has("drones");
-        computer=root.has("computer")?RunnerScenario.object(root.get("computer"),"position,hardware,program"):null;
-        secondComputer=root.has("secondComputer")?RunnerScenario.object(root.get("secondComputer"),"position,hardware,program"):null;
+        computer=root.has("computer")?RunnerScenario.object(root.get("computer"),"*"):null;
+        secondComputer=root.has("secondComputer")?RunnerScenario.object(root.get("secondComputer"),"*"):null;
         if(secondComputer!=null && computer==null) throw RunnerScenario.bad("secondComputer requires computer");
         if(drone==root.has("robot")) throw RunnerScenario.bad("v4 requires exactly one of robot or drones");
         String keys=drone?"schemaVersion,id,world,drones,containers,execution,observations,expect":

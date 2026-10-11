@@ -547,3 +547,16 @@ MES/logistics work pre-empts between bounded tours, not mid-flight. HK never
 reads inventories: catalogue slot gain is an estimate (NBT mergeability is not
 retained), while movement receipts are authoritative. Settings and the owned
 job ID use the existing CBOR store; startup follows MES restoration.
+
+## Native rack controller fixtures
+
+Use `examples/mes/build_fixtures.py:rack_controller(position, program)` for the
+noncreative T3 server configuration: cpu3, four ram6, three componentbus3,
+graphicscard3, wlancard2, HDD and native BIOS. Public scenarios use
+`controller.kind="rack"`; `computer` and `controller.kind="case"` retain cases.
+Reserve the cells west of the rack and above that cell for screen and keyboard.
+Rack primary-node connections use `connect(slot,-1,Some(localSide))`, translating
+the physical side through `toLocal`. Attach peripherals through ordinary
+ItemStack placement on the rack's west face and the screen's top face; OC uses
+the clicked face to mount the keyboard. Hardware names are the lowercase
+`Items.get` registry keys, including `graphicscard3` and `componentbus3`.

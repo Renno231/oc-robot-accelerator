@@ -75,6 +75,14 @@ require=function(name)
   return value
 end
 local starts=io.open('/home/program-starts','r')
+local controllerMemory={total=computer.totalMemory(),freeAtStart=computer.freeMemory()}
+local component=require('component')
+if component.isAvailable('gpu') then
+  local screen=assert(component.gpu.getScreen(),'GPU not bound to native screen')
+  controllerMemory.screen=screen
+  controllerMemory.keyboards=component.proxy(screen).getKeyboards()
+  assert(#controllerMemory.keyboards>0,'native screen has no keyboard')
+end
 local componentCounter=assert(loadfile('/home/program/component-counter.lua'))()
 package.loaded.runner_component_calls=componentCounter
 local count=starts and tonumber(starts:read('*a')) or 0
@@ -116,6 +124,8 @@ end
 local ok,err=xpcall(assert(loadfile('/home/program/native-main.lua')),debug.traceback)
 if not ok then print('Native entry failed:',err) end
 local data={jobs=archivedJobs,fleet={},files={},boots=boots,returned=ok,programStarts=count+1,reloadPending=reloadPending}
+controllerMemory.freeAtEnd=computer.freeMemory()
+data.controllerMemory=controllerMemory
 data.craftPayloads=craftPayloads
 data.flightMetrics=tripMetrics
 local componentCalls=io.open('/home/component-calls.lua','r')
