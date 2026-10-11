@@ -158,6 +158,10 @@ class SupportTests(unittest.TestCase):
                 support.recover(self.root,self.id,confirm_stopped=True)
         finally:
             child.terminate(); child.wait(timeout=5)
+        # The real scan/live guard was exercised above. Admission release is
+        # tested against the existing empty-snapshot seam, not an assumption
+        # that every unrelated parallel process has a visible command line.
+        self.quiet.start()
         self.assertEqual('released',support.recover(self.root,self.id,confirm_stopped=True)['status'])
 
     def test_actual_worker_crash_keeps_live_server_protected(self):
