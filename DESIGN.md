@@ -275,6 +275,8 @@ Logistics (`require("logistics")`):
   `logistics.forget(name)`, `logistics.release(name)` (held drone: reports its
   cargo, idle once empty), `logistics.found(name)` (lost drone back on its
   charger).
+  Release returns submission success, not cargo: wait for `logistics_released`
+  or `releasePending == false`, then inspect the drone's `cargo` catalogue field.
 - Map actions: `logistics.scan(node)`, `logistics.test(a, b)`; ordinary jobs.
 - Config `/etc/logistics.cfg`: `reserve` (energy, default 1000), `retries`
   (default 2). Port is fixed at 27103. Registry: `/etc/logistics.drones`.
