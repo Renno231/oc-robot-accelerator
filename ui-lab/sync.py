@@ -29,6 +29,15 @@ for _,a in ipairs(args) do if a=="announce" then
   local function fire() require("logistics").labAnnounce();require("mes").labAnnounce() end
   announce=event.timer(6,fire)
 end end
+-- `sensor`: 6 s in, a sensor announces. `deposit`: 6 s in, items land in
+-- IO chest in1 (its sensor reports them). `sensorlist`: logistics gets the
+-- proposed sensors() (not in the real API).
+local labTimers={}
+for _,a in ipairs(args) do
+  if a=="sensor" then local function fire() require("logistics").labAnnounceSensor() end;labTimers[#labTimers+1]=event.timer(6,fire) end
+  if a=="deposit" then local function fire() require("iochest").labDeposit() end;labTimers[#labTimers+1]=event.timer(6,fire) end
+  if a=="sensorlist" then require("logistics").labSensorList() end
+end
 if args[2]=="mem" then
   local low=math.huge
   opts.status=function()
@@ -40,6 +49,7 @@ end
 require("mes_ui").run(opts)
 if timer then event.cancel(timer) end
 if announce then event.cancel(announce) end
+for _,t in ipairs(labTimers) do event.cancel(t) end
 """
 
 lab = Path(__file__).resolve().parent

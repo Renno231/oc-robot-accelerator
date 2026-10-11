@@ -11,7 +11,7 @@ local function integer(n) return type(n)=="number" and n%1==0 end
 local function build(kind,s)
   local f,d=faces[s.face],faces[s.rowDir];local count=kind=="storage" and 1 or s.count;local name=kind=="storage" and s.name or s.prefix
   for _,k in ipairs({"x","y","z"}) do assert(integer(s[k]),"integer coordinates required") end
-  assert(f and (s.role=="stock" or s.role=="other"),"invalid face or role")
+  assert(f and ({stock=1,other=1,import=1,export=1})[s.role],"invalid face or role")
   assert(integer(count) and count>=1 and count<=64,"count must be 1..64")
   assert(kind=="storage" or d and d~=f and d~=f~1 and (s.spacing==1 or s.spacing==2),"invalid row direction or spacing")
   assert(s.pair==nil or s.pair==1 or s.pair==2,"pair must be 1 or 2")
@@ -77,4 +77,8 @@ fixture("row",{x=0,y=64,z=12,face="top",rowDir="east",count=4,spacing=1,pair=1,p
   "these may be double chests; remove and re-add with pair 2",12)
 fixture("storage",{x=40,y=70,z=-12,face="west",name="far",role="stock"},"failed","link",
   "no clear path from the network to (40,70,-12): tried 7:65:2, 6:65:2, 5:65:2; clear the path or add a node nearer")
+-- IO chests (the iochest fake's rows).
+fixture("storage",{x=-4,y=64,z=0,face="west",name="in1",role="import"},"ready")
+fixture("storage",{x=-4,y=64,z=2,face="west",name="in2",role="import"},"ready")
+fixture("storage",{x=-4,y=64,z=4,face="west",name="out1",role="export"},"ready")
 return M
