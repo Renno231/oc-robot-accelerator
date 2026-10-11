@@ -69,32 +69,6 @@
       }
     ]
   },
-  "computer": {
-    "position": [
-      -4,
-      65,
-      2
-    ],
-    "hardware": {
-      "tier": 3,
-      "cpu": "cpu3",
-      "memory": [
-        "ram6",
-        "ram6"
-      ],
-      "cards": [
-        "wlancard2"
-      ],
-      "storage": [
-        "hdd3"
-      ],
-      "bootDrive": 0
-    },
-    "program": {
-      "directory": "program",
-      "entry": "main.lua"
-    }
-  },
   "drones": [
     {
       "position": [
@@ -329,25 +303,7 @@
       "position": [
         -5,
         65,
-        2
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -5,
-        65,
         3
-      ],
-      "block": "opencomputers:capacitor",
-      "energy": 1600
-    },
-    {
-      "position": [
-        -5,
-        66,
-        2
       ],
       "block": "opencomputers:capacitor",
       "energy": 1600
@@ -1730,6 +1686,41 @@
       }
     }
   ],
+  "controller": {
+    "kind": "rack",
+    "position": [
+      -4,
+      65,
+      2
+    ],
+    "program": {
+      "directory": "program",
+      "entry": "main.lua"
+    },
+    "hardware": {
+      "tier": 3,
+      "cpu": "cpu3",
+      "memory": [
+        "ram6",
+        "ram6",
+        "ram6",
+        "ram6"
+      ],
+      "buses": [
+        "componentbus3",
+        "componentbus3",
+        "componentbus3"
+      ],
+      "cards": [
+        "graphicscard3",
+        "wlancard2"
+      ],
+      "storage": [
+        "hdd3"
+      ],
+      "bootDrive": 0
+    }
+  },
   "robots": [
     {
       "position": [

@@ -125,6 +125,11 @@ def slots(values, initial=False, limit=64):
 def normalize(value):
     from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
                                  _component_name, relative, normalize as old, normalized_bytes)
+    if isinstance(value, dict) and 'controller' in value:
+        if 'computer' in value: raise ValueError('use controller or computer, not both')
+        _object(value['controller'], ['kind', 'position', 'hardware', 'program'], ['kind', 'position', 'hardware', 'program'])
+        value = deepcopy(value)
+        value['computer'] = value.pop('controller')
     _object(value, ['schemaVersion', 'id', 'program', 'world', 'robot', 'drones', 'containers',
                     'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions', 'microcontrollers'], ['schemaVersion', 'id', 'world'])
     if 'secondComputer' in value and 'computer' not in value: raise ValueError('secondComputer requires computer')
