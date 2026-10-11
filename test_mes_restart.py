@@ -51,9 +51,10 @@ class MesRestartTests(unittest.TestCase):
           end
           CFG={crafters={cpu={robot='robot'}},machineTypes={furnace={inputs={'input'},output='output',
             roles={'input','output'},roleSlots={input={1},output={1}},batch=1,seconds=1,blocking=true}}}
+          local previous='dest'
           for i,name in ipairs({'input','output','buffer'}) do
             map.add(name,6+i*2,0,0);map.name(name..'_face',name,0)
-            map.link('dest',name) -- Same collinear distances as the direct-flight stub.
+            map.link(previous,name);previous=name -- Same collinear distances as the direct-flight stub.
           end
           local config={members={stock={filter={{name='mod:raw',damage=0},{name='mod:metal',damage=0},
             {name='mod:crafted',damage=0},{name='minecraft:brick',damage=0},
