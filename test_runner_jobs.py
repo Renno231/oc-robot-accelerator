@@ -245,9 +245,32 @@ class JobsTests(unittest.TestCase):
     def test_shared_deadline_timeout(self):
         self.spec['execution']['timeoutSeconds']=1
         self.manifest.write_text(json.dumps(self.spec))
-        final = self.finish(self.submit('wait'))
+        # Share a logical clock across the real process boundary. Expire only
+        # after on_launch publishes the owned server, not during OS scheduling.
+        worker=Path(self.worker[1])
+        clock_setup=('now=[1000.0]\n'
+                     'runner_jobs.time.monotonic=lambda:now[0]\n'
+                     'execute=supervisor.execute\n'
+                     'def expire_after_launch(*args,**kwargs):\n'
+                     ' on_launch=kwargs["on_launch"]\n'
+                     ' def launched(pid):\n'
+                     '  on_launch(pid)\n'
+                     '  now[0]=kwargs["deadline"]\n'
+                     ' kwargs["on_launch"]=launched\n'
+                     ' return execute(*args,**kwargs)\n'
+                     'supervisor.execute=expire_after_launch\n')
+        worker.write_text(worker.read_text().replace('sys.exit(runner_jobs.main())',
+                                                    clock_setup+'sys.exit(runner_jobs.main())'))
+        with mock.patch.object(jobs.time,'monotonic',return_value=1000.0):
+            value=self.submit('wait')
+        final = self.finish(value)
+        launch=json.loads((self.root/value['jobId']/'launch.json').read_text())
+        self.assertEqual(1000.0,launch['start'])
+        self.assertEqual(1001.0,launch['deadline'])
         self.assertEqual(final['state'],'failed',final)
         self.assertIn('timeout',final['reason'])
+        self.assertTrue(final['cleanupOk'])
+        self.assertIn('serverPid',final)
         self.assertFalse((self.root / '.owner').exists())
 
     def test_reserved_template_and_extra_mod_fail_before_server(self):
