@@ -90,6 +90,7 @@ class MesRestartTests(unittest.TestCase):
               if s.take then
                 n=math.min(n,held(s.take.node,id));add(s.take.node,id,-n)
                 row.taken=n;row.moved=n;cargo[id]=(cargo[id] or 0)+n;carried=carried+n
+                row.short=n<(s.count or 0);row.left=held(s.take.node,id)
               end
               if s.put then
                 id=id or next(cargo);n=math.min(n,cargo[id] or 0)
@@ -430,6 +431,19 @@ class MesRestartTests(unittest.TestCase):
                   end
                   reboot();local after=M.runs();assert(#after==20 and after[1].id==25 and after[20].id==6)
                   assert(M.status(25).status=='complete' and M.status(5)==nil)
+                ''')
+
+    def test_learned_bounds_survive_cbor_restart(self):
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                lua = self.start(mode)
+                lua.execute('''
+                  local id=submit(true,1);untilFact(function() return M.status(id).status~='running' end)
+                  assert(M.status(id).status=='complete')
+                  local t=assert(saved().timing.kiln);assert(t.samples>0 and t.hi<math.huge)
+                  local hi=t.hi;reboot()
+                  local row=M.resources{config=CFG}.machines.kiln
+                  assert(row.seconds.hi==hi and row.seconds.source=='learned')
                 ''')
 
     def test_idle_ticks_do_not_write_or_flush_mes(self):
