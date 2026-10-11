@@ -133,8 +133,28 @@ local function mutationKeys(endpoints)
   local ids={};for key in pairs(keys) do ids[#ids+1]=key end;invalidate(ids)
   return keys
 end
-local function beginMutation(id,endpoints)
+-- Carry observed slot counts on the step, before invalidation.
+local function claim(steps)
+  for _,s in ipairs(steps or {}) do
+    local e=s.take and endpoint(s.take)
+    local slots=type(s.take)=="table" and s.take.slots
+    if e and slots then
+      s.claimed=nil
+      local v=roleCache[e.node] and roleCache[e.node][e.side]
+      if v then
+        s.claimed=0
+        for _,slot in ipairs(slots) do
+          local r=v.listing[slot]
+          if r==nil then s.claimed=nil;break end
+          if r and matches(r,s.item) then s.claimed=s.claimed+r.size end
+        end
+      end
+    end
+  end
+end
+local function beginMutation(id,endpoints,steps)
   syncMapRevision()
+  claim(steps)
   local keys=mutationKeys(endpoints)
   if pendingMutations[id] then return end
   pendingMutations[id]=keys
@@ -268,7 +288,7 @@ local function submit(steps,opts,reservations)
   end
   -- Refused submissions and synchronously failed jobs may have no result legs.
   for _,e in ipairs(reads) do invalidateRead(e) end
-  if not mutationHook then mutationKeys(movements) end
+  if not mutationHook then claim(steps);mutationKeys(movements) end
   local provenance=not readHook and readProvenance(reads) or nil
   local id,err=logistics.job(steps,opts)
   local s=id and logistics.status(id)
@@ -489,7 +509,7 @@ local function finished(_,id)
         -- zero (e.g. unmergeable NBT variants filled the drone's cargo slots).
         -- A single-slot short shows that slot held less than planned.
         if step.short and not step.take.slots then short(storage,step.item,step.found or 0,touched)
-        elseif step.short and step.count then adjust(storage,step.item,-math.max(0,step.count-(step.taken or 0)-(step.found or 0)),nil,touched) end
+        elseif step.short and step.claimed then adjust(storage,step.item,-math.max(0,step.claimed-(step.taken or 0)-(step.found or 0)),nil,touched) end
         adjust(at(s.overflowEndpoint),step.item,step.overflow or 0,step.maxSize,touched)
       elseif step.put then
         mutationKeys({step.put})
