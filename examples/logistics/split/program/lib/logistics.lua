@@ -66,8 +66,8 @@ local function persist()
   local f=assert(io.open("/etc/logistics.drones","w"));f:write(serialization.serialize(registry));f:close()
 end
 local function attach(name,record)
-  local d={name=name,address=record.address,token=record.token,home=record.home,node=record.home,state="booting"}
-  fleet[name]=d;addresses[d.address]=d
+  local d={name=name,address=record.address,token=record.token,kind=record.kind,home=record.home,node=record.home,state="booting"}
+  if d.kind~="sensor" then fleet[name]=d end;addresses[d.address]=d
 end
 for name,r in pairs(registry) do attach(name,r) end
 local function send(d,...)
@@ -252,11 +252,15 @@ end
 local function receive(_,_,sender,received,_,token,kind,id,payload)
   if received~=port then return end
   if token=="lgx_hello" then
-    if not addresses[sender] and not announcing[sender] then announcing[sender]=true;event.push("logistics_announce",sender) end
+    if not addresses[sender] and not announcing[sender] then announcing[sender]=kind or "drone";event.push("logistics_announce",sender,announcing[sender]) end
     return
   end
   local d=addresses[sender];if not d or token~=d.token then return end
   d.received=(d.received or 0)+1
+  if d.kind=="sensor" then if kind=="boot" then
+    local f=assert(io.open("/lib/logistics/sensor.lua"));send(d,"code",1,1,f:read("*a"));f:close();send(d,"start")
+    else event.push("logistics_sensor",d.name,kind,id) end;return
+  end
   if kind=="boot" then
     if d.trip or d.lost or not d.node then
       local job=jobs[d.job];local a=job and job.active[d.trip]
@@ -297,7 +301,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     if type(listing)~="table" then return end
     d.cargo=listing;d.release=nil;d.state=next(listing) and "held" or "idle"
     d.held=nil;for _,s in pairs(listing) do d.held=d.held or {};d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
-    wakeScheduler()
+    wakeScheduler();event.push("logistics_released",d.name,"ok")
   elseif kind=="navigate" and d.trip~=id then
     send(d,"navigation",id,serialization.serialize({reason="unknown trip "..tostring(id)},false))
   elseif kind=="navigate" and d.trip==id and d.job and type(payload)=="string" and #payload<7000 then
@@ -447,11 +451,9 @@ function M.release(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
   if d.state~="held" then return nil,"drone is not held" end
   if d.release then return nil,"release already pending" end
-  nextTrip=nextTrip+1;saveIds();state_store:flush();d.release=nextTrip;d.cargo=nil;send(d,"release",d.release)
-  local computer=require("computer");local deadline=computer.uptime()+5
-  while d.release and computer.uptime()<deadline do event.pull(math.max(0,deadline-computer.uptime())) end
-  if d.release then d.release=nil;return nil,"cargo report timeout" end
-  return serialization.unserialize(serialization.serialize(d.cargo))
+  nextTrip=nextTrip+1;saveIds();state_store:flush();local id=nextTrip;d.release=id;d.cargo=nil;send(d,"release",id)
+  event.timer(5,function() if d.release==id then d.release=nil;event.push("logistics_released",name,"timeout") end end)
+  return true
 end
 function M.found(name)
   local d=fleet[name];if not d then return nil,"unknown drone" end
@@ -462,18 +464,21 @@ end
 -- Restore below cannot yield; it finishes before listeners run. Move this if restore yields.
 event.listen("modem_message",receive)
 event.listen("logistics_work",schedule)
-function M.pending()
-  local out={};for address in pairs(announcing) do if not addresses[address] then out[#out+1]=address end end;table.sort(out);return out
+function M.pending(kind)
+  local out={};for address,k in pairs(announcing) do if k==(kind or "drone") and not addresses[address] then out[#out+1]=address end end;table.sort(out);return out
 end
+function M.pendingSensors() return M.pending("sensor") end
+function M.ackSensor(name,seq,kind) send(addresses[registry[name].address],kind or "ack",seq) end
 function M.register(address,name,home)
   if not announcing[address] or addresses[address] then return nil,"address is not an announcing unpaired drone" end
-  if type(name)~="string" or not name:match("^[%w_-]+$") or #name>48 or fleet[name] then return nil,"invalid/duplicate name" end
-  local node=map.node(home);if not node or not node.charger then return nil,"home must be a mapped charger" end
-  local record={address=address,token=string.format("%06x",math.random(0,0xffffff)),home=home}
+  if type(name)~="string" or not name:match("^[%w_-]+$") or #name>48 or registry[name] then return nil,"invalid/duplicate name" end
+  local node=map.node(home);if announcing[address]~="sensor" and (not node or not node.charger) then return nil,"home must be a mapped charger" end
+  local record={address=address,token=string.format("%06x",math.random(0,0xffffff)),home=home,kind=announcing[address]}
   registry[name]=record;attach(name,record);persist();announcing[address]=nil
   modem.send(address,port,"lgx_pair",record.token,name)
   return true
 end
+M.registerSensor=M.register
 function M.forget(name)
   local d=fleet[name];if not d then return false end
   if d.job then return nil,"drone is active" end
@@ -644,5 +649,5 @@ for key,job in pairs(records) do
   end
 end
 table.sort(finished);table.sort(queue)
-for _,d in pairs(fleet) do send(d,"status") end
+for _,d in pairs(addresses) do send(d,"status") end
 return M

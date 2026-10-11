@@ -3,11 +3,12 @@ local serialization=require('serialization');local component=require('component'
 assert(loadfile('/home/program/install.lua'))()
 local hosts=require('hosts');local fixtureWake='T13Fixture-controller'
 assert(hosts.addHost(component.modem.address,computer.address(),'controller',fixtureWake,{}))
-for _,name in ipairs({'map','logistics','warehouse'}) do
+for _,name in ipairs({'cbor','store','map','logistics','warehouse','stations','iochest'}) do
   assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua'))
 end
 fs.makeDirectory('/lib/logistics')
 assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+assert(fs.copy('/home/program/drone/sensor.lua','/lib/logistics/sensor.lua'))
 local lg=require('logistics');local wh=require('warehouse');local mes=require('mes')
 local case=assert(loadfile('/home/program/case.lua'))().name
 local start=computer.uptime();local totals={trips=0,moved=0,jobs=0};local jobs={}

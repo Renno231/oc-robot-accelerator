@@ -310,7 +310,8 @@ def worker(root, jobid, token):
                                      drone_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('drones', [])),
                                      computer_present='computer' in scenario.read_json(job/'inputs/runner-scenario.json'),
                                      second_present='secondComputer' in scenario.read_json(job/'inputs/runner-scenario.json'),
-                                     robot_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('robots', [])))
+                                     robot_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('robots', [])),
+                                     microcontroller_count=len(scenario.read_json(job/'inputs/runner-scenario.json').get('microcontrollers', [])))
         report = outcome['report']; cleanup_ok = report['cleanup_ok']
         state = 'cancelled' if report['cancelled'] else report['status']
         value.update(state=state,reason=report['reason'][:2048],runtime='runtime',

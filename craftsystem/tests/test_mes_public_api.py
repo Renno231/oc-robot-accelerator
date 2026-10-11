@@ -15,6 +15,7 @@ class MesPublicApiTests(LuaCase):
           package.preload.event=function() return {push=function() end} end
           package.preload.stations=function() return {} end
           package.preload.stats=function() return {} end
+          package.preload.iochest=function() return {} end
           package.preload.computer=function() return {uptime=function() return 0 end} end
           package.preload.warehouse=function() return {groups=function() return {} end} end
           package.preload.mes_config=function()

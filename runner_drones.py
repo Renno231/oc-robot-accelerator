@@ -28,7 +28,7 @@ def eeprom_inputs(root, drones, check):
     return tuple(entries.items())
 
 
-def completed_result(value, scenario_id, count, computer_present=False, second_present=False, robot_count=0):
+def completed_result(value, scenario_id, count, computer_present=False, second_present=False, robot_count=0, microcontroller_count=0):
     drones = value.get('drones')
     if (value.get('runnerSchemaVersion') != 1 or value.get('scenarioId') != scenario_id or
             value.get('mode') not in ('baseline','coordinated') or not isinstance(drones, list) or len(drones) != count or
@@ -58,6 +58,13 @@ def completed_result(value, scenario_id, count, computer_present=False, second_p
                     (r.get('state') == 'Stopped' and r['program'].get('status') != 'returned')
                     for i, r in enumerate(robots))):
             raise ValueError('runner robot program completion invalid')
+    if microcontroller_count:
+        sensors = value.get('microcontrollers')
+        if (not isinstance(sensors, list) or len(sensors) != microcontroller_count or
+                any(not isinstance(s, dict) or type(s.get('index')) is not int or s['index'] != i or
+                    type(s.get('running')) is not bool or 'lastError' not in s or s['lastError'] is not None
+                    for i, s in enumerate(sensors))):
+            raise ValueError('runner microcontroller completion invalid')
 
 
 def observation(record):
@@ -76,6 +83,16 @@ def observation(record):
         energy = d.get('energy')
         if type(energy) not in (int, float) or not math.isfinite(energy) or energy < 0:
             raise ValueError('invalid drone observation energy')
+    if 'microcontrollers' in record:
+        sensors = record['microcontrollers']
+        if not isinstance(sensors, list) or not 1 <= len(sensors) <= 16: raise ValueError('invalid microcontroller observation count')
+        for i, s in enumerate(sensors):
+            if not isinstance(s, dict) or type(s.get('index')) is not int or s['index'] != i or type(s.get('running')) is not bool:
+                raise ValueError('invalid microcontroller observation')
+            _position(s.get('position'))
+            energy = s.get('energy')
+            if type(energy) not in (int, float) or not math.isfinite(energy) or energy < 0:
+                raise ValueError('invalid microcontroller energy')
     if 'robots' in record:
         robots = record['robots']
         if not isinstance(robots, list) or not 1 <= len(robots) <= 4: raise ValueError('invalid robot observation count')
@@ -109,15 +126,16 @@ def normalize(value):
     from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
                                  _component_name, relative, normalize as old, normalized_bytes)
     _object(value, ['schemaVersion', 'id', 'program', 'world', 'robot', 'drones', 'containers',
-                    'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions'], ['schemaVersion', 'id', 'world'])
+                    'execution', 'observations', 'expect', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions', 'microcontrollers'], ['schemaVersion', 'id', 'world'])
     if 'secondComputer' in value and 'computer' not in value: raise ValueError('secondComputer requires computer')
     if ('robot' in value) == ('drones' in value or 'computer' in value): raise ValueError('v4 requires robot or drones/computer exclusively')
     drone_mode = 'drones' in value or 'computer' in value
     if 'robots' in value and not drone_mode: raise ValueError('robots require drones/computer scenario')
+    if 'microcontrollers' in value and (not drone_mode or 'computer' not in value): raise ValueError('microcontrollers require controller computer')
     if drone_mode and 'program' in value: raise ValueError('drone scenarios use EEPROM, not program')
     surrogate = deepcopy(value)
     surrogate['schemaVersion'] = 3
-    for key in ('drones', 'containers', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions'): surrogate.pop(key, None)
+    for key in ('drones', 'containers', 'computer', 'secondComputer', 'blocks', 'robots', 'containerEdits', 'droneActions', 'microcontrollers'): surrogate.pop(key, None)
     extended = _object(value.get('expect', {}), ['position', 'blocks', 'inventory', 'containers', 'drones', 'robots'])
     if 'robots' in extended and 'robots' not in value: raise ValueError('robot expectations require robots')
     if drone_mode and any(k in extended for k in ('position', 'inventory')):
@@ -143,10 +161,13 @@ def normalize(value):
         result['execution']['infiniteEnergy'] = value['execution']['infiniteEnergy']
     region = result['world']['region']
     drones = []
+    microcontrollers = []
     if drone_mode:
         del result['robot']; del result['program']
-        for d in _array(value.get('drones', []), MAX_DRONES):
-            _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy', 'inventory'],
+        devices = [(d, True) for d in _array(value.get('drones', []), MAX_DRONES)]
+        devices += [(d, False) for d in _array(value.get('microcontrollers', []), 16)]
+        for d, is_drone in devices:
+            _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy'] + (['inventory'] if is_drone else []),
                     ['position', 'hardware', 'eeprom'])
             h = _object(d['hardware'], ['tier', 'cpu', 'memory', 'cards', 'upgrades'], ['tier', 'cpu', 'memory'])
             hardware = {'tier': 'creative' if h['tier'] == 'creative' else _integer(h['tier'], 1, 2),
@@ -160,17 +181,18 @@ def normalize(value):
             if not isinstance(data, str) or len(data.encode('utf-8')) > 1024 * 1024:
                 raise ValueError('EEPROM data string bound')
             entry = {'position': _inside(d['position'], region), 'hardware': hardware,
-                     'eeprom': eeprom, 'eepromData': data,
-                     'inventory': slots(d.get('inventory', []), True, 8)}
+                     'eeprom': eeprom, 'eepromData': data}
+            if is_drone: entry['inventory'] = slots(d.get('inventory', []), True, 8)
             relative(entry['eeprom'])
             if 'energy' in d:
                 energy = d['energy']
                 if type(energy) not in (int, float) or not math.isfinite(energy) or not 0 < energy <= 2147483647:
                     raise ValueError('drone energy must be finite and positive')
                 entry['energy'] = energy
-            drones.append(entry)
+            (drones if is_drone else microcontrollers).append(entry)
         if not drones and 'computer' not in value and 'robots' not in value: raise ValueError('drones must contain 1..16 entries')
         result['drones'] = drones
+        if 'microcontrollers' in value: result['microcontrollers'] = microcontrollers
     if 'robots' in value:
         robots = _array(value['robots'], 4)
         if not robots: raise ValueError('robots must contain 1..4 entries')

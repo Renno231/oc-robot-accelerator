@@ -141,7 +141,7 @@ local function validate(kind,s)
   local name=kind=='storage' and s.name or s.prefix
   assert(kind=='storage' or kind=='row','invalid kind')
   for _,k in ipairs({'x','y','z'}) do assert(integer(s[k]),'integer coordinates required') end
-  assert(f and (s.role=='stock' or s.role=='other'),'invalid face or role')
+  assert(f and ({stock=1,other=1,import=1,export=1})[s.role],'invalid face or role')
   assert(integer(count) and count>=1 and count<=64,'count must be 1..64')
   assert(kind=='storage' or d and d~=f and d~=f~1 and (s.spacing==1 or s.spacing==2),'invalid row direction or spacing')
   assert(s.pair==nil or s.pair==1 or s.pair==2,'pair must be 1 or 2')
