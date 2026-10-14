@@ -107,20 +107,20 @@ class RobotRegisterTests(TransportFixture):
             local ok,err=C.config.registerRobot(table.unpack(args))
             assert(ok==nil and type(err)=='string')
             if args[3]=='stock' then assert(err:find('Buffer is stock',1,true)) end
-            assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.cfg']==nil)
+            assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.config']==nil)
             assert(C.require('serialization').serialize(C.groups)==groups)
           end
           registered()
-          before=C.disk['/etc/hosts'];local cfg=C.disk['/etc/mes.cfg']
+          before=C.disk['/etc/hosts'];local cfg=C.disk['/etc/mes.config']
           for _,args in ipairs({{S.address,'cpu','reserved'},{S.address,'second','other'}}) do
             local ok,err=C.config.registerRobot(table.unpack(args));assert(not ok and err)
-            assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.cfg']==cfg)
+            assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.config']==cfg)
           end
           assert(C.config.registerRobot(S.address,'second','reserved'))
-          before=C.disk['/etc/hosts'];cfg=C.disk['/etc/mes.cfg']
+          before=C.disk['/etc/hosts'];cfg=C.disk['/etc/mes.config']
           local ok,err=C.config.registerRobot(T.address,'third','alias')
           assert(not ok and err:find('Buffer is used',1,true))
-          assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.cfg']==cfg)
+          assert(C.disk['/etc/hosts']==before and C.disk['/etc/mes.config']==cfg)
         ''')
 
     def test_station_other_buffer_is_accepted(self):

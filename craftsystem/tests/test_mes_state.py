@@ -378,6 +378,7 @@ class MesStateTests(LuaCase):
           -- The trip goes for the first load and asks for all four; finished output comes along.
           tick(2);local c=actions('collectMany');assert(#c==1 and c[1].requests[1].count==4)
           drain('collectMany') -- nothing was there yet
+          assert(#actions('scan')==1);drain('scan')
           -- One missing op takes 2 seconds; the loads behind it move back with it.
           assert(g.loads[1].due==4 and g.loads[2].due==6 and g.loads[4].due==10)
           tick(3);assert(#actions('collectMany')==0)
@@ -434,6 +435,69 @@ class MesStateTests(LuaCase):
           -- Loads finish in order, at 2, 4, 6 and 8 seconds; all are due by 8.
           put('mx','t:bronze',4);tick(8);drain('collectMany')
           assert(RUN.stages[1].state=='done' and #RUN.stages[2].loadLedger==1)
+        ''')
+
+    def test_collection_releases_waiting_recipe_without_an_input_retry_delay(self):
+        self.lua.execute('''
+          CFG.machineTypes.alloy.seconds=0.05
+          loaded({machine('t:bronze',{'t:copper','t:tin'},'alloy'),
+            machine('t:steel',{'t:iron','t:coal'},'alloy')})
+          assert(#actions('fetchMany')==0)
+          put('mx','t:bronze',1);tick(0.1);drain('collectMany')
+          assert(RUN.stages[1].state=='done')
+          assert(#actions('fetchMany')==1,'settled collection must release the next recipe immediately')
+          assert(actions('fetchMany')[1].requests[1].item.name=='t:iron')
+        ''')
+
+    def test_machine_progress_replaces_the_original_unknown_time_estimate(self):
+        self.lua.execute('''
+          CFG.machineTypes.furnace.seconds=nil;CFG.machineTypes.furnace.batch=4
+          loaded({machine('t:metal',{'t:ore'},nil,4)})
+          put('mo','t:metal',1);tick(20);drain('collectMany')
+          assert(S.nextDue(WORLD)==80)
+          put('mo','t:metal',2);tick(60)
+          assert(RUN.status=='running' and #actions('collectMany')==0)
+          put('mo','t:metal',3);tick(80);drain('collectMany')
+          assert(RUN.status=='complete' and RUN.stages[1].done==4)
+        ''')
+
+    def test_empty_output_is_read_once_then_retried_without_losing_ownership(self):
+        for progress in (False, True):
+            with self.subTest(progress=progress):
+                self.setUp()
+                self.lua.globals().PROGRESS = progress
+                self.lua.execute('''
+                  loaded({machine('t:metal',{'t:ore'},nil,2)})
+                  tick(2);drain('collectMany')
+                  assert(#actions('scan')==1 and #actions('collectMany')==0)
+                  tick(3);drain('scan')
+                  local due=S.nextDue(WORLD);assert(due and due>3)
+                  if PROGRESS then put('mo','t:metal',2) end
+                  tick(due);drain('collectMany')
+                  local scans,collects=0,0
+                  for _,a in ipairs(ACTIONS) do
+                    if a.kind=='scan' then scans=scans+1 end
+                    if a.kind=='collectMany' then collects=collects+1 end
+                  end
+                  assert(scans==1 and collects==2)
+                  if PROGRESS then assert(RUN.status=='complete')
+                  else
+                    assert(RUN.status=='failed' and RUN.reason=='kiln: Machine produced no output after recovery')
+                    assert(WORLD.machines.kiln.state=='unknown')
+                    assert(#WORLD.stuck.kiln==1 and WORLD.stuck.kiln[1].unresolved['t:metal']==2)
+                  end
+                ''')
+
+    def test_waiting_machine_admission_does_not_schedule_factless_retries(self):
+        self.lua.execute('''
+          CFG.machineTypes.furnace.fuel={role='fuel',item='t:fuel',per=2}
+          local stage=machine('t:metal',{'t:ore'});stage.fuel={item='t:fuel',need=0}
+          new({stage}) -- fuel budget is unavailable until another delivery releases it
+          assert(#actions('fetchMany')==0 and S.nextDue(WORLD)==nil,
+            'waiting for a fact must not arm an admission backoff timer')
+          local revision=WORLD.revision;advance();assert(WORLD.revision==revision)
+          RUN.fuelAvailable['t:fuel']=1;advance()
+          assert(#actions('fetchMany')==1,'new fuel availability must admit without a timer')
         ''')
 
     def test_machine_fifo_packed_store_allocates_real_split_ids_and_byproducts(self):

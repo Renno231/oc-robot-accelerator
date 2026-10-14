@@ -2,7 +2,10 @@
 import unittest
 
 from lupa.lua53 import LuaRuntime
-from test_mes_fixtures import ROOT, generator, module
+from examples.mes import build_fixtures as generator
+from craftsystem.tests.test_database import MOCKS
+
+ROOT = generator.ROOT
 
 
 class OcpartsMesPlanTests(unittest.TestCase):
@@ -10,8 +13,7 @@ class OcpartsMesPlanTests(unittest.TestCase):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         lib = (ROOT / 'craftsystem/usr/lib').as_posix()
         self.lua.execute(f'package.path="{lib}/?.lua;{lib}/?/init.lua;"..package.path')
-        support = module('ocparts_mes_database_support', ROOT / 'craftsystem/tests/test_database.py')
-        self.lua.execute(support.MOCKS)
+        self.lua.execute(MOCKS)
         self.lua.globals().SOURCE_TEXT = generator.OCPARTS_RECIPES
         self.lua.globals().REQUEST_QTY = generator.OCPARTS_QTY
         self.lua.globals().BATCH = generator.OCPARTS_BATCH
@@ -92,6 +94,33 @@ class OcpartsMesPlanTests(unittest.TestCase):
         missing = [v for _, v in plan['missing'].items() if v['item'] == 'minecraft:coal']
         self.assertEqual(1, len(missing))
         self.assertEqual((generator.OCPARTS_QTY // 8, 1), (missing[0]['need'], missing[0]['have']))
+
+    def test_real_blueprint_consumption_and_leftovers(self):
+        plan = self.plan()
+        needed = dict(plan['inventory_needed'].items())
+        for identity, consumed in {'minecraft:iron_ingot': 24, 'minecraft:gold_ingot': 9,
+                                   'minecraft:redstone': 34, 'minecraft:paper': 2,
+                                   'minecraft:clay': 8, 'minecraft:dye:2': 8}.items():
+            self.assertEqual(consumed, needed[identity], identity)
+        tasks = {t['item']: t for _, t in plan['tasks'].items()}
+        board = plan['blueprint']['nodes'][tasks['opencomputers:material:2']['node']]
+        transistor = plan['blueprint']['nodes'][tasks['opencomputers:material:6']['node']]
+        self.assertNotIn('opencomputers:material:6', set(board['recipe'].values()))
+        self.assertNotIn('opencomputers:material:2', set(transistor['recipe'].values()))
+        for identity, qty in {'opencomputers:component:6':64, 'opencomputers:material:2':64,
+                              'opencomputers:material:4':64, 'opencomputers:material:6':16,
+                              'opencomputers:material:7':128}.items():
+            self.assertEqual(qty, tasks[identity]['qty_produced'])
+        remaining = dict(generator.OCPARTS_STOCK)
+        for _, task in plan['tasks'].items():
+            node = plan['blueprint']['nodes'][task['node']]
+            for slot, qty in node['input_quantities'].items():
+                identity = node['recipe'][slot]
+                remaining[identity] = remaining.get(identity, 0) - qty * task['repetitions']
+            identity = task['item']
+            remaining[identity] = remaining.get(identity, 0) + task['qty_produced']
+        remaining['minecraft:coal'] -= generator.OCPARTS_QTY // 8
+        self.assertEqual(generator.OCPARTS_FINAL, remaining)
 
 
 if __name__ == '__main__':

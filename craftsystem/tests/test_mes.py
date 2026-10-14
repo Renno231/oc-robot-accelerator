@@ -25,9 +25,29 @@ class MesTests(LuaCase):
             LISTENERS={};TIMERS={}
             package.preload.event=function() return {
                 listen=function(name,f) LISTENERS[name]=f;return true end,
-                timer=function(n,f) TIMERS[#TIMERS+1]=f;return #TIMERS end,
+                timer=function(n,f,times) TIMERS[#TIMERS+1]={due=TIME+n,fn=f,times=times or 1,period=n};return #TIMERS end,
+                cancel=function(id) TIMERS[id].due=math.huge end,
                 push=function(...) EVENTS[#EVENTS+1]={...};local f=LISTENERS[select(1,...)];if f then f(...) end end,
-                pull=function(n) TIME=TIME+(n or 0.2);for _,f in ipairs(TIMERS) do f() end end
+                pull=function(n)
+                    TIME=TIME+(n or 0.2)
+                    assert(TIME<10000,'fixture stalled')
+                    for id,j in pairs(JOBS) do
+                        if j.state=='queued' then j.state='waiting'
+                        elseif j.state=='waiting' then
+                            j.state=j.failWhenWait and 'failed' or 'done'
+                            if j.failWhenWait then
+                                j.reason=j.failWhenWait;j.moved=0
+                                for _,r in ipairs(j.perItem or {}) do r.moved=0;r.taken=0;r.shortfall=r.requested;r.reason=j.reason end
+                            end
+                        end
+                        if j.state~='queued' and j.state~='waiting' and not j.notified then
+                            j.notified=true;require('event').push('logistics',id,j.state)
+                        end
+                    end
+                    for _,t in ipairs(TIMERS) do if t.due<=TIME then
+                        t.times=t.times-1;t.due=t.times>0 and TIME+t.period or math.huge;t.fn()
+                    end end
+                end
             } end
             GROUPS={cpu1={type='crafter',roles={buffer='buf'}},
                 A={type='furnace',roles={input='ai',output='ao',fuel='af'}},
@@ -42,16 +62,7 @@ class MesTests(LuaCase):
             end
             function held(s,id) return CONTENTS[s] and CONTENTS[s].items[id] and CONTENTS[s].items[id].count or 0 end
             function job() NEXT=NEXT+1;JOBS[NEXT]={state='queued',moved=1};return NEXT end
-            package.preload.logistics=function() return {status=function(id)
-                local j=JOBS[id]; if j.state=='queued' then j.state='waiting';return j end
-                if j.state=='waiting' then
-                    j.state=j.failWhenWait and 'failed' or 'done'
-                    if j.failWhenWait then
-                        j.reason=j.failWhenWait;j.moved=0
-                        for _,r in ipairs(j.perItem or {}) do r.moved=0;r.taken=0;r.shortfall=r.requested;r.reason=j.reason end
-                    end
-                end; return j
-            end} end
+            package.preload.logistics=function() return {status=function(id) return JOBS[id] end} end
             package.preload.warehouse=function() return {
                 -- This fixture applies catalogue changes synchronously during
                 -- submission; terminal jobs therefore have a settled catalogue.
@@ -192,6 +203,7 @@ class MesTests(LuaCase):
                 sink(token,'robot_terminal',{address=address,jobId=jobId,status=r.status,receipt=r});return true
             end
             client.tick=function() end
+            client.nextDue=function() end
         ''')
         self.module('craft_plans', 'lib/craft_plans.lua')
         self.module('mes_config', 'lib/mes_config.lua')
@@ -209,7 +221,7 @@ class MesTests(LuaCase):
             ev.pull=function(n)
                 pulls=pulls+1
                 for id,j in pairs(JOBS) do
-                    if j.state=='done' then settled[id]=true end
+                    if j.state=='done' and not settled[id] then settled[id]=true;ev.push('warehouse','settled',id) end
                 end
                 return pull(n)
             end
@@ -234,7 +246,7 @@ class MesTests(LuaCase):
             ev.pull=function(n)
                 for id,j in pairs(JOBS) do
                     if j.state=='done' or j.state=='partial' then
-                        settled[id]=true
+                        if not settled[id] then settled[id]=true;ev.push('warehouse','settled',id) end
                         if j.state=='partial' then failedSettled=true end
                     end
                 end
@@ -350,13 +362,14 @@ class MesTests(LuaCase):
             return second,first
         '''), (2, 3))  # one claimed unit is already on a drone: the warehouse withholds it
 
-    def test_machine_timeout_reports_output(self):
+    def test_failed_output_retry_reports_retained_input(self):
         self.assertEqual(self.lua.execute('''
             put('stock','t:raw',1);put('stock','t:fuel',1);TIMEOUT=true
             local r=run({task('t:processed',{'t:raw'},1,1,'furnace')},{machines={furnace='A'}})
-            -- The furnace never started: its raw goes back to stock and it is back in service.
-            return r.status,r.error:find('deadline')~=nil,held('ai','t:raw'),held('stock','t:raw'),M.resources{config=CFG}.machines.A.state
-        '''), ('failed', True, 0, 1, 'idle'))
+            -- Recovery was exhausted: retain the raw and keep the machine unavailable.
+            return r.status,r.error:find('no output after recovery',1,true)~=nil,
+              held('ai','t:raw'),held('stock','t:raw'),M.resources{config=CFG}.machines.A.state
+        '''), ('failed', True, 1, 0, 'unknown'))
 
     def test_tool_fields_retained_without_branch_bindings(self):
         self.assertEqual(self.lua.execute('''

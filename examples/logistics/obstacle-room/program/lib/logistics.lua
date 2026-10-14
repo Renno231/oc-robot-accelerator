@@ -22,7 +22,7 @@ assert(port>=1 and port<=65535 and port%1==0 and reserve>0 and reserve<=5000 and
 local modem=component.modem
 assert(modem and modem.isWireless(),"wireless modem required")
 modem.open(port)
-local file=assert(io.open("/lib/logistics/agent.lua","r"));local source=file:read("*a");file:close()
+local file=assert(io.open("/usr/lib/logistics/agent.lua","r"));local source=file:read("*a");file:close()
 local chunks=math.ceil(#source/2048);assert(chunks>=1 and chunks<=16,"agent download bound")
 local registry=read("/etc/logistics.drones",{})
 local savedRoutes=read("/etc/logistics.routes",{})
@@ -146,33 +146,26 @@ local function points(names)
   local out={};for _,name in ipairs(names or {}) do local p=map.node(name);out[#out+1]={name=name,x=p.x,y=p.y,z=p.z} end;return out
 end
 local function activeCount(job)
-  local n,amount=0,0;for _,a in pairs(job.active) do n=n+1;amount=amount+a.amount end;return n,amount
+  local n=0;for _ in pairs(job.active) do n=n+1 end;return n
 end
 local function scheduleJob(job)
   if not job or job.finished then return end
-  local n,reserved=activeCount(job)
+  local n=activeCount(job)
   -- An open-ended take cannot be partitioned before its first local read.
   if job.openEnded and n>0 then return end
   if job.blocked then
     if n==0 and not next(job.lostPending or {}) then finish(job,job.moved>0 and "partial" or "failed") end
     return
   end
-  if job.remaining==0 and not job.openEnded and not job.steps then if n==0 then finish(job,"done") end;return end
   for _,d in pairs(fleet) do
     if job.openEnded and n>0 then break end
     if n>=(job.opts.drones or math.huge) then break end
-    local available=(job.openEnded or job.steps) and math.huge or job.remaining-reserved
     -- A job for one held drone delivers what that drone already carries.
     local ready=job.opts.drone==nil and d.state=="idle" or job.opts.drone==d.name and d.state=="held" and d.held~=nil
     local ordinary=false
     if d.survey and not job.survey and not job.opts.drone then for _,v in pairs(fleet) do if v.state=='idle' and not v.survey then ordinary=true;break end end end
-    if available>0 and ready and (not job.survey or d.survey) and not ordinary then
+    if ready and (not job.survey or d.survey) and not ordinary then
       local capacity=64*d.cargoSlots
-      if job.opts.split==false and not job.steps and job.remaining>capacity then
-        job.blocked=true;job.reason="requested "..job.remaining.." exceeds one trip "..capacity.." ("..d.cargoSlots.." slots x 64)"
-        if n==0 then finish(job,"failed") end;return
-      end
-      local amount=math.min(available,capacity)
       local ok,task=pcall(function()
         if job.action then
           local a=job.action.node or job.action.a
@@ -181,6 +174,12 @@ local function scheduleJob(job)
           return {action=job.action,reserve=reserve,routes=routes}
         end
         if job.steps then
+          -- Transfers must have a delivery and return route before picking up cargo.
+          if job.item then
+            local source,target=job.from.node,job.to.node
+            for _,leg in ipairs({{d.home,source},{source,target},{target,source},{source,d.home},{target,d.home}}) do path(leg[1],leg[2],job.avoid) end
+            if job.opts.overflow then path(target,job.opts.overflow.node,job.avoid);path(job.opts.overflow.node,d.home,job.avoid) end
+          end
           local function holding() local c={};if job.opts.cargo then for _,h in ipairs(d.held) do local k=itemKey(h.item);c[k]=(c[k] or 0)+h.count end end;return c end
           local steps={};local carried,total=holding(),0;local reservations={};local limits={}
           for _,assigned in pairs(job.active) do
@@ -230,9 +229,6 @@ local function scheduleJob(job)
           end
           return {steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,routes={take=points({d.home})}}
         end
-        local routes={take=path(d.home,job.from.node,job.avoid),put=path(job.from.node,job.to.node,job.avoid),back=path(job.to.node,job.from.node,job.avoid),homeSource=path(job.from.node,d.home,job.avoid),homeDest=path(job.to.node,d.home,job.avoid)}
-        if job.opts.overflow then routes.overflow=path(job.to.node,job.opts.overflow.node,job.avoid);routes.homeOverflow=path(job.opts.overflow.node,d.home,job.avoid) end
-        return {item=job.item,count=amount,from=job.from,to=job.to,overflow=job.opts.overflow,wait=job.opts.wait,reserve=reserve,routes=routes}
       end)
       if not ok then job.blocked=true;job.reason=tostring(task);if n==0 then finish(job,job.moved>0 and "partial" or "failed") end;return end
       if not task then return end
@@ -242,9 +238,9 @@ local function scheduleJob(job)
       nextTrip=nextTrip+1
       local timing={trip=nextTrip,drone=d.name,startedAt=uptime()}
       job.tripTimings=job.tripTimings or {};job.tripTimings[#job.tripTimings+1]=timing
-      job.active[nextTrip]={drone=d.name,amount=amount,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
+      job.active[nextTrip]={drone=d.name,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
       job.dispatchedAt=job.dispatchedAt or uptime()
-      save(job);send(d,"trip",nextTrip,data);n=n+1;reserved=reserved+amount
+      save(job);send(d,"trip",nextTrip,data);n=n+1
     end
   end
 end
@@ -261,8 +257,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   local d=addresses[sender];if not d or token~=d.token then return end
   d.received=(d.received or 0)+1
   if d.kind=="sensor" then if kind=="boot" then
-    local f=assert(io.open("/lib/logistics/sensor.lua"));send(d,"code",1,1,f:read("*a"));f:close();send(d,"start")
-    else event.push("logistics_sensor",d.name,kind,id) end;return
+    local f=assert(io.open("/usr/lib/logistics/sensor.lua"));send(d,"code",1,1,f:read("*a"));f:close();send(d,"start")
+    end;event.push("logistics_sensor",d.name,kind,id);return
   end
   if kind=="boot" then
     d.survey=id==true
@@ -284,10 +280,6 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           end
           job.remaining=math.max(0,job.requested-job.moved)
           for _,cargo in ipairs(progress.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=cargo.item,count=cargo.count} end
-        else
-          job.moved=job.moved+(progress.moved or 0);job.remaining=job.requested-job.moved
-          job.taken=job.taken+(progress.taken or 0)
-          if (progress.held or 0)>0 then job.held[#job.held+1]={drone=d.name,item=job.item,count=progress.held} end
         end
         job.blocked=true;job.reason="drone lost: "..d.name
         d.lostJob=job.id;job.lostPending=job.lostPending or {};job.lostPending[d.name]=true
@@ -298,7 +290,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     state(d,d.lost and "lost" or "booting")
     local code=source
     if d.survey then
-      local f=assert(io.open('/lib/logistics/survey.lua'));code='local surveyStep=(function()\n'..f:read('*a')..'\nend)()\n'..code;f:close()
+      local f=assert(io.open('/usr/lib/logistics/survey.lua'));code='local surveyStep=(function()\n'..f:read('*a')..'\nend)()\n'..code;f:close()
     end
     local count=math.ceil(#code/2048);assert(count<=16,'agent download bound')
     for i=1,count do send(d,"code",i,count,code:sub((i-1)*2048+1,i*2048)) end
@@ -420,8 +412,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           if s.all then s.complete=s.complete or r.complete;if not s.complete then complete=false;job.openEnded=true end
           elseif s.count and s.moved<s.count then complete=false end
         end
-        job.moved=0
-        for _,s in ipairs(job.steps) do if s.put then job.moved=job.moved+s.moved end end
+        job.moved=0;job.refused=0
+        for _,s in ipairs(job.steps) do if s.put then
+          job.moved=job.moved+s.moved;job.refused=job.refused+(s.refused or 0)
+        end end
         job.remaining=math.max(0,job.requested-job.moved)
         for _,held in ipairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=held.item,count=held.count} end
         d.state=(result.held or 0)>0 and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil;d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
@@ -434,28 +428,6 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         if complete and not job.blocked and not next(job.active) then finish(job,"done") else save(job);wakeScheduler() end
         return
       end
-      job.moved=job.moved+(result.moved or 0);job.remaining=job.requested-job.moved;job.trips=job.trips+1
-      job.maxSize=result.maxSize or job.maxSize
-      for _,key in ipairs({"taken","returned","overflow","emptied","knownTaken"}) do job[key]=(job[key] or 0)+(result[key] or 0) end
-      job.refused=(job.refused or 0)+(result.refused or 0)
-      job.short=job.short or result.short
-      if result.short then job.found=(result.left or 0)+(result.returned or 0)
-      elseif job.found then job.found=math.max(0,job.found-(result.taken or 0)+(result.returned or 0)) end
-      if (result.held or 0)>0 then job.held[#job.held+1]={drone=d.name,item=job.item,count=result.held};d.state="held";d.held={{item=job.item,count=result.held}} else d.state="idle";d.held=nil end
-      d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
-      if result.recharge then
-        -- The wait was interrupted to charge; no source retry was consumed.
-      elseif job.opts.split==false and result.maxSize and job.requested>d.cargoSlots*result.maxSize then
-        job.blocked=true;job.reason="requested "..job.requested.." exceeds actual one trip "..d.cargoSlots*result.maxSize.." ("..d.cargoSlots.." slots x "..result.maxSize..")"
-      elseif (result.moved or 0)<(result.taken or 0) or (result.held or 0)>0 then
-        job.blocked=true;job.reason=result.reason or "destination refused items"
-      elseif (result.taken or 0)<assigned.amount and (not result.maxSize or (result.taken or 0)<d.cargoSlots*result.maxSize) then
-        if result.short and (result.left or 0)==0 then job.blocked=true;job.reason=result.reason or "source empty" else
-        job.shortfalls=job.shortfalls+1
-        if job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason or "source shortfall" end
-        end
-      end
-      save(job);wakeScheduler()
     end
   end
 end
@@ -527,17 +499,11 @@ local function options(opts)
   end
   return out
 end
+local submit
 function M.transfer(item,count,from,to,opts)
   assert(type(item)=="table" and type(item.name)=="string" and (item.damage==nil or (type(item.damage)=="number" and item.damage>=0 and item.damage%1==0)) and (item.label==nil or type(item.label)=="string"),"item required")
   assert(type(count)=="number" and count>0 and count<math.huge and count%1==0,"positive count required")
-  opts=options(opts)
-  local job={item=serialization.unserialize(serialization.serialize(item)),requested=count,moved=0,remaining=count,state="queued",held={},opts=serialization.unserialize(serialization.serialize(opts)),active={},trips=0,shortfalls=0,taken=0,returned=0,overflow=0}
-  nextJob=nextJob+1;job.id=nextJob;job.queuedAt=uptime();jobs[nextJob]=job
-  local ok,err=pcall(function() job.from=endpoint(from);job.to=endpoint(to);if opts.overflow then job.opts.overflow=endpoint(opts.overflow) end end)
-  if not ok then finish(job,"failed",tostring(err)) else
-    mutation(job,{job.from,job.to});queue[#queue+1]=job.id;save(job);wakeScheduler()
-  end
-  return job.id
+  return submit({{take=from,item=item,count=count},{put=to,item=item,count=count}},opts,item)
 end
 function M.status(id)
   local job=jobs[id];if not job then return nil end
@@ -549,6 +515,12 @@ function M.status(id)
   end
   out.overflowEndpoint=job.opts.overflow
   out.short=job.short;out.found=job.found
+  if job.item and job.steps then
+    local take=job.steps[1] or {}
+    for _,key in ipairs({"maxSize","short","found","emptied","knownTaken"}) do out[key]=take[key] end
+    for _,key in ipairs({"taken","returned","overflow"}) do out[key]=take[key] or 0 end
+    out.steps=nil
+  end
   return serialization.unserialize(serialization.serialize(out))
 end
 -- Public enumeration: callers need not guess ids or access scheduler tables.
@@ -594,7 +566,7 @@ function M.probe(node,command)
   local id=action('scan',node)
   jobs[id].survey=true;jobs[id].action={kind='survey',node=node,command=command};save(jobs[id]);return id
 end
-function M.job(steps,opts)
+submit=function(steps,opts,transferItem)
   assert(type(steps)=="table" and #steps>0,"steps required")
   nextJob=nextJob+1;local id=nextJob
   local job={id=id,state="queued",requested=0,moved=0,remaining=0,steps={},held={},active={},trips=0,shortfalls=0,opts=options(opts)}
@@ -631,6 +603,11 @@ function M.job(steps,opts)
     end
     job.openEnded=job.openEnded or job.requested==0
   end)
+  if transferItem then
+    job.item=serialization.unserialize(serialization.serialize(transferItem))
+    job.from=job.steps[1] and job.steps[1].take;job.to=job.steps[2] and job.steps[2].put
+    job.requested=steps[1].count;job.remaining=job.requested
+  end
   if not ok then finish(job,"failed",tostring(err)) else
     local endpoints,reads={},{}
     for _,step in ipairs(job.steps) do
@@ -642,6 +619,7 @@ function M.job(steps,opts)
   end
   return id
 end
+function M.job(steps,opts) return submit(steps,opts) end
 function M.route(name,steps)
   assert(type(name)=="string" and name~="" and type(steps)=="table","route name and steps required")
   savedRoutes[name]=serialization.unserialize(serialization.serialize(steps))

@@ -71,6 +71,7 @@ local function fly(path)
       while drone.getOffset()>=0.02 or drone.getVelocity()>=0.02 do
         computer.pullSignal(flightSleep(offset))
         offset=drone.getOffset()
+        if offset<0.02 and drone.getVelocity()<0.02 then break end
         if offset<best-0.1 then best=offset;progress=computer.uptime() end
         if computer.uptime()-progress>=3 then
           local stalled=computer.uptime()-progress
@@ -106,6 +107,7 @@ local function probeMove(p)
   while drone.getOffset()>=.02 or drone.getVelocity()>=.02 do
     computer.pullSignal(.1)
     local offset=drone.getOffset()
+    if offset<.02 and drone.getVelocity()<.02 then break end
     if offset<best-.1 then best=offset;progress=computer.uptime() end
     if computer.uptime()-progress>=3 then
       drone.move(x-p.x,y-p.y,z-p.z)
@@ -269,7 +271,11 @@ local function runSteps(task,id,result)
       if got>0 and not result.reason then result.reason="undelivered cargo returned";result.refused=true end
     end
   end
-  progress();goTo(task.home)
+  progress()
+  if result.recharge and result.held>0 then
+    result.recharge=nil;result.refused=true;result.reason="source refused cargo on charging interruption"
+  end
+  goTo(task.home)
   if computer.energy()<task.reserve then
     report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
   end
@@ -286,10 +292,8 @@ if not x or drone.getOffset()>=.02 then
   end
 end
 report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
-local backoff=0.05
 while true do
-  local e={computer.pullSignal(backoff)}
-  backoff=math.min(0.5,backoff*2)
+  local e={computer.pullSignal()}
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="release" then
     last=nil
     local listing=cargoListing()
@@ -299,8 +303,7 @@ while true do
     local task=decode(e[9]);local id=e[8]
     if task and (cargoCount()==0 or task.cargo and task.steps) then
       activeTrip=id;history={task.routes.take[1]};currentPoint=history[1];rerouted=false;testingCandidate=false
-      backoff=0.05
-      local result={state="idle",taken=0,moved=0,returned=0,overflow=0,held=0}
+      local result={state="idle",held=0}
       local ok,err=pcall(function()
         -- Every trip starts/ends at home. Charge before accepting actual work.
         if computer.energy()<task.reserve then
@@ -322,42 +325,6 @@ while true do
           if result.survey then result.survey.tripEnergy=before-computer.energy() end
           if computer.energy()<task.reserve then report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve end
           return
-        end
-        travel(task.routes.take)
-        local left;result.taken,result.maxSize,result.reason,result.recharge,left,result.emptied=waitingTake(task.from,task.item,task.count,task.wait,task.reserve)
-        result.knownTaken=result.emptied and result.taken or 0
-        result.short=not result.recharge and result.taken<task.count and cargoRoom(task.item) or nil
-        result.left=result.short and left or nil
-        report(id,{state="progress",taken=result.taken,moved=0,held=cargoCount()})
-        if result.recharge then
-          result.returned=put(task.from,task.item,result.taken)
-          travel(task.routes.homeSource);result.held=cargoCount()
-          report(id,{state="charging"})
-          repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
-          if result.held>0 then result.recharge=false;result.reason="source refused cargo on charging interruption" end
-          return
-        end
-        travel(task.routes.put)
-        result.moved,result.reason=put(task.to,task.item,result.taken)
-        result.refused=result.taken-result.moved
-        report(id,{state="progress",taken=result.taken,moved=result.moved,held=cargoCount()})
-        local remaining=result.taken-result.moved
-        if remaining>0 then
-          if task.overflow then
-            travel(task.routes.overflow)
-            result.overflow=put(task.overflow,task.item,remaining)
-            travel(task.routes.homeOverflow)
-          else
-            travel(task.routes.back)
-            result.returned=put(task.from,task.item,remaining)
-            travel(task.routes.homeSource)
-          end
-        else travel(task.routes.homeDest) end
-        result.held=cargoCount()
-        if result.taken<task.count and not result.reason then result.reason="source shortfall" end
-        if computer.energy()<task.reserve then
-          report(id,{state="charging"})
-          repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
         end
       end)
       if not ok then

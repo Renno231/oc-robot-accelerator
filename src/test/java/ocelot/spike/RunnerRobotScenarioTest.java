@@ -45,7 +45,9 @@ public class RunnerRobotScenarioTest {
         root=fixture();root.getAsJsonArray("robots").get(0).getAsJsonObject().getAsJsonObject("program").addProperty("directory","program");rejects(root);
         root=fixture();root.getAsJsonArray("robots").get(0).getAsJsonObject().addProperty("facing","up");rejects(root);
         root=fixture();root.getAsJsonObject("expect").getAsJsonArray("robots").get(0).getAsJsonObject().addProperty("index",1);rejects(root);
-        root=fixture();root.getAsJsonObject("expect").getAsJsonArray("robots").get(0).getAsJsonObject().add("inventory",new JsonParser().parse("[{\"slot\":65,\"count\":0}]"));rejects(root);
+        root=fixture();root.getAsJsonObject("expect").getAsJsonArray("robots").get(0).getAsJsonObject().add("inventory",new JsonParser().parse("[{\"slot\":85,\"count\":0}]"));
+        assertEquals(1,RunnerScenario.parse(root.toString()).v4.robots.size());
+        root.getAsJsonObject("expect").getAsJsonArray("robots").get(0).getAsJsonObject().add("inventory",new JsonParser().parse("[{\"slot\":86,\"count\":0}]"));rejects(root);
     }
     @Test public void strictContainerEditTriggerAndCapacity() throws Exception {
         for(String key:new String[]{"atTick","position","count","slot"}) {

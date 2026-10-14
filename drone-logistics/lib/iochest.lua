@@ -115,6 +115,14 @@ end
 event.listen('station',sync)
 event.listen('logistics',completed)
 event.listen('logistics_sensor',function(_,name,kind,payload)
+ if kind=='boot' then
+  seen[name]=nil
+  for _,r in pairs(rows) do if r.sensor==name then
+   r.seq=nil;save(r)
+   if r.refresh then lg.ackSensor(name,r.refresh,'status') end
+  end end
+  return
+ end
  if kind~='report' then return end;local p=ser.unserialize(payload);seen[name]=p
  for _,r in pairs(rows) do if r.sensor==name then report(r,p) end end
 end)

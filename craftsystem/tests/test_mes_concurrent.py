@@ -71,7 +71,7 @@ class MesConcurrentTests(LuaCase):
           return ra.status,rb.status,held('stock','t:plateB'),r.crafters.cpu1.state,r.crafters.cpu2.state,r.machines.kiln.state,next(require('mes_service').claims())==nil
         '''), ('failed', 'complete', 1, 'idle', 'idle', 'idle', True))
 
-    def test_request_blocked_behind_another_runs_loads_waits_past_its_input_deadline(self):
+    def test_request_blocked_behind_another_runs_loads_waits_for_collection_not_a_time_limit(self):
         self.assertEqual(self.lua.execute('''
           put('stock','t:ore',2);put('stock','t:sand',2);CONSUME_DELAY=90;OUTPUT_DELAY=95;CFG.machineTypes.furnace.seconds=48
           MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}},{inputs={input={['t:sand']=1}},outputs={['t:glass']=1}}}
@@ -80,3 +80,32 @@ class MesConcurrentTests(LuaCase):
           local ra,rb=M.wait(a),M.wait(b)
           return ra.status,rb.status,rb.reason,held('stock','t:glass'),rb.finished-rb.started>60
         '''), ('complete', 'complete', None, 2, True))
+
+    def test_nonblocking_furnace_defers_a_refused_recipe_until_collection(self):
+        self.assertEqual(self.lua.execute('''
+          CAPACITY.in1=1;CONSUME_DELAY=30;OUTPUT_DELAY=32
+          CFG.machineTypes.furnace.seconds=16
+          put('stock','t:clay',2);put('stock','t:log',2)
+          MACHINE_RECIPES.kiln={
+            {inputs={input={['t:clay']=1}},outputs={['t:brick']=1}},
+            {inputs={input={['t:log']=1}},outputs={['t:charcoal']=1}}}
+          local a=submit({task('t:brick',{'t:clay'},nil,nil,'furnace',2)})
+          local b=submit({task('t:charcoal',{'t:log'},nil,nil,'furnace',2)})
+          local ra,rb=M.wait(a),M.wait(b)
+          return ra.status,rb.status,held('stock','t:brick'),held('stock','t:charcoal')
+        '''), ('complete', 'complete', 2, 2))
+
+    def test_exhausted_machine_recovery_fails_queued_work_without_reloading(self):
+        self.assertEqual(self.lua.execute('''
+          CFG.machineTypes.furnace.blocking=true;CFG.machineTypes.furnace.seconds=0
+          CONSUME_DELAY=0;OUTPUT_DELAY=200
+          put('stock','t:ore',1);put('stock','t:sand',1)
+          MACHINE_RECIPES.kiln={
+            {inputs={input={['t:ore']=1}},outputs={['t:metal']=1}},
+            {inputs={input={['t:sand']=1}},outputs={['t:glass']=1}}}
+          local a=submit({task('t:metal',{'t:ore'},nil,nil,'furnace')})
+          local b=submit({task('t:glass',{'t:sand'},nil,nil,'furnace')})
+          local ra,rb=M.wait(a),M.wait(b)
+          local fetches=0;for _,m in ipairs(MOVES) do if m.kind=='fetch' then fetches=fetches+1 end end
+          return ra.status,rb.status,fetches,#SCANS,held('stock','t:sand'),M.resources{config=CFG}.machines.kiln.state
+        '''), ('failed', 'failed', 1, 1, 1, 'unknown'))

@@ -3,10 +3,18 @@ from pathlib import Path
 import tempfile
 import unittest
 from lupa.lua53 import LuaRuntime
-from native_store_evidence import enrich, read_store, value
+from native_store_evidence import LuaData, enrich, read_store, value
 
 
 class NativeStoreEvidenceTest(unittest.TestCase):
+    def test_wire_literals_decode_without_executing_lua(self):
+        self.assertEqual(LuaData(r'''{state="idle",steps={{moved=3}},energy=inf,label="a\010b"}''').parse(),
+                         {'state': 'idle', 'steps': {'1': {'moved': 3}},
+                          'energy': {'nonfinite': 'inf'}, 'label': 'a\nb'})
+        for text in ('os.execute("bad")', '{}; return {}', '{a=1,a=2}', '{a=}', '{a="unterminated}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                LuaData(text).parse()
+
     def setUp(self):
         self.lua = LuaRuntime(encoding=None)
         self.lua.execute(b'cbor=assert(load(...))()', Path('drone-logistics/lib/cbor.lua').read_bytes())

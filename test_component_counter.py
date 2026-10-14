@@ -5,6 +5,7 @@ import unittest
 
 from lupa.lua53 import LuaRuntime
 from build_machine_comparisons import prepare
+from examples.mes.build_fixtures import build_native
 
 ROOT = Path(__file__).resolve().parent
 
@@ -73,6 +74,7 @@ class ComponentCounterTests(unittest.TestCase):
     def test_comparison_preparation_installs_counter(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / 'observed'
-            prepare(ROOT / 'examples/mes/torches16', destination, 'coordinated')
+            source = build_native(Path(directory) / 'source', 'torches16').parent
+            prepare(source, destination, 'coordinated')
             self.assertEqual((destination / 'program/component-counter.lua').read_bytes(),
                              (ROOT / 'machine_component_counter.lua').read_bytes())

@@ -18,7 +18,7 @@ class StationsTests(unittest.TestCase):
           local countedIO=io.open
           io.open=function(p,m)
             if p=='/etc/map.cfg' or p=='/etc/warehouse.cfg' or p=='/etc/logistics.drones'
-              or p=='/lib/logistics/agent.lua' then return oldIO(p,m) end
+              or p=='/usr/lib/logistics/agent.lua' then return oldIO(p,m) end
             return countedIO(p,m)
           end
           local ser=require('serialization');local encode=ser.serialize
@@ -42,7 +42,7 @@ class StationsTests(unittest.TestCase):
             FAKES['remote'..i]={token='token'..i,home=home};fleet['d'..i]={address='remote'..i,token='token'..i,home=home}
             if i>1 then map.link('home'..(i-1),home) end
           end
-          map.save();files['/lib/logistics/agent.lua']='return true'
+          map.save();files['/usr/lib/logistics/agent.lua']='return true'
           files['/etc/logistics.drones']=ser.serialize(fleet)
           require('component').modem.send=function(addr,port,token,kind,id,payload)
             local f=FAKES[addr]
@@ -80,8 +80,8 @@ class StationsTests(unittest.TestCase):
             drain();assert(#lg.drones()==6)
           end
           reload()
-          function finishOne()
-            for addr,f in pairs(FAKES) do if f.task then
+          function finishOne(wanted)
+            for addr,f in pairs(FAKES) do if f.task and (not wanted or f.id==wanted) then
               local task=f.task;local r={state='idle',steps={}};local carried=0
               if task.action then
                 r.test=BLOCKED and 'blocked' or 'ok';r.reason=BLOCKED and 'blocked candidate' or nil
@@ -147,10 +147,11 @@ class StationsTests(unittest.TestCase):
           lg=require('logistics');wh=require('warehouse')
           assert(package.loaded.stations==nil)
           package.path='craftsystem/usr/lib/?.lua;'..package.path
-          package.preload.craft_client=function() return {install=function() return {} end,tick=function() end} end
+          package.preload.craft_client=function() return {install=function() return {} end,tick=function() end,nextDue=function() end} end
           package.preload.mes_config=function() return {installRobots=function() end,
             config=function() return {crafters={},machineTypes={}} end} end
           require('event').timer=function() return 1 end
+          require('event').cancel=function() end
           assert(require('mes_service').start())
           assert(package.loaded.stations and package.loaded.stats and package.loaded.mes_alerts and LISTEN.logistics)
           for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
@@ -278,6 +279,77 @@ class StationsTests(unittest.TestCase):
           local job=st.get('evicted').jobs[1];local h=require('store').open('/etc/logistics.state','log');h:load()
           h:delete('job_'..job);h:flush();reload();finishAll()
           assert(st.get('evicted').state=='ready' and st.get('evicted').jobs[1]==nil)
+        ''')
+
+    def shared_paths(self):
+        self.lua.execute('''
+          local function spec(name,x)
+            local path={{x=0,y=65,z=0},{x=0,y=65,z=1}}
+            for i=1,x do path[#path+1]={x=i,y=65,z=1} end
+            return {prefix=name,x=x,y=64,z=1,face='top',role='stock',
+              members={{x=x,y=64,z=1}},paths={path}}
+          end
+          assert(st.add('wall',spec('a',1)));assert(st.add('wall',spec('b',2)))
+        ''')
+
+    def test_shared_path_checks_survive_restart_and_receipt_eviction(self):
+        for restart in ('none', 'active', 'missing'):
+            with self.subTest(restart=restart):
+                self.setUp();self.shared_paths()
+                self.lua.globals().RESTART=restart
+                self.lua.execute('''
+                  local id=st.get('a').jobs[1]
+                  assert(st.get('b').jobs[1]==id,'shared edge dispatched twice')
+                  if RESTART=='active' then drain();reload()
+                  elseif RESTART=='missing' then
+                    local h=require('store').open('/etc/logistics.state','log');h:load()
+                    h:delete('job_'..id);h:flush();reload()
+                  end
+                  assert(st.get('a').jobs[1]==st.get('b').jobs[1])
+                  finishAll()
+                  assert(st.get('a').state=='ready' and st.get('b').state=='ready')
+                  local tests,reads=counts();assert(tests==3 and reads==2,tests..' tests, '..reads..' reads')
+                  assert(st.remove('a',{items='forget'}))
+                  assert(map.route('home1','h2_65_1'),'removing one station broke the other')
+                  assert(st.remove('b',{items='forget'}))
+                  assert(#map.links('home1')==1,'shared commissioning link leaked')
+                ''')
+
+    def test_shared_blocked_check_fails_both_and_retry_shares_new_check(self):
+        self.shared_paths()
+        self.lua.execute('''
+          BLOCKED=true;finishAll()
+          local tests,reads=counts();assert(tests==1 and reads==0)
+          assert(st.get('a').state=='failed' and st.get('b').state=='failed')
+          assert(#map.links('home1')==1,'blocked link was installed')
+          BLOCKED=false;assert(st.retry('a'));assert(st.retry('b'))
+          assert(st.get('a').jobs[1]==st.get('b').jobs[1])
+          finishAll();tests,reads=counts();assert(tests==4 and reads==2)
+          assert(st.get('a').state=='ready' and st.get('b').state=='ready')
+        ''')
+
+    def test_pending_path_reuses_link_completed_while_checking_its_other_edges(self):
+        self.lua.execute('''
+          assert(st.add('wall',{prefix='a',x=1,y=64,z=1,face='top',role='stock',
+            members={{x=1,y=64,z=1}},paths={{{x=0,y=65,z=0},{x=0,y=65,z=1},{x=1,y=65,z=1}}}}))
+          assert(st.add('wall',{prefix='b',x=1,y=65,z=2,face='north',role='stock',
+            members={{x=1,y=65,z=2}},paths={{{x=5,y=65,z=0},{x=4,y=65,z=1},
+              {x=3,y=65,z=1},{x=2,y=65,z=1},{x=0,y=65,z=1},{x=1,y=65,z=1}}}}))
+          local reading=false
+          LISTEN.station={function(_,name,state,phase)
+            if name=='b' then
+              if phase=='read' then reading=true end
+              assert(not (reading and phase=='path'),'published a superseded phase')
+            end
+          end}
+          drain()
+          while st.get('a').phase=='path' do assert(finishOne(st.get('a').jobs[1])) end
+          finishAll()
+          local tests,reads=counts();assert(tests==6 and reads==2,tests..' tests, '..reads..' reads')
+          assert(st.get('a').state=='ready' and st.get('b').state=='ready')
+          assert(st.remove('a',{items='forget'}));assert(map.route('home1','h1_65_1'))
+          assert(st.remove('b',{items='forget'}))
+          assert(#map.links('h1_65_1')==0,'reused completed link leaked')
         ''')
 
     def test_validation_changes_nothing_T1(self):

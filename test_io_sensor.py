@@ -59,7 +59,7 @@ class SensorTransportTests(unittest.TestCase):
     def test_legacy_hello_sensor_pair_download_and_scheduler_exclusion(self):
         lua = restart.LogisticsRestartTests().start('log')
         lua.execute('''
-          files['/lib/logistics/sensor.lua']='return true'
+          files['/usr/lib/logistics/sensor.lua']='return true'
           emit('modem_message','local','old',27103,0,'lgx_hello')
           emit('modem_message','local','sensoraddr',27103,0,'lgx_hello','sensor')
           assert(#lg.pending()==1 and lg.pending()[1]=='old')

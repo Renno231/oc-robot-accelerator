@@ -337,10 +337,28 @@ Source changes require an explicit `build_db`; normal lookups do not scan for ch
 - `craft_commands.lua`, `craft_management_ui.lua`: headless purpose adapters and explicitly interactive management; `craft` wraps purpose binaries through OpenOS shell execution.
 - `craft_client.lua`: one job's discovery, connection, progress, deadlines, interruption and cleanup. `runDetailed` distinguishes confirmed completion/failure from unknown execution; legacy `run` retains its two-return interface.
 - `cproc.lua`: network request validation, single-job ownership and truthful terminal status.
-- `craft_executor.lua`, `craft_execution.lua`, `craft_resources.lua`: live gathering, branch/tool ownership, grid loading, physical wear/output verification and checked return-storage counts.
+- `craft_executor.lua`, `craft_resources.lua`: live gathering, branch/tool ownership, grid loading, physical wear/output verification and checked return-storage counts.
 - `robinv.lua`: robot inventory operations and cache synchronization. `component.robot.count()` is tick-free; empty-slot checks use it without stack-detail reads. Affected occupied slots are read back for identity after transfers/crafts.
 
 `COMPLETE` means that the robot verified **every** requested output, returned its inventory, and read back sufficient outputs/reservations in storage. A short transfer, wrong/partial output, invalid plan, cancellation, missing storage or blocked return produces failure. Cleanup failure messages identify items that may remain on the robot.
+
+### MES machine recovery
+
+Machine admission follows inventory and job events. Output collections use
+configured or learned processing times; partial output updates the remaining
+work's schedule. There is no fixed grace period or exponential retry timer.
+
+An empty collection triggers one read of the machine's roles to refresh its
+inventory view and timing, then one collection retry. Continued output permits
+continued work. A failed retry quarantines unresolved loads and fails work
+queued for that machine; a later request must reconcile those materials before
+reusing it. A fully refused input with no owned load to wait for uses the
+existing read/empty recovery once before retrying admission.
+
+Recovery attempts and remaining due times survive MES restarts. An unknown or
+badly underestimated slow machine can fail before its first output; provide a
+processing-time estimate before retrying it. Recovery preserves material
+ownership, but cannot repair a machine's power or external configuration.
 
 ## Tool and container semantics
 

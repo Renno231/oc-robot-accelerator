@@ -2,6 +2,66 @@ from test_transport import TransportFixture
 
 
 class ClientLifecycleTests(TransportFixture):
+    def test_failed_foreground_reconnect_is_not_repeated(self):
+        self.lua.execute('''
+            A.duration=3
+            local net=C.require('tnet');local connect=net.connect;C.connects=0
+            net.connect=function(...) C.connects=C.connects+1;C.conn=connect(...);return C.conn end
+            job(C,'robot-a',{connectTimeout=0.1,jobTimeout=0.8})
+            untilDone(function() return A.executions==1 end)
+            A.open[5990]=false;C.conn:close()
+            untilDone(function() return C.result end,2)
+            assert(C.result.status=='unknown' and C.result.mayHaveExecuted)
+            assert(C.connects==2 and A.executions==1)
+        ''')
+
+    def test_foreground_waits_for_signals_and_reconciles_once_on_close(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote):
+                self.setUp()
+                self.lua.globals().REMOTE_CLOSE = remote
+                self.lua.execute('''
+                    A.duration=2;A.progressEvery=0.5
+                    local net=C.require('tnet');local connect=net.connect;C.connects=0
+                    net.connect=function(...) C.connects=C.connects+1;C.conn=connect(...);return C.conn end
+                    local waiting=job(C,'robot-a',{idleTimeout=5})
+                    untilDone(function() return A.executions==1 end);advance(0.2)
+                    assert(waiting.due>NOW+1,'foreground is waking periodically instead of waiting for signals')
+                    if REMOTE_CLOSE then A.require('api').endpoints.craftServer.connections.client:close()
+                    else C.conn:close() end
+                    untilDone(function() return C.result end)
+                    assert(C.result.success and A.executions==1 and C.connects==2)
+                    local crafts,statuses=0,0
+                    for _,m in ipairs(commands('client')) do if m.msg=='rpc' then
+                        if m.args[2]=='craft' then crafts=crafts+1 end
+                        if m.args[2]=='status' then statuses=statuses+1 end
+                    end end
+                    assert(crafts==1 and statuses==1)
+                ''')
+
+    def test_foreground_job_keeps_service_sink_and_other_jobs_alive(self):
+        self.lua.execute('''
+            A.duration=2;B.duration=0.4;C.facts={}
+            spawn(function()
+                local client=C.require('craft_client')
+                client.install(function(token,what,data)
+                    assert(token==nil or token=='service' or token=='after')
+                    C.facts[#C.facts+1]={token=token,what=what,data=data}
+                    if token=='service' and what=='robot_terminal' then C.serviceResult=data end
+                    if token=='after' and what=='robot_status' then C.after=data end
+                end)
+                assert(client.begin('service','robot-a',{},'service-job'))
+                C.result=client.runDetailed({},{serverAddress='robot-b'})
+                assert(C.result.success and not C.serviceResult)
+                assert(client.inspect('after','robot-a','service-job'))
+            end,C)
+            untilDone(function() return C.after end)
+            assert(C.after.receipt.status=='RUNNING')
+            untilDone(function() return C.serviceResult end)
+            assert(C.serviceResult.success and A.executions==1 and B.executions==1)
+            assert(C.require('craft_client').nextDue()==nil)
+        ''')
+
     def test_foreground_wrong_owner_lost_rpc_never_accepts_job_publication(self):
         self.lua.execute('''
             A.duration=0.4;job(C,'robot-a')
@@ -68,9 +128,12 @@ class ClientLifecycleTests(TransportFixture):
             job(C,'robot-a',{idleTimeout=0.4},{requestItem='t:target',blueprint={huge='client only'}})
             untilDone(function() return C.result end)
             local sent=commands('client')
-            assert(sent[1].msg=='ps' and sent[1].args[1]=='sub')
-            assert(sent[2].msg=='rpc' and sent[2].args[2]=='craft')
-            local args=sent[2].args[4]
+            local args
+            for i,m in ipairs(sent) do if m.msg=='rpc' and m.args[2]=='craft' then
+                args=m.args[4]
+                assert(sent[i-1].msg=='ps' and sent[i-1].args[1]=='sub' and sent[i-1].args[2]=='job:'..args[2])
+            end end
+            assert(args)
             assert(args[1].blueprint==nil and args[3]==false)
             assert(C.result.success and C.result.jobId==args[2] and C.result.serverAddress=='robot-a')
             assert(sent[#sent].msg=='ps' and sent[#sent].args[1]=='unsub')
@@ -104,14 +167,20 @@ class ClientLifecycleTests(TransportFixture):
                 self.setUp()
                 self.lua.globals().THROWS = throws
                 self.lua.execute('''
-                    A.duration=1
+                    A.duration=1;A.progressEvery=2
                     local net=C.require('tnet');local base=net.connect
                     net.connect=function(...) C.conn=base(...);return C.conn end
-                    job(C,'robot-a',{shouldContinue=function()
-                        if NOW>0.4 then if THROWS then error('continuation boom') else return false end end
+                    local running=true
+                    C.event.listen('interrupted',function() running=false end)
+                    local waiting=job(C,'robot-a',{shouldContinue=function()
+                        if not running then if THROWS then error('continuation boom') else return false end end
                         return true
                     end})
+                    untilDone(function() return A.executions==1 end);advance(0.2)
+                    assert(waiting.due>NOW+1,'cancellation predicate caused periodic wakeups')
+                    local interrupted=NOW;C.event.push('interrupted')
                     untilDone(function() return C.result end)
+                    assert(NOW-interrupted<0.1,'interrupt did not wake the foreground wait')
                     assert(C.result.status=='unknown' and C.result.mayHaveExecuted and C.conn.connected)
                     assert(C.result.message:find(THROWS and 'continuation boom' or 'cancelled'))
                     local sent=commands('client');assert(sent[#sent].args[1]=='unsub')
@@ -158,7 +227,9 @@ class ClientLifecycleTests(TransportFixture):
             assert(C.queryResult.status=='not_found' and C.queryResult.mayHaveExecuted and C.queryResult.queried)
             job(C,'robot-a',{jobId='gone'});untilDone(function() return C.result end)
             assert(C.result.status=='unknown' and C.result.receiptStatus=='not_found' and A.executions==0)
-            local sent=commands('client');local args=sent[3].args[4]
+            local args
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' and m.args[2]=='craft' then args=m.args[4] end end
+            assert(args)
             assert(args[2]=='gone' and args[3]==true)
             local before=#TRACE;local r=C.require('craft_client').runDetailed({},{jobId='prior'})
             assert(r.status=='unknown' and r.mayHaveExecuted and #TRACE==before)

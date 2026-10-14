@@ -2,9 +2,9 @@ local fs=require('filesystem')
 local serialization=require('serialization')
 local computer=require('computer')
 local event=require('event')
-fs.makeDirectory('/lib/logistics')
+fs.makeDirectory('/usr/lib/logistics')
 for _,n in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
-assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
 assert(fs.copy('/home/program/bin/warehouse.lua','/bin/warehouse.lua'))
 local map=require('map')
 local iron={name='minecraft:iron_ingot',damage=0}

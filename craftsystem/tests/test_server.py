@@ -2,6 +2,14 @@ from test_transport import TransportFixture
 
 
 class ServerTests(TransportFixture):
+    def test_idle_robot_waits_for_signals_and_interrupt_stops_it(self):
+        self.lua.execute('''
+            assert(A.main.due==math.huge,'idle robot is waking on a timer')
+            A.event.push('interrupted')
+            untilDone(function() return coroutine.status(A.main.co)=='dead' end)
+            assert(A.executions==0 and countListeners(A,'interrupted')==0)
+        ''')
+
     def test_startup_dumps_inventory_before_serving(self):
         self.lua.execute('''
             assert(A.bootCleanups==1 and B.bootCleanups==1 and A.cleanups==0 and B.cleanups==0)
@@ -87,7 +95,11 @@ class ServerTests(TransportFixture):
                 return send(to,port,wake,info,msg,data)
             end
             job(C,'robot-a',{idleTimeout=0.4});untilDone(function() return C.result end)
-            assert(C.result.status=='unknown')
+            -- The shared lifecycle reads the owner receipt once when delivery is silent.
+            assert(C.result.status=='complete' and A.executions==1)
+            local statuses=0
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end end
+            assert(statuses==1)
             query(C,'robot-a',C.result.jobId);untilDone(function() return C.queryResult end)
             assert(C.queryResult.status=='complete' and A.executions==1)
         ''')

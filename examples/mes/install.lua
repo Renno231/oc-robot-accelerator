@@ -8,10 +8,6 @@ local function copyTree(source,destination)
   end
 end
 copyTree('/home/program/usr','/usr')
-if fs.exists('/home/program/lib/logistics.lua') then
-  copyTree('/home/program/etc','/etc')
-  require('shell').execute('rc mes enable')
-end
 package.path='/usr/lib/?.lua;/usr/lib/?/init.lua;'..package.path
 -- The user's ore dictionary eagerly opens its archive even for concrete recipes.
 -- This fixture uses no ore aliases; ship a valid empty archive on both computers.

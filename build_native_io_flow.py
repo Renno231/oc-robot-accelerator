@@ -2,18 +2,12 @@
 import argparse
 import json
 from pathlib import Path
-import shutil
-from build_machine_comparisons import prepare
+from examples.mes.build_fixtures import build_native, write_fixture
 
 
 PROGRAM = r'''
-local fs=require('filesystem');local event=require('event');local computer=require('computer')
-local ser=require('serialization');local component=require('component')
-for _,n in ipairs({'cbor','store','map','logistics','warehouse','stations','iochest'}) do
- assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua'))
-end
-fs.makeDirectory('/lib/logistics')
-for _,n in ipairs({'agent','sensor'}) do assert(fs.copy('/home/program/drone/'..n..'.lua','/lib/logistics/'..n..'.lua')) end
+assert(loadfile('/home/program/install.lua'))()
+local event=require('event');local computer=require('computer');local ser=require('serialization')
 local function save(p,v) local f=assert(io.open(p,'w'));assert(f:write(ser.serialize(v,false)));f:close() end
 save('/etc/store.cfg',{variant='log'})
 local distances={};event.listen('modem_message',function(_,_,sender,port,distance,token)
@@ -81,24 +75,20 @@ for _,j in ipairs(lg.jobs()) do
  if not result.reasons[j.id] then result.reasons[j.id]='IO receipt-driven movement; no inventory read';assert(s.state=='done' or s.state=='partial',s.reason) end
 end
 assert(reads==4,'extra IO/controller read');result.commissioningReads=reads;result.ioReads=0;result.trips=trips
-result.io=ic.list();result.members=wh.members();save('/home/warehouse-results.lua',result)
 print('io-flow passed',trips,'trips',reads,'commissioning reads, zero IO reads')
 return true
 '''
 
 
 def build(root):
-    path = prepare('examples/mes/bricks16', Path(root) / 'fixture', 'coordinated')
+    path = build_native(Path(root) / 'fixture', 'bricks16')
     program = path.parent / 'program'
-    (program / 'native-main.lua').write_text(PROGRAM)
-    for name in ('cbor', 'store', 'map', 'logistics', 'warehouse', 'stations', 'iochest'):
-        shutil.copyfile(Path('drone-logistics/lib') / f'{name}.lua', program / 'lib' / f'{name}.lua')
-    for name in ('agent', 'sensor'):
-        shutil.copyfile(f'drone-logistics/drone/{name}.lua', program / f'drone/{name}.lua')
-    shutil.copyfile('drone-logistics/drone/loader.lua', path.parent / 'loader.lua')
+    (program / 'main.lua').write_text(PROGRAM)
     value = json.loads(path.read_text()); value['id'] = 'io-flow'
     value.pop('robots', None)
     value['blocks'] = [b for b in value['blocks'] if b['block'] != 'minecraft:furnace']
+    # Keep the cleared room and floor, not the removed furnaces' bottom-access holes.
+    value['world']['blocks'] = value['world']['blocks'][:2]
     coal = lambda slot, count: {'slot': slot, 'item': 'minecraft:coal', 'count': count}
     stones = [{'slot': s, 'item': 'minecraft:stone', 'count': 64} for s in range(1, 24)]
     value['containers'] = [
@@ -119,8 +109,7 @@ def build(root):
         {'position': [10, 64, 8], 'slots': [{'slot': s, 'count': 0} for s in (1, 2)]},
     ]}
     value['execution'].update(maxTicks=12000, timeoutSeconds=600, infiniteEnergy=True)
-    path.write_text(json.dumps(value, indent=2) + '\n')
-    return path
+    return write_fixture(path, value)
 
 
 if __name__ == '__main__':

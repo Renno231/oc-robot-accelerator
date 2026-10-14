@@ -1,6 +1,6 @@
-local fs=require('filesystem');fs.makeDirectory('/lib/logistics')
+local fs=require('filesystem');fs.makeDirectory('/usr/lib/logistics')
 for _,name in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua')) end
-assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
 local map=require('map');local event=require('event');local computer=require('computer')
 map.add('H',0,65,0,{charger=true});map.add('A',0,65,2,{faces={[0]=true}})
 map.add('M',3,65,2);map.add('B',6,65,2,{faces={[0]=true}})

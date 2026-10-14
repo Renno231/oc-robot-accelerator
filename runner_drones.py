@@ -216,7 +216,7 @@ def normalize(value):
         for r in _array(extended.get('robots', []), 4):
             _object(r, ['index', 'inventory'], ['index'])
             entry = {'index': _integer(r['index'], 0, len(robots) - 1)}
-            if 'inventory' in r: entry['inventory'] = slots(r['inventory'])
+            if 'inventory' in r: entry['inventory'] = slots(r['inventory'], limit=85)
             result['expect']['robots'].append(entry)
     from runner_computer import normalize as computer, blocks as placed_blocks, expectation
     if 'computer' in value: result['computer'] = computer(value['computer'], region)

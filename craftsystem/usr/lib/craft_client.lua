@@ -6,9 +6,11 @@ local computer = require("computer")
 local craftClient = {}
 local pool = {}
 local installed, factSink, installedRows=false,nil,nil
-local serviceOptions, reconnectCursor={},0
+local serviceOptions={}
 local outstanding={}
+local waiters={}
 local ticking=false
+local fact,silence
 local function paired(address,service)
     local hosts=require("hosts")
     local host=address and hosts.getHost(address) or nil
@@ -54,6 +56,27 @@ function craftClient.prepare(address,options)
             local proxy=require("api").connect(options.service or "craftServer",options.port or 5990,
                 address,host:getWakeKey(),options.connectTimeout or 10)
             entry.proxy=proxy;entry.sub=require("pubsub").client(proxy:getConnection())
+            proxy:getConnection():onClose(function()
+                if entry.row then entry.row.connected=false end
+                for request in pairs(outstanding) do if request.entry==entry then
+                    request.active=false;outstanding[request]=nil
+                    if request.method=='status' then
+                        local job=entry.jobs[request.token]
+                        if job then job.inspectPending=false;silence(entry,job) end
+                        fact(request.token,'robot_status',{address=entry.address,jobId=request.jobId,unknown=true,reason='Crafting connection dropped before status reply.'})
+                    end
+                end end
+                fact(nil,'robot_transport',{address=entry.address,state='disconnected',unknown=true})
+                -- The service reconnects on announce; a foreground session gets
+                -- one reconnect attempt, not a repeating retry timer.
+                if not installed and next(entry.jobs) then entry.requested=true end
+                event.push('craft_client')
+            end)
+            assert(entry.sub:subscribe('state',function(data)
+                if type(data)=='table' and type(data.busy)=='boolean' then
+                    fact(nil,'robot_status',{address=address,busy=data.busy,currentJobId=data.currentJobId})
+                end
+            end),'Unable to subscribe to robot state')
             for topic in pairs(entry.observers) do assert(observe(entry,topic),"Unable to resubscribe to crafting job.") end
             entry.generation=(entry.generation or 0)+1
         end)
@@ -62,44 +85,28 @@ function craftClient.prepare(address,options)
     end
     return entry
 end
-local function existing(address,options,check)
+local function existing(address,options)
     local key=keyFor(address,options)
     local entry=pool[key]
     if not options.existingOnly and not installed then return craftClient.prepare(address,options) end
     assert(entry,"Crafting transport was not prepared by the main program.")
-    if not entry.proxy or not entry.proxy:getConnection().connected then
-        entry.requested=true
-        local deadline=computer.uptime()+(options.connectTimeout or 10)
-        while not entry.proxy or not entry.proxy:getConnection().connected do
-            if check and not check() then return nil end
-            if computer.uptime()>=deadline then error(entry.error or "Crafting transport reconnect deadline exceeded.",0) end
-            event.pull(0.05)
-        end
-    end
+    assert(entry.proxy and entry.proxy:getConnection().connected,
+        "Crafting transport is disconnected; wait for the robot to announce.")
     return entry
 end
-local function foregroundRPC(entry,name,check,...)
-    local response
-    entry.proxy:async(function(...) response=table.pack(...) end)[name](...)
-    local deadline=computer.uptime()+10
-    while not response and computer.uptime()<deadline do
-        if check and not check() then return false,"Crafting request interrupted" end
-        event.pull(0.01)
-    end
-    if not response then return false,"Timeout calling remote function: "..name end
-    return table.unpack(response,1,response.n)
-end
-local function fact(token,what,data)
+fact=function(token,what,data)
     -- The service sink must enqueue only. Its non-reentrant pump owns decisions.
     data.at=computer.uptime()
-    if factSink then
-        local ok,err=pcall(factSink,token,what,data)
+    local sink=waiters[token] or factSink
+    if sink then
+        local ok,err=pcall(sink,token,what,data)
         if not ok then craftClient.factError=tostring(err) end
     end
 end
 function craftClient.reboot(a)
-for _,e in pairs(pool)do if e.address==a and e.proxy then e.proxy:close();e.reconnectAt=0 end end
+for _,e in pairs(pool)do if e.address==a and e.proxy then e.proxy:close() end end
 fact(nil,"robot_transport",{address=a,state="rebooted"})
+craftClient.announce(a)
 end
 local function connected(entry)
     return entry and entry.proxy and entry.proxy:getConnection().connected
@@ -126,7 +133,7 @@ end
 local function jobReceipt(entry,job,receipt,catchup)
     if job.ended or type(receipt)~="table" or receipt.jobId~=job.id then return end
     job.idleAt=computer.uptime()+(job.options.idleTimeout or 60)
-    job.silent=nil
+    if not catchup then job.silent=nil end
     local data={address=entry.address,jobId=job.id,receipt=receipt,mayHaveExecuted=job.submitted}
     if receipt.status=="COMPLETE" or receipt.status=="FAILED" or receipt.status=="NOT_FOUND" then
         data.status=receipt.status=="COMPLETE" and "complete" or
@@ -149,10 +156,10 @@ local function ownedReceipt(entry,job,receipt,catchup)
         jobReceipt(entry,job,candidate,false)
     end
 end
-local function silence(entry,job)
-    if not job or not job.silent then return end
-    if job.silent==1 then job.silent=2;entry.proxy:close();job.idleAt=math.huge
-    else job.idleAt=computer.uptime() end
+silence=function(entry,job)
+    if not job then return end
+    job.silent=2
+    job.idleAt=computer.uptime()
 end
 local function asyncCall(entry,token,method,args,options,callback)
     local request={entry=entry,token=token,method=method,jobId=args[method=="craft" and 2 or 1],
@@ -167,7 +174,7 @@ local function asyncCall(entry,token,method,args,options,callback)
     end)
     if not ok then
         request.active=false;outstanding[request]=nil
-        silence(entry,entry.jobs[token])
+        if method=='status' then silence(entry,entry.jobs[token]) end
         fact(token,"robot_transport",{address=entry.address,jobId=request.jobId,state="unknown",unknown=true,reason=tostring(err)})
         return nil,tostring(err)
     end
@@ -175,13 +182,11 @@ local function asyncCall(entry,token,method,args,options,callback)
 end
 -- Called once by the owning service outside its state-machine advance. This
 -- loads paired robots and may block while the public API performs handshakes.
--- The caller's one service timer subsequently drives tick; no second timer here.
+-- The owning service arms a one-shot timer for nextDue; no polling timer here.
 function craftClient.install(onFact,options)
     assert(type(onFact)=="function","Transport fact sink required")
     if installed then return installedRows end
     options=options or {};serviceOptions=options
-    local budget=options.reconnectAttemptsPerTick or 1
-    assert(type(budget)=="number" and budget>=1 and budget<math.huge and budget%1==0,"Reconnect work budget must be a positive integer")
     local hosts={}
     for _,host in ipairs(require("hosts").getAll()) do
         if host:getKeys().service==(options.service or "craftServer") and host:getWakeKey() and host:getWakeKey()~="" then
@@ -201,20 +206,29 @@ function craftClient.install(onFact,options)
     end
     return installedRows
 end
-local function refreshPaired()
-    -- Pairing can happen after the service was first required. Discover data
-    -- here, but only the service tick's bounded connection work opens links.
-    for _,host in ipairs(require("hosts").getAll()) do
-        if host:getKeys().service==(serviceOptions.service or "craftServer") and host:getWakeKey() and host:getWakeKey()~="" then
-            local entry=entryFor(host,serviceOptions)
-            if not entry.row then
-                entry.row={address=entry.address,name=host:getName(),connected=connected(entry) or false}
-                installedRows[#installedRows+1]=entry.row
-                fact(nil,"robot_transport",{address=entry.address,state="disconnected",unknown=true})
-            end
+function craftClient.announce(address)
+    if not installed then return end
+    local host=paired(address,serviceOptions.service or 'craftServer')
+    local entry=entryFor(host,serviceOptions)
+    if not entry.row then
+        entry.row={address=entry.address,name=host:getName(),connected=false}
+        installedRows[#installedRows+1]=entry.row
+    end
+    entry.requested=not connected(entry)
+    table.sort(installedRows,function(a,b) return a.address<b.address end)
+    event.push('craft_client')
+end
+function craftClient.nextDue()
+    local due=math.huge
+    for request in pairs(outstanding) do due=math.min(due,request.due) end
+    for _,entry in pairs(pool) do
+        if entry.requested and not entry.connecting then due=math.min(due,computer.uptime()) end
+        for _,job in pairs(entry.jobs) do
+            due=math.min(due,job.idleAt,job.endAt or math.huge)
+            if connected(entry) and not job.inspectPending then due=math.min(due,job.reconcileAt or math.huge) end
         end
     end
-    table.sort(installedRows,function(a,b) return a.address<b.address end)
+    return due<math.huge and due or nil
 end
 local function actionEntry(address,options)
     assert(installed,"Install crafting transport service before submitting actions")
@@ -239,6 +253,7 @@ local function registerJob(entry,token,jobId,options)
                 job.candidate=receipt
             end
             job.reconcileAt=computer.uptime()
+            event.push('craft_client')
             return
         end
         jobReceipt(entry,job,receipt,false)
@@ -263,10 +278,7 @@ function craftClient.adopt(token,address,jobId,options)
     job.reconcileAt=computer.uptime()
     return true
 end
-function craftClient.begin(token,address,plan,jobId,options)
-    options=options or {}
-    local ok,entry=pcall(actionEntry,address,options)
-    if not ok then return nil,tostring(entry) end
+local function begin(entry,token,plan,jobId,options)
     if not connected(entry) then return nil,"Crafting transport is disconnected; robot state is unknown" end
     if type(plan)=="table" and plan.blueprint then
         local payload={};for k,v in pairs(plan) do if k~="blueprint" then payload[k]=v end end;plan=payload
@@ -290,10 +302,13 @@ function craftClient.begin(token,address,plan,jobId,options)
     -- Once attempted, this request may have executed even if send threw.
     return true,err
 end
-function craftClient.inspect(token,address,jobId,options)
+function craftClient.begin(token,address,plan,jobId,options)
     options=options or {}
     local ok,entry=pcall(actionEntry,address,options)
     if not ok then return nil,tostring(entry) end
+    return begin(entry,token,plan,jobId,options)
+end
+local function inspect(entry,token,jobId,options)
     if not connected(entry) then return nil,"Crafting transport is disconnected; robot state is unknown" end
     return asyncCall(entry,token,"status",table.pack(jobId),options,function(rpcOK,receipt)
         local data={address=entry.address,jobId=jobId,receipt=rpcOK and receipt or nil}
@@ -313,45 +328,42 @@ function craftClient.inspect(token,address,jobId,options)
         end
     end)
 end
+function craftClient.inspect(token,address,jobId,options)
+    options=options or {}
+    local ok,entry=pcall(actionEntry,address,options)
+    if not ok then return nil,tostring(entry) end
+    return inspect(entry,token,jobId,options)
+end
 function craftClient.tick(now)
-    if not installed or ticking then return end
+    if ticking then return end
     ticking=true
     local ok,err=xpcall(function()
         now=now or computer.uptime()
-        refreshPaired()
         for request in pairs(outstanding) do if now>=request.due then
             request.active=false;outstanding[request]=nil
             fact(request.token,request.method=="status" and "robot_status" or "robot_transport",
                 {address=request.entry.address,jobId=request.jobId,state="unknown",unknown=true,reason="Crafting RPC response deadline exceeded."})
             local job=request.entry.jobs[request.token]
-            if job then silence(request.entry,job);job.inspectPending=false;job.reconcileAt=now end
+            if job then
+                job.inspectPending=false
+                if request.method=='status' then silence(request.entry,job)
+                else job.reconcileAt=now end
+            end
         end end
-        -- A work budget, not a fleet-size limit: one slow/offline robot cannot
-        -- turn a tick into N sequential handshake waits. Rotate fairly over
-        -- every paired robot, including those added after install.
-        local entries={};for key,entry in pairs(pool) do entries[#entries+1]={key=key,entry=entry} end
-        table.sort(entries,function(a,b) return a.key<b.key end)
-        local budget=serviceOptions.reconnectAttemptsPerTick or 1
-        local attempted=0
-        for _=1,#entries do
-            if attempted>=budget then break end
-            reconnectCursor=reconnectCursor%#entries+1
-            local entry=entries[reconnectCursor].entry
-            if not connected(entry) and not entry.connecting and now>=(entry.reconnectAt or 0) then
-                attempted=attempted+1
-                fact(nil,"robot_transport",{address=entry.address,state="disconnected",unknown=true})
-                for request in pairs(outstanding) do if request.entry==entry then
-                    request.active=false;outstanding[request]=nil
-                    if request.method=="status" then
-                        fact(request.token,"robot_status",{address=entry.address,jobId=request.jobId,unknown=true,reason="Crafting connection dropped before status reply."})
-                    end
-                end end
+        -- Consume each announce once; failed connections wait for a new announce.
+        for _,entry in pairs(pool) do
+            if entry.requested and not entry.connecting then
+                entry.requested=false
                 local ready,why=pcall(craftClient.prepare,entry.address,entry.options)
                 now=computer.uptime()
-                entry.reconnectAt=now+1;entry.requested=false
                 if entry.row then entry.row.connected=connected(entry) or false end
                 fact(nil,"robot_transport",{address=entry.address,state=ready and "ready" or "unknown",unknown=not ready or nil,reason=not ready and tostring(why) or nil})
-                for _,job in pairs(entry.jobs) do job.inspectPending=false;job.reconcileAt=now end
+                for _,job in pairs(entry.jobs) do
+                    job.inspectPending=false;job.reconcileAt=now
+                    -- The new connection's status RPC owns the next response deadline.
+                    if ready then job.idleAt=math.huge end
+                end
+                break -- Continue other announces in another service turn, after queued facts.
             end
         end
         for _,entry in pairs(pool) do
@@ -370,8 +382,8 @@ function craftClient.tick(now)
                     end
                 elseif job.reconcileAt and now>=job.reconcileAt and connected(entry) and not job.inspectPending then
                     job.reconcileAt=nil;job.inspectPending=true
-                    local sent=craftClient.inspect(job.token,entry.address,job.id,job.options)
-                    if not sent then job.inspectPending=false;job.reconcileAt=now+1 end
+                    local sent=inspect(entry,job.token,job.id,job.options)
+                    if not sent then job.inspectPending=false;job.idleAt=now end
                 end
             end end
         end
@@ -379,146 +391,73 @@ function craftClient.tick(now)
     ticking=false
     if not ok then error(err,0) end
 end
+local function sessionDetailed(plan, options, querying)
+    local o={};for k,v in pairs(options or {}) do o[k]=v end
+    local jobId=o.jobId or (not querying and require('uuid').next()) or nil
+    local token={};local entry,result,submitted
+    local address=o.serverAddress
+    waiters[token]=function(_,what,data)
+        if result then return end
+        if what=='robot_terminal' then result=data
+        elseif querying and (what=='robot_status' or what=='robot_transport') then
+            result=data
+            local r=data.receipt
+            result.status=r and (r.status=='COMPLETE' and 'complete' or r.status=='RUNNING' and 'running'
+                or r.status=='NOT_FOUND' and 'not_found' or r.status=='FAILED' and r.receipt==true and 'failed') or 'unknown'
+            result.success=result.status=='complete';result.reason=r and r.message or data.reason
+        elseif what=='robot_progress' and o.onMessage and data.receipt.status~='RUNNING' then
+            local ok,why=pcall(o.onMessage,tostring(data.receipt.status or 'UPDATE')..': '..tostring(data.receipt.message or ''))
+            if not ok then result={status='unknown',reason=tostring(why)} end
+        end
+    end
+    local ok,why=xpcall(function()
+        address=paired(address,o.service or 'craftServer'):getAddress()
+        local started=computer.uptime()
+        entry=existing(address,o)
+        if o.shouldContinue and not o.shouldContinue() then error('Crafting cancelled.',0) end
+        if querying then
+            o.rpcTimeout=o.rpcTimeout or o.connectTimeout or 10
+            assert(inspect(entry,token,jobId,o))
+        else
+            local limit=o.jobTimeout==nil and 300 or o.jobTimeout
+            if limit>0 then
+                o.jobTimeout=limit-(computer.uptime()-started)
+                assert(o.jobTimeout>0,'Crafting job exceeded its total timeout.')
+            end
+            o.retryOnly=o.jobId~=nil
+            local sent,err=begin(entry,token,plan,jobId,o)
+            submitted=sent==true;assert(sent,err)
+        end
+        while not result do
+            if o.shouldContinue and not o.shouldContinue() then error('Crafting cancelled.',0) end
+            craftClient.tick()
+            if not result then
+                local due=craftClient.nextDue()
+                local timeout=due and math.max(0,due-computer.uptime()) or math.huge
+                event.pull(timeout)
+            end
+        end
+    end,debug.traceback)
+    result=result or {status=(submitted or querying) and 'unknown' or 'failed',reason=not ok and why or nil}
+    if entry then
+        local job=entry.jobs[token]
+        if job then forgetJob(entry,job);result.cleanupError=job.cleanupError end
+        for request in pairs(outstanding) do if request.token==token then request.active=false;outstanding[request]=nil end end
+    end
+    waiters[token]=nil
+    local r=result.receipt
+    local message=result.reason or (result.status=='complete' and 'Crafting complete.' or result.status=='failed' and 'Crafting failed.')
+    if not message and r and (r.status=='RUNNING' or r.status=='NOT_FOUND') then message='Execution outcome is not terminal; do not blindly retry.' end
+    return {status=result.status,success=result.success==true,message=message or nil,
+        mayHaveExecuted=submitted==true,jobId=jobId,serverAddress=address,queried=querying or nil,
+        receiptStatus=r and (r.status=='RUNNING' and 'running' or r.status=='NOT_FOUND' and 'not_found') or nil,
+        cleanupError=result.cleanupError,receipt=querying=='status' and r or nil}
+end
 -- Existing cproc status RPC, not discovery traffic. No reply means unknown.
 function craftClient.status(address,options)
-    options=options or {}
-    local ok,data=pcall(function()
-        local host=paired(address,options.service or "craftServer")
-        local entry=existing(host:getAddress(),options)
-        local deadline=computer.uptime()+(options.rpcTimeout or options.connectTimeout or 10)
-        local rpcOK,status=foregroundRPC(entry,"status",function() return computer.uptime()<deadline end)
-        if rpcOK and type(status)=="table" and type(status.busy)=="boolean" then return status end
-    end)
-    return ok and data or nil
-end
-
-local function sessionDetailed(plan, options, querying)
-    options = options or {}
-    if type(plan)=="table" and plan.blueprint then
-        local payload={};for k,v in pairs(plan) do if k~="blueprint" then payload[k]=v end end
-        plan=payload
-    end
-    local service,port=options.service or "craftServer",options.port or 5990
-    local jobId=options.jobId or require("uuid").next()
-    local serverAddress=options.serverAddress
-    local done,completed,reason=false,false,nil
-    local submitted,terminalStatus,receiptStatus=false,nil,nil
-    local entry,subscribed
-    local idleUntil,jobUntil
-    local ownerConfirmed,candidate=false,nil
-    local cleanupErrors={}
-    local function finish(success,message)
-        if not done then done,completed,reason=true,success,message end
-    end
-    local function renew() idleUntil=computer.uptime()+(options.idleTimeout or 60) end
-    local function check()
-        if done then return false end
-        if options.shouldContinue and not options.shouldContinue() then finish(false,"Crafting cancelled.")
-        elseif jobUntil and computer.uptime()>=jobUntil then finish(false,"Crafting job exceeded its total timeout.")
-        elseif idleUntil and computer.uptime()>=idleUntil then finish(false,"Crafting server stopped responding (idle timeout).") end
-        return not done
-    end
-    local function update(data,catchup)
-        if not check() or type(data)~="table" or data.jobId~=jobId then return end
-        if data.status=="COMPLETE" then terminalStatus="complete";finish(true,data.message or "Crafting complete.")
-        elseif data.status=="FAILED" then
-            terminalStatus=(querying or catchup) and data.receipt~=true and "unknown" or "failed"
-            finish(false,data.message or "Crafting failed.")
-        elseif data.status=="NOT_FOUND" or data.status=="RUNNING" then
-            receiptStatus=data.status=="RUNNING" and "running" or "not_found"
-            if querying or data.status=="NOT_FOUND" then
-                terminalStatus=querying and receiptStatus or "unknown"
-                finish(false,data.message or "Execution outcome is not terminal; do not blindly retry.")
-            else renew() end
-        else
-            if options.onMessage then
-                local ok,err=pcall(options.onMessage,tostring(data.status or "UPDATE")..": "..tostring(data.message or ""))
-                if not ok then finish(false,tostring(err));return end
-            end
-            renew()
-        end
-    end
-    local function publication(data)
-        if done or type(data)~="table" or data.jobId~=jobId then return end
-        if not ownerConfirmed then
-            if not candidate or (candidate.status~="COMPLETE" and candidate.status~="FAILED") then candidate=data end
-            return
-        end
-        update(data,false)
-    end
-    local function ownedUpdate(data,catchup)
-        if type(data)=="table" and data.jobId==jobId and data.receipt==true then ownerConfirmed=true end
-        update(data,catchup)
-        if ownerConfirmed and not done and candidate then
-            local receipt=candidate;candidate=nil;update(receipt,false)
-        end
-    end
-    local function rpc(name,...)
-        if not check() then return false,reason end
-        return foregroundRPC(entry,name,check,...)
-    end
-    local function connect()
-        entry=existing(serverAddress,options,check)
-        if not entry or not check() then return false end
-        if not querying then
-            -- Only one run observer per job; status queries never replace it.
-            local topic="job:"..jobId
-            entry.observers[topic]=entry.observers[topic] or {}
-            entry.observers[topic][publication]=true
-            subscribed=topic
-            assert(observe(entry,topic),"Unable to subscribe to crafting job.")
-        end
-        return true
-    end
-    local function session()
-        local host=paired(serverAddress,service)
-        serverAddress=host:getAddress()
-        renew()
-        local deadline=options.jobTimeout==nil and 300 or options.jobTimeout
-        if deadline>0 then jobUntil=computer.uptime()+deadline end
-        if not connect() or not check() then return end
-        if querying then
-            local ok,data=rpc("status",jobId)
-            if ok then update(data,true) else finish(false,tostring(data)) end
-            return
-        end
-        -- Any attempted RPC may have executed. Never issue craft again automatically.
-        submitted=true
-        local ok,disposition,data=foregroundRPC(entry,"craft",function() return check() and not candidate end,
-            plan,jobId,options.jobId~=nil)
-        if ok then
-            if disposition=="accepted" or disposition=="status" then ownedUpdate(data,disposition=="status")
-            else update(data,false) end
-        elseif check() and entry.proxy:getConnection().connected then
-            -- A publication can arrive before (or instead of) admission. The
-            -- foreground caller, not the pubsub callback, verifies its owner.
-            local statusOk,receipt=rpc("status",jobId)
-            if statusOk then ownedUpdate(receipt,true) else finish(false,tostring(receipt)) end
-        end
-        while check() do
-            if not entry.proxy:getConnection().connected then
-                if not connect() then return end
-                local statusOk,receipt=rpc("status",jobId)
-                if statusOk then ownedUpdate(receipt,true) else finish(false,tostring(receipt)) end
-            else event.pull(0.1) end
-        end
-    end
-    local ok,err=xpcall(session,debug.traceback)
-    if not ok then finish(false,err) end
-    if subscribed then
-        local closed,why=pcall(function()
-            local observers=entry.observers[subscribed]
-            if observers then
-                observers[publication]=nil
-                if not next(observers) then entry.observers[subscribed]=nil;entry.sub:unsubscribe(subscribed) end
-            end
-        end)
-        if not closed then cleanupErrors[#cleanupErrors+1]="Unsubscribe failed: "..tostring(why) end
-    end
-    return {status=terminalStatus or ((submitted or querying) and "unknown" or "failed"),
-        success=completed,message=reason,mayHaveExecuted=submitted,jobId=jobId,
-        serverAddress=serverAddress,receiptStatus=receiptStatus,queried=querying or nil,
-        cleanupError=#cleanupErrors>0 and table.concat(cleanupErrors,"; ") or nil}
+    local o={};for k,v in pairs(options or {}) do o[k]=v end;o.serverAddress=address
+    local r=sessionDetailed(nil,o,'status').receipt
+    return type(r)=='table' and type(r.busy)=='boolean' and r or nil
 end
 function craftClient.runDetailed(plan,options)
     if options and options.jobId and not options.serverAddress then

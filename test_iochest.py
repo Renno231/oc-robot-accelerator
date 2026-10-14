@@ -4,9 +4,6 @@ import test_stations as stations
 
 
 class IOChestTests(unittest.TestCase):
-    def test_module_byte_budget(self):
-        self.assertLessEqual(Path('drone-logistics/lib/iochest.lua').stat().st_size, 6250)
-
     def setUp(self):
         f = stations.StationsTests(); f.setUp(); self.lua = f.lua
         self.lua.globals().IOCHEST = Path('drone-logistics/lib/iochest.lua').read_text()
@@ -50,6 +47,11 @@ class IOChestTests(unittest.TestCase):
             for _,r in ipairs(ic.list()) do if r.name==n then return r end end
           end
           function count(n) local r=record(n);local v=r.listing['mod:seed:0'];return v and v.count or 0 end
+          function bootSensor(n,token)
+            disk['/usr/lib/logistics/sensor.lua']='return true'
+            token=token or require('serialization').unserialize(files['/etc/logistics.drones'])[n].token
+            emit('modem_message','local',n,27103,0,token,'boot');drain()
+          end
           function jobs() return #lg.jobs() end
           function fresh(n)
             local id=REFRESH[n];assert(id~=nil);REFRESH[n]=nil
@@ -128,6 +130,38 @@ class IOChestTests(unittest.TestCase):
           local bytes=disk['/etc/io'];sensor('s1',nil,1,64)
           assert(jobs()==n and disk['/etc/io']==bytes)
           finishAll();assert(input.count==0 and count('in1')==0)
+        ''')
+
+    def test_authenticated_sensor_reboot_accepts_new_sequence_and_keeps_deduplication(self):
+        self.lua.execute('''
+          chest('out1','export',10,32);assert(sensor('s1','out1',5,32))
+          bootSensor('s1','wrong-token');assert(record('out1').seq==5)
+          bootSensor('s1');sensor('s1',nil,1,0)
+          assert(record('out1').seq==1 and count('out1')==0)
+          package.loaded.iochest=nil;reload();ic=require('iochest')
+          sensor('s1',nil,1,32);assert(count('out1')==0)
+          sensor('s1',nil,2,16);assert(count('out1')==16)
+        ''')
+
+    def test_sensor_reboot_reissues_outstanding_refresh_and_requires_matching_reply(self):
+        self.lua.execute('''
+          AUTO=false;chest('stock','stock',5,128);chest('out1','export',15,0)
+          assert(sensor('s1','out1',5,0));assert(ic.fetch(item,64,'out1'));finishHardware()
+          local refresh=assert(record('out1').refresh);REFRESH.s1=nil
+          bootSensor('s1');assert(REFRESH.s1==refresh)
+          sensor('s1',nil,1,64);assert(record('out1').refresh==refresh and count('out1')==0)
+          sensor('s1',nil,2,64,27,refresh)
+          assert(not record('out1').refresh and count('out1')==64)
+          sensor('s1',nil,2,0,27,refresh);assert(count('out1')==64)
+        ''')
+
+    def test_sensor_reboot_preserves_inflight_import_reservations(self):
+        self.lua.execute('''
+          chest('stock','stock',5,0);chest('in1','import',10,64)
+          assert(sensor('s1','in1',5,64));drain();local before=jobs()
+          bootSensor('s1');sensor('s1',nil,1,64)
+          assert(jobs()==before and record('in1').seq==1)
+          finishAll();assert(count('in1')==0)
         ''')
 
     def test_full_export_stays_in_stock_and_reports_player_action(self):

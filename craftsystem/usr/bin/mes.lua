@@ -57,7 +57,7 @@ if command=="recipe" then
             if not listing then return fail("Scan returned no inventory listing") end
             break
           end
-          event.pull(0.1)
+          event.pull()
         end
       end
       slots,size=recipes.slotsFromListing(listing,inventorySize)

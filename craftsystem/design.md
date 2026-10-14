@@ -380,7 +380,7 @@ Implemented modules under `usr/lib/`:
 - `craft_plans.lua`, `craft_store.lua`, `craft_kits.lua`: sanitized per-label data,
   filename-only discovery, pinned/live resolution, four modes, runtime reservations,
   stock conditions, per-entry outcomes and isolated Lua hooks.
-- `craft_executor.lua`, `craft_execution.lua`, `craft_resources.lua`: measured
+- `craft_executor.lua`, `craft_resources.lua`: measured
   physical transfers, branch/tool ownership, wear readback, protected outputs and
   returned-storage count verification. Registry/recipe-independent robot execution.
 - `craft_client.lua`: discovery, separate deadlines, cancellation/cleanup and

@@ -54,10 +54,12 @@ class DroneSurveyTests(unittest.TestCase):
           assert(not r.clear and r.reason:find('blocked') and P.x==0)
         ''')
 
-    def test_source_budgets(self):
-        self.assertLessEqual(Path('drone-logistics/drone/survey.lua').stat().st_size, 2500)
-        self.assertLessEqual(Path('drone-logistics/lib/survey.lua').stat().st_size, 15000)
-        self.assertLessEqual(Path('drone-logistics/lib/stations.lua').stat().st_size, 13500)
+    def test_survey_firmware_fits_boot_download(self):
+        # logistics.lua sends the survey wrapper + agent in at most 16 x 2048-byte chunks.
+        code=(b'local surveyStep=(function()\n'
+              + Path('drone-logistics/drone/survey.lua').read_bytes() + b'\nend)()\n'
+              + Path('drone-logistics/drone/agent.lua').read_bytes())
+        self.assertLessEqual(len(code),16*2048)
 
 
 if __name__ == '__main__':

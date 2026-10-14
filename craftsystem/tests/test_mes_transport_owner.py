@@ -9,6 +9,18 @@ from test_support import ROOT
 
 
 class MesTransportOwnerTests(TransportFixture):
+    def test_robot_pushes_busy_and_idle_and_finished_client_has_no_deadline(self):
+        self.lua.execute('''
+            wave('push');untilDone(function() return C.terminals.pusha and C.terminals.pushb end)
+            advance(0.1)
+            local busy,idle,statuses=false,false,0
+            for _,f in ipairs(C.facts) do if f.what=='robot_status' and not f.token and f.data.address=='robot-a' then
+                busy=busy or f.data.busy==true;idle=idle or f.data.busy==false
+            end end
+            for _,m in ipairs(commands('client')) do if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end end
+            assert(busy and idle and statuses==0 and C.client.nextDue()==nil)
+        ''')
+
     def test_adopt_running_job_sends_no_second_craft(self):
         self.lua.execute('''
             A.duration=2
@@ -48,6 +60,7 @@ class MesTransportOwnerTests(TransportFixture):
         self.lua.execute('''
             untilDone(function() return C['robot-a']~=nil end)
             C['robot-a']:close()
+            C.client.announce('robot-a')
             C.command=function(client) assert(client.adopt('restored','robot-a','missing-at-boot')) end
             untilDone(function() return C.terminals.restored end)
             local d=C.terminals.restored
@@ -91,7 +104,7 @@ class MesTransportOwnerTests(TransportFixture):
                 C.event.onError=function(err) C.errors[#C.errors+1]=err end
                 local pull=C.event.pull
                 C.event.pull=function(...)
-                    assert(not C.advancing and not C.inFact,'action/fact callback blocked')
+                    assert(not C.advancing and not C.inFact,debug.traceback('action/fact callback blocked'))
                     return pull(...)
                 end
                 C.env.os.sleep=function(n) return C.event.pull(n or 0.01) end
@@ -109,7 +122,7 @@ class MesTransportOwnerTests(TransportFixture):
                     assert(data.at==NOW,'fact did not retain arrival timestamp')
                     C.facts[#C.facts+1]={token=token,what=what,data=data}
                     if what=='robot_terminal' then C.terminals[token]=data end
-                    if what=='robot_status' then C.responses[token]=data end
+                    if what=='robot_status' and token then C.responses[token]=data end
                     C.inFact=false
                 end
                 C.rows=client.install(C.sink,{connectTimeout=0.2})
@@ -164,11 +177,12 @@ class MesTransportOwnerTests(TransportFixture):
             end end
         ''')
 
-    def test_service_drop_reconnects_and_status_only_catches_up(self):
+    def test_announce_after_drop_connects_once_and_status_only_catches_up(self):
         self.lua.execute('''
             A.duration=1;B.duration=2
             wave('drop');untilDone(function() return A.executions==1 and B.executions==1 end)
             C['robot-a']:close()
+            C.client.announce('robot-a')
             untilDone(function() return C.terminals.dropa and C.terminals.dropb end)
             assert(C.terminals.dropa.success and C.terminals.dropb.success and #C.created==3)
             assert(A.executions==1 and B.executions==1 and #C.errors==0)
@@ -178,6 +192,36 @@ class MesTransportOwnerTests(TransportFixture):
                 if m.args[2]=='status' and m.args[4][1]=='dropjob-a' then statuses=statuses+1 end
             end end
             assert(crafts==1 and statuses>=1)
+        ''')
+
+    def test_close_reports_once_without_connecting_until_announce(self):
+        self.lua.execute('''
+            local before=#C.facts;local connections=#C.created
+            C['robot-a']:close();C['robot-a']:close()
+            local closed=0
+            for i=before+1,#C.facts do local f=C.facts[i]
+                if f.what=='robot_transport' and f.data.address=='robot-a' and f.data.state=='disconnected' then closed=closed+1 end
+            end
+            assert(closed==1 and not C.rows[1].connected)
+            advance(1)
+            assert(#C.created==connections and C.client.nextDue()==nil)
+            C.client.announce('robot-a')
+            untilDone(function() return C.rows[1].connected end)
+            assert(#C.created==connections+1 and #C.errors==0)
+        ''')
+
+    def test_close_during_status_finishes_unknown_without_a_stale_deadline(self):
+        self.lua.execute('''
+            A.duration=10
+            C.command=function(client) assert(client.begin('closing','robot-a',{},'closing-job')) end
+            untilDone(function() return A.executions==1 end)
+            C.command=function(client)
+                assert(client.inspect('closing','robot-a','closing-job'))
+                C['robot-a']:close()
+            end
+            untilDone(function() return C.terminals.closing end,1)
+            assert(C.terminals.closing.unknown and C.responses.closing.unknown)
+            assert(C.client.nextDue()==nil and #C.created==C.installs and A.executions==1)
         ''')
 
     def test_actions_never_connect_uninstalled_robot(self):
@@ -194,7 +238,8 @@ class MesTransportOwnerTests(TransportFixture):
         self.lua.execute('''
             assert(#C.rows==0 and #C.created==0)
             pairHost(C,A);pairHost(C,B)
-            untilDone(function() return #C.created==2 and C['robot-b'].connected end)
+            C.client.announce(A.address);C.client.announce(B.address)
+            untilDone(function() return #C.rows==2 and C.rows[1].connected and C.rows[2].connected end)
             assert(#C.rows==2 and C.rows[1].connected and C.rows[2].connected)
             wave('late1');untilDone(function() return C.terminals.late1a and C.terminals.late1b end)
             wave('late2');untilDone(function() return C.terminals.late2a and C.terminals.late2b end)
@@ -206,7 +251,7 @@ class MesTransportOwnerTests(TransportFixture):
     def test_dynamic_eight_robot_fleet_is_not_size_capped(self):
         self.lua.execute('''
             local robots={A,B}
-            for i=3,8 do local robot=peer('robot-'..i);server(robot);pairHost(C,robot);robots[#robots+1]=robot end
+            for i=3,8 do local robot=peer('robot-'..i);server(robot);pairHost(C,robot);C.client.announce(robot.address);robots[#robots+1]=robot end
             untilDone(function() return #C.rows==8 and #C.created==8 and C['robot-8'].connected end)
             C.command=function(client)
                 for i,robot in ipairs(robots) do
@@ -221,10 +266,11 @@ class MesTransportOwnerTests(TransportFixture):
             assert(#C.created==8 and #C.errors==0)
         ''')
 
-    def test_eight_offline_hosts_have_fair_bounded_reconnect_work(self):
+    def test_offline_announces_attempt_once_without_retry_timer(self):
         self.lua.execute('''
             for i=1,8 do
                 C.require('hosts').addHost('offline-'..i,'offline-cid-'..i,'offline-'..i,'wake-offline-'..i,{service='craftServer'},true)
+                C.client.announce('offline-'..i)
             end
             wave('live')
             untilDone(function() return C.terminals.livea and C.terminals.liveb and #C.created>=10 end,8)
@@ -233,6 +279,7 @@ class MesTransportOwnerTests(TransportFixture):
             for _,address in ipairs(C.created) do attempted[address]=true end
             for i=1,8 do assert(attempted['offline-'..i],'offline peer starved') end
             for _,count in ipairs(C.tickConnections) do assert(count<=1,'offline fleet blocked one tick N times') end
+            local attempts=#C.created;advance(3);assert(#C.created==attempts)
             assert(#C.errors==0)
         ''')
 
@@ -283,22 +330,22 @@ class MesTransportOwnerTests(TransportFixture):
             assert(crafts==1 and statuses>=1 and unknowns>=1 and #C.errors==0)
         ''')
 
-    def test_idle_inspects_running_before_failing(self):
+    def test_idle_reads_once_then_fails_without_new_progress(self):
         self.lua.execute('''
             A.duration=2;A.progressEvery=1
             C.command=function(client)
                 assert(client.begin('silent-running','robot-a',{},'silent-job',{idleTimeout=0.2,rpcTimeout=0.1}))
             end
             untilDone(function() return C.terminals['silent-running'] end,4)
-            assert(C.terminals['silent-running'].success and A.executions==1)
+            assert(C.terminals['silent-running'].unknown and A.executions==1)
             local statuses=0
             for _,m in ipairs(commands('client')) do
                 if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end
             end
-            assert(statuses>0 and #C.created==C.installs and #C.errors==0)
+            assert(statuses==1 and #C.created==C.installs and #C.errors==0)
         ''')
 
-    def test_idle_first_unanswered_inspect_reconnects_second_unanswered_fails(self):
+    def test_idle_unanswered_inspect_fails_without_reconnect(self):
         self.lua.execute('''
             A.duration=10;A.progressEvery=10
             C.command=function(client)
@@ -312,12 +359,12 @@ class MesTransportOwnerTests(TransportFixture):
             end
             untilDone(function() return C.terminals.silent end,3)
             assert(C.terminals.silent.reason:find('idle timeout',1,true))
-            assert(#C.created>C.installs and A.executions==1 and #C.errors==0)
+            assert(#C.created==C.installs and A.executions==1 and #C.errors==0)
             local statuses=0
             for _,m in ipairs(commands('client')) do
                 if m.msg=='rpc' and m.args[2]=='status' then statuses=statuses+1 end
             end
-            assert(statuses==2,statuses)
+            assert(statuses==1,statuses)
         ''')
 
     def test_async_timeouts_are_service_owned_after_frontend_exit(self):
@@ -369,7 +416,7 @@ class MesTransportOwnerTests(TransportFixture):
             end,other)
             untilDone(function() return C.terminals.original end)
             advance(0.4)
-            assert(C.terminals.original.success and not other.terminal and A.executions==1)
+            assert(C.terminals.original.success and other.terminal.unknown and not other.terminal.success and A.executions==1)
             local unknowns=0
             for _,f in ipairs(other.facts) do
                 assert(not (f.token=='not-owner' and f.what=='robot_progress'))
@@ -378,6 +425,8 @@ class MesTransportOwnerTests(TransportFixture):
             end
             assert(unknowns>=1,'unverified complete cancelled our RPC deadlines')
             A.modem.send=send
+            other.terminal=nil
+            assert(other.require('craft_client').adopt('verify-owner','robot-a','shared-id',{rpcTimeout=0.2}))
             untilDone(function() return other.terminal end)
             assert(not other.terminal.success and other.terminal.unknown)
             assert(other.terminal.receipt.status=='FAILED' and other.terminal.reason:find('different sender'))
@@ -390,7 +439,7 @@ class MesTransportOwnerTests(TransportFixture):
             other.stop=true
         ''')
 
-    def test_rightful_owner_retains_complete_until_status_proves_ownership(self):
+    def test_unanswered_owner_proof_fails_unknown_then_explicit_adoption_recovers(self):
         self.lua.execute('''
             A.duration=0.2
             local send=A.modem.send
@@ -403,10 +452,11 @@ class MesTransportOwnerTests(TransportFixture):
             end
             untilDone(function() return A.ended end)
             advance(0.4)
-            assert(not C.terminals.rightful and A.executions==1)
+            assert(C.terminals.rightful.unknown and not C.terminals.rightful.success and A.executions==1)
             A.modem.send=send
-            untilDone(function() return C.terminals.rightful end)
-            assert(C.terminals.rightful.success and C.terminals.rightful.receipt.receipt==true)
+            C.command=function(client) assert(client.adopt('recovered','robot-a','rightful-id',{rpcTimeout=0.2})) end
+            untilDone(function() return C.terminals.recovered end)
+            assert(C.terminals.recovered.success and C.terminals.recovered.receipt.receipt==true)
             local crafts,statuses=0,0
             for _,m in ipairs(commands('client')) do if m.msg=='rpc' then
                 if m.args[2]=='craft' then crafts=crafts+1 end

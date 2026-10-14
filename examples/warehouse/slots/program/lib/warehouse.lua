@@ -47,7 +47,7 @@ local function saveConfig()
   local f=assert(io.open("/etc/warehouse.cfg","w"));f:write(serialization.serialize(cfg));f:close()
 end
 local revision,totalsCache=0,nil
-local function changed() revision=revision+1;totalsCache=nil;event.push("warehouse","changed") end
+local function changed(id) revision=revision+1;totalsCache=nil;event.push("warehouse","changed",id) end
 local mapRevision=map.revision and map.revision() or 0
 -- Eligibility depends on named map faces as well as warehouse observations.
 -- Only compare a scalar on redraw; rebuild the shared totals on demand.
@@ -574,7 +574,8 @@ local function finished(_,id)
   if observed or next(touched) then db_store:flush() end
   flight_store:delete("job_"..id);flight_store:flush()
   local learned=limitsDirty;saveLimits()
-  if observed or next(touched) or learned then changed() end
+  if observed or next(touched) or learned then changed(id)
+  else event.push('warehouse','settled',id) end
   endpointStorages=nil
 end
 event.listen("logistics",finished)

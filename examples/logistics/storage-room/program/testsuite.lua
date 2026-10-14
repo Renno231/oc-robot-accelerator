@@ -1,9 +1,9 @@
 -- Native acceptance entry, copied with the canonical libraries into each program tree.
 return function(case)
   local fs=require("filesystem")
-  fs.makeDirectory("/lib/logistics")
+  fs.makeDirectory("/usr/lib/logistics")
   for _,name in ipairs({"cbor","store","map","logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
-  assert(fs.copy("/home/program/drone/agent.lua","/lib/logistics/agent.lua"))
+  assert(fs.copy("/home/program/drone/agent.lua","/usr/lib/logistics/agent.lua"))
   assert(fs.copy("/home/program/bin/logistics.lua","/bin/logistics.lua"))
   local file=assert(io.open("/etc/logistics.cfg","w"))
   file:write("{reserve="..(case=="power" and 4990 or 1000)..",retries=2}");file:close()

@@ -2,21 +2,15 @@
 import argparse
 import json
 from pathlib import Path
-import shutil
-from build_machine_comparisons import prepare
+from examples.mes.build_fixtures import build_native, write_fixture
 
 
 PROGRAM = r'''
-local fs=require('filesystem');local event=require('event');local computer=require('computer')
-local ser=require('serialization');local component=require('component')
-for _,n in ipairs({'cbor','store','map','logistics','warehouse','stations','survey'}) do
-  assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua'))
-end
-fs.makeDirectory('/lib/logistics')
-for _,n in ipairs({'agent','survey'}) do assert(fs.copy('/home/program/drone/'..n..'.lua','/lib/logistics/'..n..'.lua')) end
+assert(loadfile('/home/program/install.lua'))()
+local event=require('event');local computer=require('computer');local ser=require('serialization')
 local function save(p,v) local f=assert(io.open(p,'w'));assert(f:write(ser.serialize(v,false)));f:close() end
 local eventFailure
-event.onError=function(reason) eventFailure=tostring(reason);print('EVENT ERROR',reason);save('/home/survey-event-error.lua',{reason=eventFailure}) end
+event.onError=function(reason) eventFailure=tostring(reason) end
 save('/etc/store.cfg',{variant='log'})
 local fixture=assert(loadfile('/home/program/survey-case.lua'))()
 local map=require('map');local lg=require('logistics');local wh=require('warehouse')
@@ -41,20 +35,10 @@ wait(function() for _,d in ipairs(lg.drones()) do if d.state~='idle' then return
 local carrier
 for _,d in ipairs(lg.drones()) do if d.survey then assert(not carrier);carrier=d end end
 assert(carrier and carrier.cargoSlots==4)
-local result={case=fixture.name,carrier=carrier,controllerMemory={before=computer.freeMemory()},jobs={}}
-local sv=require('survey');result.controllerMemory.after=computer.freeMemory()
-save('/home/survey-results.lua',result)
--- Freeze each exact dispatched route/command without retaining a second ledger.
-local modem=component.modem;local send=modem.send
-modem.send=function(address,port,token,kind,trip,payload,...)
-  if kind=='trip' then save('/home/survey-trip-'..trip..'.lua',
-    {address=address,trip=trip,task=ser.unserialize(payload)}) end
-  return send(address,port,token,kind,trip,payload,...)
-end
+local sv=require('survey')
 local id=assert(sv.request(fixture.area))
 wait(function() local r=sv.list()[id];assert(r.state~='failed',r.reason);return r.state=='proposed' end)
-local r=sv.get(id);result.proposal=r;local choices={};local wall,double,choose,machine,torch
-save('/home/survey-proposal.lua',r)
+local r=sv.get(id);local choices={};local wall,double,choose,machine,torch
 for _,g in ipairs(r.groups) do
   if g.kind=='wall' then wall=g end
   if g.pair==2 then double=g end
@@ -78,38 +62,26 @@ assert(sv.approve(id,choices))
 for _,n in ipairs(sv.get(id).stations) do
   wait(function() local s=st.get(n);assert(s.state~='failed',s.reason);return s.state=='ready' end)
 end
-result.stations={};for _,n in ipairs(sv.get(id).stations) do result.stations[n]=st.get(n) end
 local buffer=assert(st.add('storage',{x=0,y=64,z=10,face='top',name='buffer',role='other'}))
 wait(function() local s=st.get(buffer);assert(s.state~='failed',s.reason);return s.state=='ready' end)
 local item={name='minecraft:coal',damage=0}
-result.before=wh.count(item);assert(result.before==fixture.coal,'inventory counted twice or missed: '..result.before)
+local before=wh.count(item);assert(before==fixture.coal,'inventory counted twice or missed: '..before)
 local function done(job)
   wait(function() local s=lg.status(job);assert(s.state~='failed',s.reason);return s.state=='done' and wh.settled(job) end)
 end
 done(assert(wh.fetch(item,1,'buffer')));done(assert(wh.store(item,1,'buffer')))
-result.after=wh.count(item);assert(result.after==result.before)
-for _,j in ipairs(lg.jobs()) do result.jobs[j.id]=lg.status(j.id) end
-result.record=sv.get(id);result.fleet=lg.drones();result.controllerMemory.finished=computer.freeMemory()
-local marked=0;for _,d in ipairs(result.fleet) do assert(type(d.survey)=='boolean');if d.survey then marked=marked+1 end end
+assert(wh.count(item)==before)
+local marked=0;for _,d in ipairs(lg.drones()) do assert(type(d.survey)=='boolean');if d.survey then marked=marked+1 end end
 assert(marked==1,'survey capability mark was replaced by scan payload')
-save('/home/survey-results.lua',result)
 print(fixture.name,'passed',r.metrics.scans,'scans',r.metrics.hops,'hops',r.metrics.analyzes,'analyzes',r.metrics.energy,'energy')
 return true
 '''
 
 
 def build(root, case):
-    path = prepare('examples/mes/bricks16', Path(root) / 'fixture', 'coordinated')
+    path = build_native(Path(root) / 'fixture', 'bricks16')
     program = path.parent / 'program'
-    # Exact trip packets suffice; the inherited optional per-tick stream hits
-    # its 32 MB bound during long surveys with six carriers.
-    (program / 'route-metrics-enabled').unlink(missing_ok=True)
-    (program / 'native-main.lua').write_text(PROGRAM)
-    for name in ('cbor', 'store', 'map', 'logistics', 'warehouse', 'stations', 'survey'):
-        shutil.copyfile(f'drone-logistics/lib/{name}.lua', program / f'lib/{name}.lua')
-    for name in ('agent', 'survey'):
-        shutil.copyfile(f'drone-logistics/drone/{name}.lua', program / f'drone/{name}.lua')
-    shutil.copyfile('drone-logistics/drone/loader.lua', path.parent / 'loader.lua')
+    (program / 'main.lua').write_text(PROGRAM)
     value = json.loads(path.read_text())
     value['id'] = case
     value.pop('robots', None)
@@ -159,8 +131,7 @@ def build(root, case):
     (program / 'survey-case.lua').write_text("return {name='%s',area=%s,coal=%s}\n" % (case, area, len(chests)*2))
     value['expect'] = {'drones': value['expect']['drones']}
     value['execution'].update(maxTicks=48000, timeoutSeconds=2400, infiniteEnergy=False)
-    path.write_text(json.dumps(value, indent=2) + '\n')
-    return path
+    return write_fixture(path, value)
 
 
 if __name__ == '__main__':

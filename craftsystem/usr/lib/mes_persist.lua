@@ -26,8 +26,8 @@ local function pack(b)
 end
 local rf='id item qty status started now trips sequence claims inflight fuelAvailable stopping reason error uncertain served callbackError'
 local sf='state status detail error done total crafter groups locations assigned started craftStarted craftFinished released finished jobId submitted admission receipt toolReservations loadsDelivered phase robotLock bufferLock buffer prepared toolWithdrawals robotResult robotResultAt'
-local wf='group left active blocked admitting error deadline'
-local lf='sequence ops remaining consumed fuelAdditional position duration quarantined unresolved'
+local wf='group left active blocked admitting error inputRetried'
+local lf='sequence ops remaining consumed fuelAdditional position duration due quarantined unresolved'
 local lists={mv='itemsMoved',pj='physicalJobs',ld='loadLedger',sa='storeAllocations'}
 function M.open()
  local store=require('store').open('/etc/mes.state')
@@ -83,7 +83,8 @@ function M.save(p,w,h,active,seq,snap)
   put('stuck_'..name,v)
  end
  for name,g in pairs(w.groups) do
-  local v=pick(g,'name roles phase awaitCollection inputRecipe sequence tripSeconds')
+  local v=pick(g,'name roles phase awaitCollection inputRecipe sequence tripSeconds outputRetried')
+  v.outputRead=act(g.outputRead)
   v.type=w.machines[name].type;v.runs={};v.pending={};v.loads={}
   for id in pairs(g.runs) do v.runs[#v.runs+1]=id end;table.sort(v.runs)
   for _,r in ipairs(g.pending) do v.pending[#v.pending+1]=ref(r) end
@@ -175,7 +176,7 @@ function M.restore(p,w,config,ports,client,now)
     s.bufferRead=ra(s.bufferRead,r);s.robotAction=ra(s.robotAction,r)
     if v.work then
      local work=S.machineRequests(r,s)
-     for n,request in ipairs(work.requests) do ov(request,v.work[n]);request.deadline=now+60 end
+     for n,request in ipairs(work.requests) do ov(request,v.work[n]) end
      s.work=nil
     end
     if s.state~='waiting' and s.state~='done' and s.state~='failed' then r.active[#r.active+1]=i end
@@ -194,20 +195,24 @@ function M.restore(p,w,config,ports,client,now)
   if name then
    local g=ov({mt=cfg.machineTypes[v.type],pending={},runs={},loads={}},v)
    g.type=nil;g.opts=h[v.runs[1]].opts;g.fuel=w.machines[name].fuel
-   g.quarantined=w.stuck[name] or {};g.inputDue=now;g.outputDue=math.huge
-   g.inputBackoff=0.5;g.outputBackoff=0.5
+   g.quarantined=w.stuck[name] or {};g.outputDue=math.huge
    g.runs={};for _,id in ipairs(v.runs) do g.runs[id]=true end
    g.pending={};for _,ref in ipairs(v.pending) do g.pending[#g.pending+1]=request(ref) end
    local loads={};g.loads={}
    for _,l in ipairs(v.loads) do
-    if l.duration~=nil then g.outputDue=now end
     l.request=request(l.request);l.donor=request(l.donor)
     local r,s=l.request.run,l.request.stage
-    l.record=s.loadLedger[l.record];l.due=now;l.deadline=now+(l.duration or 0)+60
+    l.record=s.loadLedger[l.record]
+    l.due=now+math.max(0,(l.due or db['run_'..r.id].now)-db['run_'..r.id].now)
+    if l.duration~=nil then
+     g.outputDue=math.min(g.outputDue,l.due)
+     g.lastExpectedDue=math.max(g.lastExpectedDue or l.due,l.due)
+    end
     for _,f in ipairs(l.fetches) do f.receipt=s.itemsMoved[f.receipt] end
     l.bundle=rb(l.bundle,r,s);g.loads[#g.loads+1]=l;loads[l.sequence]=l
    end
    g.loading=loads[v.loading]
+   if g.outputRead then g.outputRead=ra(g.outputRead,g.loads[1].request.run) end
    if g.loading then g.loading.timingRestart=true end
    if g.collection then
     local c=g.collection;local owner

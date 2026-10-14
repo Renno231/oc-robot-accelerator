@@ -115,43 +115,59 @@ class MesConfigTests(LuaCase):
         ''')
 
     def mock_disk(self):
+        self.lua.globals().STORE_SOURCE = (ROOT.parent / 'drone-logistics/lib/store.lua').read_text()
         self.lua.execute('''
-            DISK=nil; SAVED=nil; WRITES=0; CLOSE_RESULT=true; CLOSE_ERROR=nil; TEMP={}
+            DISK=nil; WRITES=0; CLOSE_RESULT=true; CLOSE_ERROR=nil; TEMP={}; FILES={}
             local function copied(t)
               if type(t)~='table' then return t end
               local out={};for k,v in pairs(t) do out[k]=copied(v) end;return out
             end
             package.preload.filesystem=function() return {
-              exists=function() return DISK~=nil end,
-              remove=function(p) TEMP[p]=nil;return true end,
+              exists=function(p) return p=='/etc/mes.cfg' and DISK~=nil or FILES[p]~=nil end,
+              remove=function(p) FILES[p]=nil;TEMP[p]=nil;return true end,
               rename=function(old,new)
-                assert(new=='/etc/mes.cfg')
+                assert(new=='/etc/mes.config')
                 if RENAME_FAIL then return nil,'rename error' end
-                assert(TEMP[old]);DISK=copied(TEMP[old]);TEMP[old]=nil;return true
+                assert(FILES[old]);FILES[new]=FILES[old];FILES[old]=nil;TEMP[old]=nil;return true
               end} end
             package.preload.serialization=function() return {
               unserialize=function(s) if s=='invalid' then return nil end;return copied(DISK) end,
-              serialize=function(t) if ENCODE_FAIL then error('encode error') end;SAVED=copied(t);return 'serialized' end} end
+              serialize=function() error('Config must be CBOR') end} end
+            local cbor=require('cbor');local encode=cbor.encode
+            cbor.encode=function(t) if ENCODE_FAIL then error('encode error') end;return encode(t) end
+            package.loaded.store=nil;package.preload.store=assert(load(STORE_SOURCE))
             io.open=function(p,mode)
               if mode=='r' then
+                if p=='/etc/store.cfg' then return nil end
                 assert(p=='/etc/mes.cfg')
                 if DISK==nil then return nil,'missing' end
                 return {read=function() return DISK=='invalid' and 'invalid' or 'serialized' end,close=function() return true end}
               end
-              assert(mode=='w' and p:match('^/etc/mes%.cfg%.tmp%.%d+$'))
-              if OPEN_FAIL then return nil,'open error' end
-              local buffer=nil;local f={}
+              assert(mode=='ab' or mode=='rb')
+              if mode=='ab' and OPEN_FAIL then return nil,'open error' end
+              if mode=='rb' and not FILES[p] then return nil,'missing' end
+              if mode=='ab' then FILES[p]=FILES[p] or '' end
+              local buffer='';local position=1;local f={}
+              function f:read(n)
+                local data=FILES[p]
+                if n=='*a' then return data end
+                if position>#data then return nil end
+                local s=data:sub(position,position+n-1);position=position+#s;return s
+              end
               function f:write(s)
-                assert(s=='serialized');WRITES=WRITES+1
+                WRITES=WRITES+1
                 if WRITE_FAIL then return nil,'write error' end
-                buffer=copied(SAVED);return self
+                buffer=buffer..s;return self
               end
               function f:flush()
                 if FLUSH_FAIL then return nil,'flush error' end
-                if buffer then TEMP[p]=copied(buffer) end;return true
+                FILES[p]=(FILES[p] or '')..buffer;buffer=''
+                if p:find('.tmp',1,true) then TEMP[p]=true end
+                return true
               end
               function f:close()
-                self:flush() -- actual OpenOS close discards this result
+                if CLOSE_ERROR or CLOSE_RESULT==false then error(CLOSE_ERROR or 'close error') end
+                self:flush()
                 return CLOSE_RESULT,CLOSE_ERROR
               end
               return f
@@ -167,8 +183,22 @@ class MesConfigTests(LuaCase):
             assert(C.crafters().cpu.robot=='addr');assert(C.removeCrafter('cpu'));assert(WRITES==3)
             assert(C.removeType('furnace'));assert(WRITES==4)
             assert(C.setType('injected',def(),OPT));assert(WRITES==4)
-            DISK='invalid';assert(type(C.config())=='table')
+            FILES['/etc/mes.config']='invalid';assert(type(C.config())=='table')
             package.loaded.mes_config=nil;assert(not pcall(require('mes_config').config))
+        ''')
+
+    def test_legacy_config_migrates_on_edit_and_cbor_wins_after_restart(self):
+        self.mock_disk()
+        self.lua.execute('''
+            DISK={machineTypes={original=def()},crafters={}}
+            assert(C.types().original and not FILES['/etc/mes.config'])
+            assert(C.setType('added',def()))
+            assert(DISK.machineTypes.original and not DISK.machineTypes.added)
+            local bytes=assert(FILES['/etc/mes.config'])
+            local row=require('cbor').decode(bytes)
+            assert(row.k=='config' and row.v.machineTypes.added)
+            package.loaded.mes_config=nil;C=require('mes_config')
+            assert(C.types().original and C.types().added)
         ''')
 
     def test_openos_close_nil_success_and_explicit_failure(self):
@@ -204,14 +234,14 @@ class MesConfigTests(LuaCase):
           assert(OPENS==0)
           local cfg=C.config();cfg.machineTypes.furnace.seconds=99
           assert(M.types().furnace.seconds==10)
-          local d=def();d.seconds=12;assert(C.setType('furnace',d));assert(OPENS==1)
-          assert(M.types().furnace.seconds==12 and OPENS==1)
+          local d=def();d.seconds=12;assert(C.setType('furnace',d));local savedOpens=OPENS
+          assert(M.types().furnace.seconds==12 and OPENS==savedOpens)
           local before=OPENS;d.seconds=13;RENAME_FAIL=true
           assert(not pcall(C.setType,'furnace',d));RENAME_FAIL=nil
-          assert(M.types().furnace.seconds==12 and OPENS==before+1)
+          assert(M.types().furnace.seconds==12 and OPENS>before);local failedOpens=OPENS
           CFG.machineTypes.furnace=def();CFG.machineTypes.furnace.seconds=88
           assert(C.config(OPT)==CFG and M.types(OPT).furnace.seconds==88)
-          assert(M.types().furnace.seconds==12 and OPENS==before+1)
+          assert(M.types().furnace.seconds==12 and OPENS==failedOpens)
         ''')
 
     def test_resources_excluded_counts_are_copies(self):
