@@ -11,9 +11,23 @@ local installed, pumping = false, false
 local history, active, nextRun, none = {}, {}, 0, { status = 'idle', stages = {}, active = {} }
 local wh, lg, client, prepareRobot
 local persist, disk, savedRevision, portsFor, snapshot
+local deadline
 local watched = {} -- logistics job id -> owning run id
+local function arm(due)
+  if due == deadline then return end
+  if M.timer then event.cancel(M.timer) end
+  deadline, M.timer = due, nil
+  if due then
+    M.timer = event.timer(math.max(0, due-computer.uptime()), function()
+      deadline, M.timer = nil, nil
+      queue[#queue+1] = {what='tick',data={now=computer.uptime()}}
+      M.pump()
+    end, 1)
+  end
+end
 local function enqueue(id, what, data)
   queue[#queue + 1] = { id = id, what = what, data = data }
+  if installed and not pumping then arm(computer.uptime()) end
 end
 M.enqueue = enqueue
 function M.guarded()
@@ -24,18 +38,20 @@ local function onRobot(token, what, data)
   d.token = token
   enqueue(nil, what, d)
 end
-local function observeJobs()
-  for id in pairs(watched) do
-    local r = lg.status(id)
-    if r then
-      enqueue(watched[id], 'job', { id = id, receipt = r })
-      local done = r.state == 'done' or r.state == 'failed' or r.state == 'partial'
-      if done and wh.settled(id) == true then
-        enqueue(watched[id], 'settled', { id = id })
-        watched[id] = nil
+local function observeJobs(only)
+  for id in pairs(only and {[only]=true} or watched) do
+    if watched[id] then
+      local r = lg.status(id)
+      if r then
+        enqueue(watched[id], 'job', { id = id, receipt = r })
+        local done = r.state == 'done' or r.state == 'failed' or r.state == 'partial'
+        if done and wh.settled(id) == true then
+          enqueue(watched[id], 'settled', { id = id })
+          watched[id] = nil
+        end
+      else
+        enqueue(watched[id], 'job_missing', { id = id, reason = 'Missing logistics job ' .. tostring(id) })
       end
-    else
-      enqueue(watched[id], 'job_missing', { id = id, reason = 'Missing logistics job ' .. tostring(id) })
     end
   end
 end
@@ -123,9 +139,8 @@ function M.pump()
         -- A nested signal callback may enqueue but cannot re-enter this pump.
         client.tick(f.data.now)
         f.data.now = computer.uptime()
-        observeJobs()
       elseif f.what == 'observe_jobs' then
-        observeJobs()
+        observeJobs(f.data.id)
       end
       -- Finished runs are not visited, so history never slows a tick.
       local run = owner(f)
@@ -144,6 +159,7 @@ function M.pump()
         state.advanceWorld(world, dispatch, M.clientOptions)
         if head > #queue then
           local now = computer.uptime()
+          local revision = world.revision
           for _, r in ipairs(order()) do
             if r.status == 'running' then
               state.update(r, 'tick', { now = now })
@@ -155,6 +171,8 @@ function M.pump()
               table.remove(active, i)
             end
           end
+          -- A later run may release a resource an earlier run just waited for.
+          if world.revision ~= revision then enqueue(nil, 'advance', {}) end
         end
       end
     end
@@ -169,6 +187,8 @@ function M.pump()
   if not ok then
     error(err, 0)
   end
+  local due = math.min(client.nextDue() or math.huge, state.nextDue(world) or math.huge)
+  arm(due < math.huge and due or nil)
 end
 function M.start(opts, prepare)
   opts = opts or {}
@@ -192,8 +212,8 @@ function M.start(opts, prepare)
   M.clientOptions = state.copy(opts.client or {})
   installed = true
   pumping = true
-  local ok, rows = pcall(client.install, onRobot, M.clientOptions)
-  if ok then
+  local ok, err = pcall(function()
+    local rows = client.install(onRobot, M.clientOptions)
     history, active, nextRun, watched = persist.restore(disk, world,
       function() return require('mes_config').config(opts) end, portsFor, client, computer.uptime())
     savedRevision = world.revision
@@ -203,23 +223,20 @@ function M.start(opts, prepare)
         world.revision = world.revision + 1
       end
     end
-  end
+  end)
   pumping = false
   if not ok then
     installed = false
-    return nil, tostring(rows)
+    pcall(disk.store.close,disk.store)
+    return nil, tostring(err)
   end
   require('mes_alerts').start(world)
-  local function signal()
-    enqueue(nil, 'observe_jobs', {})
-    M.pump()
-  end
-  event.listen('logistics', signal)
-  event.listen('warehouse', signal)
-  M.timer = event.timer(opts.serviceSeconds or 0.1, function()
-    enqueue(nil, 'tick', { now = computer.uptime() })
-    M.pump()
-  end, math.huge)
+  event.listen('logistics', function(_, id) enqueue(nil, 'observe_jobs', {id=id}) end)
+  event.listen('warehouse', function(_, _, id)
+    enqueue(nil, id and 'observe_jobs' or 'advance', {id=id})
+  end)
+  event.listen('craft_client', function() enqueue(nil, 'tick', {now=computer.uptime()}) end)
+  enqueue(nil, 'observe_jobs', {}) -- Reconcile persisted jobs once on service restart.
   M.pump()
   require('housekeeping')
   return true
@@ -329,7 +346,7 @@ function M.wait(id)
     return nil, 'Unknown run'
   end
   while run.status == 'running' do
-    event.pull(0.2)
+    event.pull()
   end
   return snapshot(run)
 end

@@ -9,8 +9,9 @@
   ],
   "libraries": {
     "tnet.lua": {
-      "bytes": 19857,
-      "sha256": "75220303e727b1b61c3e254d559e572a05e17341063978f6f16b54bb723223f1"
+      "bytes": 20182,
+      "sha256": "8d056113f36e4bbd202871612e6f5eb2fe12a04f48623731eeb3a4e11516c139",
+      "sourceCommit": "4eb2bd42712350ef0861a94194d05596b38085d9"
     },
     "api.lua": {
       "bytes": 12776,

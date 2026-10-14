@@ -110,10 +110,16 @@ class SurveyTests(unittest.TestCase):
           local oldReads=0;for _,p in ipairs(ANALYZED) do if p=='3,65,0' then oldReads=oldReads+1 end end
           assert(oldReads==1 and KNOWN.old.members[1].x==3)
           assert(#r.ignored==1 and r.ignored[1].kind:find('S2'))
+          assert(r.trips==nil and r.metrics.scans>0 and r.metrics.analyzes>0)
           assert(not sv.approve(id,{[1]={prefix='stock'}}))
           assert(not sv.approve(id,{[1]={prefix='stock',role='stock'}}))
+          -- Previously persisted diagnostics can be discarded without losing the proposal.
+          local store=require('store').open('/etc/survey','log')
+          r.trips={{job=1,command={path={{x=0,y=65,z=0}}}}}
+          store:put('sv_'..id,r);store:flush()
           LISTEN={};sv=assert(load(SOURCE))();r=sv.get(id)
           assert(r.state=='proposed' and r.limitation:find('same density'))
+          assert(r.trips==nil and require('store').open('/etc/survey','log'):load()['sv_'..id].trips==nil)
           assert(sv.approve(id,{[1]={prefix='stock',role='stock',face='top'}}))
           assert(#REQUESTS==1 and REQUESTS[1].spec.paths[1][1].x==0)
           assert(sv.get(id).state=='approved')

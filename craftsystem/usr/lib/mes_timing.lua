@@ -49,15 +49,14 @@ function M.observe(w,g,c,err)
  local delta,free,quantum=0,false,nil
  for _,l in ipairs(g.loads) do
   if l.request.run.stopping then exclude(g,'stopped');return end
-  if w.now>=l.deadline then exclude(g,'quarantine');return end
   local k=(l.consumed or 0)*l.request.perOp
   local added=k-(l.timingCollected or 0);delta=delta+added;l.timingCollected=k
   if k<l.ops*l.request.perOp then quantum=quantum or l.request.perOp end
   if not l.probe and ((c.bundle.action.submittedAt or w.now)<l.due and added>0 or k<l.ops*l.request.perOp and w.now>=l.due) then free=true end
   l.probe=nil
  end
- for _,id in ipairs(c.bundle.action.ids or {}) do
-  for _,s in ipairs((c.bundle.run.jobs[id] or {}).steps or {}) do
+ for _,receipt in ipairs(c.bundle.action.results or {}) do
+  for _,s in ipairs(receipt.steps or {}) do
    if s.take and s.maxSize and (s.taken or s.moved or 0)>=s.maxSize*#g.mt.roleSlots[g.mt.output] then exclude(g,'capacity');return end
   end
  end

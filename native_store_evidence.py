@@ -7,7 +7,116 @@ Directory stores contain one CBOR value per percent-escaped key filename.
 from io import BytesIO
 from pathlib import Path
 import struct
+import math
+import re
 from urllib.parse import unquote
+
+
+class LuaData:
+    """Data-only OpenOS literals, consolidated from the native wire reporter.
+
+    Parsing captures must never execute the Lua text they contain.
+    """
+    def __init__(self, text):
+        if len(text.encode('utf8')) > 8 * 1024 * 1024:
+            raise ValueError('data size bound')
+        self.text, self.pos, self.nodes = text, 0, 0
+
+    def space(self):
+        while self.pos < len(self.text) and self.text[self.pos].isspace():
+            self.pos += 1
+
+    def peek(self):
+        self.space()
+        return self.text[self.pos:self.pos + 1]
+
+    def take(self, token):
+        if self.peek() != token:
+            raise ValueError('expected ' + token)
+        self.pos += 1
+
+    def string(self):
+        quote = self.text[self.pos]; self.pos += 1
+        out = []
+        escapes = {'n': '\n', 'r': '\r', 't': '\t', 'a': '\a', 'b': '\b',
+                   'f': '\f', 'v': '\v', '\\': '\\', '"': '"', "'": "'", '\n': '\n'}
+        while self.pos < len(self.text):
+            c = self.text[self.pos]; self.pos += 1
+            if c == quote:
+                return ''.join(out)
+            if c == '\\':
+                if self.pos >= len(self.text):
+                    break
+                c = self.text[self.pos]; self.pos += 1
+                if c in '0123456789':
+                    digits = c
+                    while len(digits) < 3 and self.pos < len(self.text) and self.text[self.pos] in '0123456789':
+                        digits += self.text[self.pos]; self.pos += 1
+                    if int(digits) > 255:
+                        raise ValueError('escape bound')
+                    c = chr(int(digits))
+                elif c == 'z':
+                    self.space(); continue
+                elif c in escapes:
+                    c = escapes[c]
+                else:
+                    raise ValueError('unsupported string escape')
+            out.append(c)
+        raise ValueError('unterminated string')
+
+    def value(self, depth=0):
+        self.nodes += 1
+        if depth > 32 or self.nodes > 100000:
+            raise ValueError('data complexity bound')
+        c = self.peek()
+        if c in ('"', "'"):
+            return self.string()
+        if c == '{':
+            self.pos += 1; table = {}; index = 1
+            while self.peek() != '}':
+                if not self.peek():
+                    raise ValueError('unterminated table')
+                if self.peek() == '[':
+                    self.pos += 1; key = self.value(depth + 1)
+                    if not isinstance(key, (str, int, float)) or isinstance(key, bool):
+                        raise ValueError('invalid table key')
+                    self.take(']'); self.take('=')
+                else:
+                    match = re.match(r'([A-Za-z_][A-Za-z_0-9]*)\s*=', self.text[self.pos:])
+                    if match:
+                        key = match[1]; self.pos += match.end()
+                    else:
+                        key = index; index += 1
+                key = str(key)
+                if key in table:
+                    raise ValueError('duplicate table key')
+                table[key] = self.value(depth + 1)
+                if self.peek() in (',', ';'):
+                    self.pos += 1
+                elif self.peek() != '}':
+                    raise ValueError('table separator')
+            self.pos += 1
+            return table
+        nonfinite = re.match(r'(-inf|inf|nan)(?![A-Za-z_0-9])', self.text[self.pos:])
+        if nonfinite:
+            self.pos += nonfinite.end()
+            return {'nonfinite': nonfinite[1]}
+        match = re.match(r'(nil|true|false)(?![A-Za-z_0-9])|([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)', self.text[self.pos:])
+        if not match:
+            raise ValueError('unsupported literal at ' + str(self.pos))
+        self.pos += match.end()
+        if match[1]:
+            return {'nil': None, 'true': True, 'false': False}[match[1]]
+        value = float(match[2])
+        if not math.isfinite(value):
+            raise ValueError('nonfinite number')
+        return int(value) if value.is_integer() else value
+
+    def parse(self):
+        value = self.value(); self.space()
+        if self.pos != len(self.text):
+            raise ValueError('trailing data/code')
+        return value
 
 
 def decode(stream):

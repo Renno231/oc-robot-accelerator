@@ -14,7 +14,6 @@ class LuaCase(unittest.TestCase):
         self.module('craft_tool_budget', 'lib/craft_tool_budget.lua')
         self.module('craft_blueprint', 'lib/craft_blueprint.lua')
         self.module('craft_resources', 'lib/craft_resources.lua')
-        self.module('craft_execution', 'lib/craft_execution.lua')
         self.module('craft_plan', 'lib/craft_plan.lua')
         self.module('cbor', 'lib/cbor.lua')
         self.module('mes_timing', 'lib/mes_timing.lua')

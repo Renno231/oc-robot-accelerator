@@ -84,7 +84,7 @@ final class RunnerDroneScenario {
         for(JsonElement e:expectedRobots) {
             JsonObject r=e.getAsJsonObject();RunnerScenario.fields(r,"index"+(r.has("inventory")?",inventory":""));
             RunnerScenario.integer(r.get("index"),0,robots.size()-1);
-            if(r.has("inventory")) expectedSlots(r.get("inventory"),64);
+            if(r.has("inventory")) expectedSlots(r.get("inventory"),85);
         }
         JsonArray devices=new JsonArray();for(JsonElement e:drones) devices.add(e);
         for(JsonElement e:microcontrollers) {

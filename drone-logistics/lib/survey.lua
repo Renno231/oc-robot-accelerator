@@ -123,7 +123,7 @@ local function adjacent(s,p)
   if #faces>0 then p.faces=faces;p.paths=paths;return p end
 end
 local function submit(s,command,context)
-  s.context=context;s.command=command;s.job=lg.probe(s.node,command);s.result=nil
+  s.context=context;s.job=lg.probe(s.node,command);s.result=nil
 end
 local function fail(s,reason) runs[s.record.id]=nil;transition(s.record,'failed',reason) end
 local function scanFrom(s,t)
@@ -202,7 +202,7 @@ function M.request(area)
   end
   for _,summary in ipairs(stations.list()) do for _,p in ipairs(stations.get(summary.name).members) do known[key(p)]={station=summary.name} end end
   local id=1;while records['sv_'..id] do id=id+1 end
-  local r={id=id,area=a,origin=origin,groups={},mismatches={},ignored={},limitation=limitation,metrics={scans=0,hops=0,analyzes=0,energy=0,tripEnergy=0},trips={}}
+  local r={id=id,area=a,origin=origin,groups={},mismatches={},ignored={},limitation=limitation,metrics={scans=0,hops=0,analyzes=0,energy=0,tripEnergy=0}}
   local halo={};for _,axis in ipairs({'x','y','z'}) do halo[axis..'1']=a[axis..'1']-1;halo[axis..'2']=a[axis..'2']+1 end
   local s={record=r,node=node,origin=origin,known=known,grid={[key(origin)]=0},positions={[key(origin)]=origin},tiles=M.tiles(halo),chests={},mismatch={},analyzed={}}
   runs[id]=s;transition(r,'surveying');reachable(s);advance(s);return id
@@ -216,7 +216,6 @@ event.listen('logistics',function(_,job)
     if status.state=='failed' then return fail(s,status.reason) end
     if status.state~='done' then return end
     local result=s.result;if not result then return fail(s,'survey result missing') end
-    s.record.trips[#s.record.trips+1]={job=job,node=s.node,command=copy(s.command),metrics={scans=result.scans,hops=result.hops,analyzes=result.analyzes,energy=result.energy,tripEnergy=result.tripEnergy}}
     for k,v in pairs(s.record.metrics) do s.record.metrics[k]=v+(result[k] or 0) end
     local context=s.context
     if context.tile then
@@ -289,5 +288,10 @@ function M.approve(id,choices)
   end
   transition(r,'approved');return true
 end
-for _,r in pairs(records) do if r.state=='surveying' then transition(r,'failed','survey interrupted; request again') end end
+local trimmed=false
+for _,r in pairs(records) do
+  if r.trips then r.trips=nil;store:put('sv_'..r.id,r);trimmed=true end
+  if r.state=='surveying' then transition(r,'failed','survey interrupted; request again') end
+end
+if trimmed then store:flush() end
 return M

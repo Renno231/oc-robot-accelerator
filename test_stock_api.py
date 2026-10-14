@@ -138,7 +138,7 @@ class LibraryApiTests(unittest.TestCase):
 
     def load_logistics(self):
         self.lua.execute('''
-          files['/lib/logistics/agent.lua']='return true'
+          files['/usr/lib/logistics/agent.lua']='return true'
           package.preload.map=function() return {
             buildClear=function() end,
             storage=function(s) return {node=s,side=0} end,

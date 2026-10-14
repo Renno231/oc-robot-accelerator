@@ -5,6 +5,40 @@ import test_stock_api
 
 
 class LogisticsManyTests(unittest.TestCase):
+    def test_transfer_receipts_keep_returns_overflow_and_actual_stack_limit(self):
+        for overflow in (False, True):
+            with self.subTest(overflow=overflow):
+                self.setUp()
+                self.lua.globals().OVERFLOW = overflow
+                self.lua.execute('''
+          local id=lg.transfer({name='mod:a'},300,'source','dest',{drones=1,overflow=OVERFLOW and 'overflow' or nil})
+          local packet,task=dispatch()
+          assert(task.steps[1].count==256 and task.steps[2].count==256)
+          report(packet.id,{state='idle',held=0,steps={{taken=64,moved=64,maxSize=16},{moved=64}}})
+          packet,task=dispatch()
+          assert(task.steps[1].count==64 and task.steps[2].count==64)
+          report(packet.id,{state='idle',held=0,refused=true,reason='destination refused items',steps={
+            {taken=64,moved=10,maxSize=16,returned=not OVERFLOW and 54 or 0,overflow=OVERFLOW and 54 or 0,emptied=4,knownTaken=64},
+            {moved=10,refused=54}}})
+          dispatch()
+          local s=lg.status(id)
+          assert(s.state=='partial' and s.moved==74 and s.remaining==226 and s.trips==2)
+          assert(s.taken==128 and s.returned==(OVERFLOW and 0 or 54) and s.overflow==(OVERFLOW and 54 or 0) and s.maxSize==16)
+          assert(s.refused==54 and s.emptied==4 and s.knownTaken==64 and s.steps==nil)
+          assert(s.from.node=='source' and s.to.node=='dest' and s.item.name=='mod:a')
+        ''')
+
+    def test_transfer_rejects_unreachable_delivery_before_dispatch(self):
+        self.lua.execute('''
+          local map=require('map')
+          local theta=map.theta
+          map.theta=function(a,b,...) if a=='source' and b=='dest' then return nil end;return theta(a,b,...) end
+          local id=lg.transfer({name='mod:a'},4,'source','dest')
+          local before=#SENT;dispatch()
+          assert(#SENT==before and lg.status(id).state=='failed' and lg.status(id).trips==0)
+          assert(lg.status(id).reason:find('no route source'))
+        ''')
+
     def test_agent_waiting_take_stops_at_minimum_or_waits_for_it(self):
         source = Path('drone-logistics/drone/agent.lua').read_text()
         function = source[source.index('local function waitingTake('):source.index('local function runSteps(')]
@@ -47,8 +81,7 @@ class LogisticsManyTests(unittest.TestCase):
                         id=lg.job({leg('take','mod:a',4,nil,64),leg('put','mod:a',4,nil,64,'dest')},{retries=2})
                       else id=lg.transfer({name='mod:a'},4,'source','dest',{retries=2}) end
                       local packet=assert(dispatch())
-                      local result={state='idle',taken=0,moved=0,short=true,left=LEFT,held=0}
-                      if PACKED then result.steps={{short=true,left=LEFT,taken=0,moved=0},{moved=0}} end
+                      local result={state='idle',held=0,steps={{short=true,left=LEFT,taken=0,moved=0},{moved=0}}}
                       report(packet.id,result)
                       local s=lg.status(id)
                       assert(s.trips==1)
@@ -83,6 +116,18 @@ class LogisticsManyTests(unittest.TestCase):
           assert(task.cargo==true and #task.steps==1 and task.steps[1].put and task.steps[1].count==3)
         ''')
 
+    def test_mixed_trip_reports_numeric_destination_refusal_to_mes(self):
+        self.lua.execute('''
+          local id=lg.job({leg('take','mod:a',3,nil,64),leg('put','mod:a',3,nil,64,'dest')})
+          local packet=dispatch()
+          report(packet.id,{state='idle',held=0,reason='destination refused items',refused=true,
+            steps={{taken=3,moved=3,returned=2},{moved=1,refused=2}},cargo={}})
+          dispatch() -- Consume the scheduler wake that settles a blocked job.
+          local s=lg.status(id)
+          assert(s.state=='partial' and s.moved==1 and s.refused==2)
+          assert(not next(s.held))
+        ''')
+
     def test_agent_delivers_cargo_it_already_holds(self):
         source = Path('drone-logistics/drone/agent.lua').read_text()
         function = source[source.index('local function runSteps('):source.index('if not x or drone.getOffset()>=.02 then')]
@@ -103,6 +148,36 @@ class LogisticsManyTests(unittest.TestCase):
           RUN({cargo=true,reserve=0,home='home',steps={{put={node='stock'},item={name='mod:a'},count=3}}},1,result)
           return PUT[1][1],PUT[1][2],result.steps[1].moved,result.held,#result.cargo
         '''), ('stock', 3, 3, 0, 0))
+
+    def test_charging_interruption_returns_cargo_or_blocks_with_it_held(self):
+        source = Path('drone-logistics/drone/agent.lua').read_text()
+        function = source[source.index('local function runSteps('):source.index('if not x or drone.getOffset()>=.02 then')]
+        self.lua.execute('''
+          HELD=0;slots=4;VISITS={}
+          function match(a,b) return a.name==b.name end
+          function goTo(node) VISITS[#VISITS+1]=node end
+          function report() end
+          function cargoCount() return HELD end
+          function cargoRoom() return true end
+          function waitingTake() HELD=1;return 1,64,'wait interrupted to charge',true,0 end
+          function put() local n=REFUSE and 0 or HELD;HELD=HELD-n;return n end
+          computer={energy=function() return 100 end}
+        ''')
+        self.lua.globals().RUN = self.lua.execute(function + '\nreturn runSteps')
+        self.lua.execute('''
+          for _,refuse in ipairs({false,true}) do
+            REFUSE=refuse;VISITS={};local result={}
+            RUN({reserve=10,home='home',steps={
+              {take={node='source'},item={name='mod:a'},count=2},
+              {put={node='dest'},item={name='mod:a'},count=2}}},1,result)
+            assert(table.concat(VISITS,',')=='source,source,home')
+            assert(result.held==(refuse and 1 or 0))
+            if refuse then
+              assert(not result.recharge and result.refused and result.cargo[1].count==1)
+              assert(result.reason=='source refused cargo on charging interruption')
+            else assert(result.recharge and result.steps[1].returned==1 and result.steps[1].moved==0) end
+          end
+        ''')
 
     def setUp(self):
         fixture = test_stock_api.LibraryApiTests()

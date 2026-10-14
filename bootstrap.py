@@ -144,8 +144,10 @@ def main():
     env = dict(os.environ, JAVA_HOME=str(home))
     env['PATH'] = str(home / 'bin') + os.pathsep + env.get('PATH', '')
     # Invoke Gradle's checked distribution directly, avoiding shell quoting and wrapper binaries.
+    # Gradle's normal user cache is shared across checkouts (and honors
+    # GRADLE_USER_HOME); a per-worktree dependency cache only duplicates it.
     command = [str(java), '-classpath', str(distribution / 'gradle-4.9/lib/gradle-launcher-4.9.jar'),
-               'org.gradle.launcher.GradleMain', '--no-daemon', '--gradle-user-home', str(cache / 'gradle'), 'test', 'build']
+               'org.gradle.launcher.GradleMain', '--no-daemon', 'test', 'build']
     run_checked(command, cwd=root, env=env, timeout=900)
     if args.prepare_server:
         from runtime_profile import OVERLAYS

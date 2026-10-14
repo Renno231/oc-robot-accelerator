@@ -1,38 +1,79 @@
-# MES acceptance fixtures
+# Native MES manufacturing suite
 
-Generate canonical copies: `python examples/mes/build_fixtures.py`.
-Focused contracts: `python -B -m unittest test_mes_fixtures`.
+From the repository root:
 
-The five coordinated worlds preserve the T10 stock room, add two furnaces,
-two drones and a stationary crafting CPU. Every scenario sets
-`execution.infiniteEnergy=true`; power is not under test. The robot installs
-unchanged craftsystem sources and executes `cproc --side=3` facing its buffer.
-The controller compiles the four required crafting recipes using the original
-`liblz16` writer and `recipes.build`, and registers furnace recipes through the
-original processing API. No UI is started.
+```sh
+python run_mes_scenarios.py
+```
 
-| Case | Acceptance |
+The command generates fresh fixtures from this checkout's canonical
+`craftsystem/` and `drone-logistics/` sources. Four cases run concurrently;
+each has its own fixture and jobs directory under `C:/or/mes-native/<timestamp>`.
+Use `--root <fresh-directory>`, `--cases <names...>` or `--parallel 1` to narrow
+a run. Existing roots are retained as evidence and cannot be overwritten.
+Use `--machine-seconds 1 --cases bricks16` to exercise an underestimated
+processing time through the same runner and acceptance checks.
+
+The default installed native addon is
+`C:/or/drone-install-MES-E2E-finalization`. `--installation <directory>` selects
+another checked installation; it must support host modem capture and 85-slot
+robot inventory assertions. This suite does not modify the installation.
+
+## What runs
+
+`build_fixtures.build_native()` builds the physical layouts and assembly disks.
+`native.lua` installs under `/usr`, starts MES through rc, registers the six
+announcing drones and pairs the unpaired robots through `mes.registerRobot`.
+Robots start canonical cproc through rc. Registration readiness comes from the
+MES's cached resource state. No host address books are prefilled.
+
+Hardware: a fully populated T3 rack server, T3 screen/GPU, six drones, and
+85-slot robots with two RAM sticks. Fixtures provide infinite power; finite
+power behavior is outside these manufacturing cases.
+
+| Case | Native acceptance |
 | --- | --- |
-| torches16 | robot → machine → robot; 16 torches, logs 3, coal 14, planks 2, sticks 0 |
-| bricks16 | 64 clay split 32/32, then 16 brick blocks; coal 8 |
-| specific-group | all 64 clay through furnaceA; furnaceB untouched |
-| shortfall | remove 16 clay after planning; failed machine stage, explicit remaining locations, no blocks |
-| concurrent-fetch | submit two 64-item fetches before waiting; both complete from 128 stock |
+| torches16 | 16 torches; same-recipe furnace top-ups precede collection |
+| bricks16 | 64 clay becomes 16 brick blocks |
+| specific-group | furnaceA selected; furnaceB unused |
+| shortfall | remove 16 clay after planning; report failure without crafting blocks; conserve 48 clay/brick |
+| concurrent-fetch | two independent 64-item deliveries from 128 stock |
+| ocparts | 64 memory components; two robots; foreground submitter exits while the rc service continues |
+| concurrent | simultaneous brick and torch requests; no same-robot overlap |
 
-The user's planner orders the torch's independent branches charcoal first.
-The fixture records this raw order, then legally interleaves the planks/sticks
-branch before charcoal to exercise the requested three-stage topology without
-changing planner code or arithmetic. The plan is serialized and passed as a
-saved `.plan` path to `mes.run`.
+The layout's 64 stock inventories are surveyed by an initial warehouse scan.
+These cases stage the map through its public library. They do **not** establish
+tablet pairing, geolyzer survey, service restart recovery, or UI acceptance.
 
-Lua acceptance checks read back stock, station and furnace inventories, verify
-robot receipts, exact machine splits and empty drone inventories. Furnace face
-reads expose the entire furnace inventory: only metadata-0 fuel coal may remain
-when asserting processing input/output empty. Failures do not drain machines.
-Results are written to `/home/warehouse-results.lua` and `/home/mes-results.lua`
-with stage outcomes, receipts, raw/executed task order, moved items, trips and
-game seconds. Native runner wall time comes from its job/result metadata.
+## Evidence and acceptance
 
-For the main-case native baseline, call the generator's
-`build(target, 'torches16', 'baseline')`. Native runs and full regression suites
-are coordinated by the parent; Python fixture tests are not native evidence.
+Each case writes host-side `native.log`, `result.json`, `acceptance.json`,
+`host-capture.ndjson`, `trips.json`, and frozen `fixture/source-hashes.json`.
+The matrix writes `runs.json`. Physical native inventories and persisted MES
+receipts supply acceptance checks; diagnostic wrappers do not run on OC.
+
+`nativePassed` means the native case and physical/receipt checks passed.
+`tripCoverageComplete` additionally requires every captured dispatch to have
+a terminal wire report and a complete capture stream. The MES retains only
+32 completed logistics jobs, so historical trip coverage comes from the wire
+capture, with persisted receipts attached where retained.
+
+Walk every trip before accepting a run: explain its purpose, check source and
+destination, examine refusals, returns, shortfalls and repeated work. The command
+leaves `tripReview: pending` and `accepted: false`; native success alone is not
+a review verdict. Exit status is nonzero if any native case or capture fails.
+
+Build a fixture on demand without running it:
+
+```sh
+python examples/mes/build_fixtures.py --root <directory> --case <name>
+```
+
+Keep generated case trees outside source control. Specialized MES cases reuse
+the same assembly and registration bootstrap.
+
+Focused checks:
+
+```sh
+python -m pytest test_mes_acceptance_gate.py test_mes_fixtures.py test_native_store_evidence.py -q
+```

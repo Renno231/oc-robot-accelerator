@@ -8,7 +8,7 @@ class RobotFixture(LuaCase):
             STACKS, SEL, DETAIL_CALLS, COUNT_CALLS = {}, 1, 0, 0
             function copy(s) if not s then return nil end;local t={};for k,v in pairs(s) do t[k]=v end;return t end
             function stack(name,n,max) return {name=name,damage=0,size=n,maxSize=max or 64,label=name} end
-            ROBOT={select=function(i) if i then SEL=i end;return SEL end,inventorySize=function() return 16 end,
+            ROBOT={select=function(i) if i then SEL=i end;return SEL end,inventorySize=function() return 85 end,
                 count=function(i) COUNT_CALLS=COUNT_CALLS+1;return STACKS[i or SEL] and STACKS[i or SEL].size or 0 end,
                 drop=function(_,n)
                     if BLOCKED then return false end
@@ -42,9 +42,9 @@ class RobotTests(RobotFixture):
 
     def test_freeing_high_buffer_slot_keeps_lookup_dense(self):
         self.assertEqual(self.lua.execute("""
-            for i=13,16 do STACKS[i]=stack('t:wood',1) end;RV.sync();RV.transferToExternal(3,16)
+            for i=13,85 do STACKS[i]=stack('t:wood',1) end;RV.sync();RV.transferToExternal(3,85)
             return RV.nextEmptyBufferSlot(),RV.countItemByName('t:wood')
-        """), (16, 3))
+        """), (85, 72))
 
     def test_full_stack_move_to_grid(self):
         self.assertEqual(self.lua.execute("""
@@ -81,7 +81,7 @@ class RobotTests(RobotFixture):
         self.assertEqual(self.lua.execute("STACKS[16]=stack('t:wood',10);RV.sync();BLOCKED=true;local ok=RV.transferToExternal(3,16);return ok,RV.countItemByName('t:wood')"), (False, 10))
 
     def test_empty_slots_use_count_without_stack_detail_calls(self):
-        self.assertEqual(self.lua.execute('DETAIL_CALLS=0;COUNT_CALLS=0;RV.sync();return DETAIL_CALLS,COUNT_CALLS'), (0, 16))
+        self.assertEqual(self.lua.execute('DETAIL_CALLS=0;COUNT_CALLS=0;RV.sync();return DETAIL_CALLS,COUNT_CALLS'), (0, 85))
 
     def test_stack_read_cannot_mutate_cache(self):
         self.assertEqual(self.lua.execute("STACKS[13]=stack('t:wood',4);RV.sync();local s=RV.getStack(13);s.size=999;return RV.countItemByName('t:wood')"), 4)

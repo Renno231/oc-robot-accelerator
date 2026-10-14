@@ -52,7 +52,8 @@ local function cleanup(r)
 end
 local start,advance
 local function phase(r,p)
-  r.phase=p;r.jobs={};start(r);event.push('station',r.name,'checking',p)
+  r.phase=p;r.jobs={};start(r)
+  if r.phase==p then event.push('station',r.name,'checking',p) end
 end
 start=function(r,replay)
   local first=r.members[1].node
@@ -60,7 +61,26 @@ start=function(r,replay)
     local err;r.jobs,err=move(r);if err then return signal(r,'failed',err) end
     if #r.jobs==0 then return cleanup(r) end
   elseif r.phase=='path' then
-    local edge=r.pendingLinks[r.nextLink];r.jobs={lg.test(edge[1],edge[2])}
+    local edge=r.pendingLinks[r.nextLink]
+    -- Other stations may have commissioned part of this path while we waited.
+    while edge do
+      local linked=false
+      for _,n in ipairs(map.links(edge[1])) do if n==edge[2] then linked=true;break end end
+      if not linked then break end
+      r.created.links[#r.created.links+1]=edge
+      r.nextLink=r.nextLink+1;edge=r.pendingLinks[r.nextLink]
+    end
+    if not edge then return phase(r,'read') end
+    local job
+    for _,other in pairs(records) do
+      if other~=r and other.state=='checking' and other.phase=='path' and other.jobs[1] then
+        local e=other.pendingLinks[other.nextLink]
+        if (e[1]==edge[1] and e[2]==edge[2] or e[1]==edge[2] and e[2]==edge[1]) and lg.status(other.jobs[1]) then
+          job=other.jobs[1];break
+        end
+      end
+    end
+    r.jobs={job or lg.test(edge[1],edge[2])}
   elseif r.phase=='link' then
     local candidate=replay and r.tried[#r.tried]
     if not candidate and #r.tried<3 then

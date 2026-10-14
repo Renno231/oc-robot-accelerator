@@ -128,6 +128,7 @@ class MesRestartTests(unittest.TestCase):
           package.preload.craft_client=function() return {
             install=function(cb) sink=cb;sink(nil,'robot_transport',{address='robot',state='ready'});return {{address='robot'}} end,
             tick=function() end,
+            nextDue=function() end,
             inspect=function(token) sink(token,'robot_status',{address='robot',busy=ROBOT.status=='RUNNING'});return true end,
             status=function() return {busy=ROBOT.status=='RUNNING'} end,
             adopt=function(token,address,id) ADOPTS=ADOPTS+1;ROBOT.token=token;ROBOT.id=id;receipt(token);return true end,
@@ -259,6 +260,43 @@ class MesRestartTests(unittest.TestCase):
                   return held('source','mod:raw'),held('source','mod:metal'),r.trips
                 '''))
             self.assertEqual(*outcomes)
+
+    def test_restart_keeps_output_check_and_retry_budget_and_due_time(self):
+        for mode in ('log', 'files'):
+            for phase in ('checking', 'idle'):
+                outcomes = []
+                for restart in (False, True):
+                    with self.subTest(mode=mode, phase=phase, restart=restart):
+                        lua = self.start(mode)
+                        lua.globals().PHASE = phase
+                        lua.globals().RESTART = restart
+                        outcomes.append(lua.execute('''
+                          DELAY=80;local id=submit(true)
+                          untilFact(function()
+                            local g=saved().grp_kiln
+                            return g and g.outputRetried and g.phase==PHASE
+                              and (PHASE~='checking' or g.outputRead.submitted)
+                          end)
+                          local before=saved()
+                          local remaining=before.grp_kiln.loads[1].due-before.run_1.now
+                          if RESTART then
+                            reboot()
+                            local after=saved()
+                            assert(after.grp_kiln.outputRetried)
+                            if PHASE=='idle' then
+                              local state=require('mes_state');local nextDue=state.nextDue;local due
+                              state.nextDue=function(w) due=nextDue(w);return due end
+                              require('mes_service').pump();state.nextDue=nextDue
+                              assert(math.abs(due-remaining)<0.001)
+                            end
+                          end
+                          untilFact(function() return M.status(id).status~='running' end)
+                          local r=M.status(id)
+                          assert(r.status=='failed' and r.reason=='kiln: Machine produced no output after recovery')
+                          assert(saved().stuck_kiln[1].unresolved['mod:metal']==1)
+                          return r.trips,held('source','mod:raw'),held('source','mod:metal')
+                        '''))
+                self.assertEqual(outcomes[0], outcomes[1])
 
     def test_restart_during_recovery_scan(self):
         self.compare_restart(True, "saved().grp_kiln and saved().grp_kiln.recovery "

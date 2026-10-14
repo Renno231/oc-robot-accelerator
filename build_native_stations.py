@@ -2,17 +2,12 @@
 import argparse
 import json
 from pathlib import Path
-import shutil
-from build_machine_comparisons import prepare
+from examples.mes.build_fixtures import build_native, write_fixture
 
 
 PROGRAM = r'''
-local fs=require('filesystem');local event=require('event');local computer=require('computer')
-local ser=require('serialization');local component=require('component')
-for _,n in ipairs({'cbor','store','map','logistics','warehouse','stations'}) do
-  assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua'))
-end
-fs.makeDirectory('/lib/logistics');assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+assert(loadfile('/home/program/install.lua'))()
+local event=require('event');local computer=require('computer');local ser=require('serialization')
 local function save(p,v)
   local f=assert(io.open(p,'w'));assert(f:write(ser.serialize(v,false)));f:close()
 end
@@ -59,7 +54,7 @@ for _,s in pairs(result.jobs) do
 end
 result.tests=tests;result.reads=reads;assert(tests==3 and reads==5)
 local item={name='minecraft:coal',damage=0}
-result.before=wh.count(item);save('/home/warehouse-results.lua',result)
+result.before=wh.count(item)
 assert(result.before==100,'paired row catalogue does not conserve all nine seeded inventories: '..result.before)
 local id=assert(wh.fetch(item,1,'row2'))
 wait(function() local s=lg.status(id);return s.state=='done' and wh.settled(id) end)
@@ -71,18 +66,14 @@ result.catalogue=wh.totals();result.members=wh.members()
 result.pair=wh.contents('row2');assert(result.members.row2.inventory=='row1')
 local n=0;for _,v in pairs(result.pair.items) do n=n+v.count end
 assert(n==4,'second-face transfer must appear once in shared pair')
-result.pairCount=n;save('/home/warehouse-results.lua',result)
 return true
 '''
 
 
 def build(root):
-    path = prepare('examples/mes/bricks16', Path(root) / 'fixture', 'coordinated')
+    path = build_native(Path(root) / 'fixture', 'bricks16')
     program = path.parent / 'program'
-    (program / 'native-main.lua').write_text(PROGRAM)
-    for name in ('cbor', 'store', 'map', 'logistics', 'warehouse', 'stations'):
-        shutil.copyfile(Path('drone-logistics/lib') / f'{name}.lua', program / 'lib' / f'{name}.lua')
-    shutil.copyfile('drone-logistics/drone/agent.lua', program / 'drone/agent.lua')
+    (program / 'main.lua').write_text(PROGRAM)
     value = json.loads(path.read_text()); value['id'] = 'stations-row'
     value.pop('robots', None); value['blocks'] = [b for b in value['blocks'] if b['block'] != 'minecraft:furnace']
     value['containers'] = [{'position': [0, 64, 10], 'block': 'minecraft:chest',
@@ -92,8 +83,7 @@ def build(root):
                             for i in range(8)]
     value['expect'] = {'drones': value['expect']['drones']}
     value['execution'].update(maxTicks=12000, timeoutSeconds=600)
-    path.write_text(json.dumps(value, indent=2) + '\n')
-    return path
+    return write_fixture(path, value)
 
 
 if __name__ == '__main__':

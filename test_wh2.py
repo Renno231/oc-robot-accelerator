@@ -168,8 +168,8 @@ class LogisticsTakeReceiptTests(unittest.TestCase):
           for _,known in ipairs({true,false}) do
             local found=false
             for addr,f in pairs(FAKES) do if f.task then
-              local r={state='idle',taken=256,moved=256,maxSize=64}
-              if known then r.emptied=4;r.knownTaken=256 end
+              local r={state='idle',steps={{taken=256,moved=256,maxSize=64},{moved=256}}}
+              if known then r.steps[1].emptied=4;r.steps[1].knownTaken=256 end
               f.task=nil;report(addr,f.id,r);found=true;break
             end end
             assert(found);drain()

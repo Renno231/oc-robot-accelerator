@@ -1,6 +1,6 @@
 -- MES configuration and paired craftServer hosts; resource occupancy belongs to mes.
 local M = {}
-local path = "/etc/mes.cfg"
+local path = "/etc/mes.config"
 local cache
 local function copy(t)
   if type(t)~="table" then return t end
@@ -12,9 +12,16 @@ local function integer(v) return finite(v) and v>0 and v%1==0 end
 function M.config(opts)
   if opts and opts.config then assert(type(opts.config)=="table","Config table required");return opts.config end
   if cache then return copy(cache) end
-  local f,err=io.open(path,"r")
+  if require('filesystem').exists(path) then
+    local disk=require('store').open(path,'log')
+    local ok,data=pcall(disk.load,disk);disk:close();assert(ok,data)
+    assert(type(data.config)=='table','Invalid '..path)
+    cache=data.config;return copy(cache)
+  end
+  -- Read existing installations once; the next edit saves the CBOR representation.
+  local f,err=io.open('/etc/mes.cfg',"r")
   if not f then
-    if not require("filesystem").exists(path) then cache={machineTypes={},crafters={}};return copy(cache) end
+    if not require("filesystem").exists('/etc/mes.cfg') then cache={machineTypes={},crafters={}};return copy(cache) end
     error(err or "Cannot read /etc/mes.cfg",0)
   end
   local data=f:read("*a");f:close()
@@ -22,30 +29,23 @@ function M.config(opts)
   assert(type(cfg)=="table","Invalid /etc/mes.cfg")
   cache=cfg;return copy(cfg)
 end
-local saveSequence=0
 local function save(cfg)
-  -- Encode first. A failed buffered write must never truncate the durable file.
-  local data=require("serialization").serialize(cfg)
-  assert(type(data)=="string","Cannot encode /etc/mes.cfg")
   local fs=require("filesystem")
-  assert(type(fs.rename)=="function","filesystem.rename required for atomic config saves")
-  saveSequence=saveSequence+1
-  local temporary=path..".tmp."..saveSequence
-  local function cleanup() if fs.remove then pcall(fs.remove,temporary) end end
-  local opened,f,openErr=pcall(io.open,temporary,"w")
-  if not opened or not f then cleanup();error(openErr or f or "Cannot write temporary /etc/mes.cfg",0) end
-  local written,ok,writeErr=pcall(f.write,f,data)
-  local flushed,flushOK,flushErr=true,true,nil
-  if written and ok and f.flush then flushed,flushOK,flushErr=pcall(f.flush,f) end
-  -- OpenOS close ignores flush failure: check explicit flush before rename.
-  local closed,closeOK,closeErr=pcall(f.close,f)
-  local failure
-  if not written or not ok then failure=writeErr or ok or "Cannot write /etc/mes.cfg"
-  elseif not flushed or not flushOK then failure=flushErr or flushOK or "Cannot flush /etc/mes.cfg"
-  elseif not closed or closeOK==false or closeErr then failure=closeErr or closeOK or "Cannot close /etc/mes.cfg" end
-  if failure then cleanup();error(tostring(failure),0) end
-  local renamed,renameOK,renameErr=pcall(fs.rename,temporary,path)
-  if not renamed or not renameOK then cleanup();error(tostring(renameErr or renameOK or "Cannot rename /etc/mes.cfg"),0) end
+  -- Store's append log is not an atomic replacement. Stage one config record so
+  -- a failed write cannot damage the last complete configuration.
+  local temporary=path..'.tmp'
+  if fs.exists(temporary) then assert(fs.remove(temporary)) end
+  local disk
+  local ok,err=pcall(function()
+    disk=require('store').open(temporary,'log')
+    disk:put('config',cfg);disk:flush();disk:close();disk=nil
+    assert(fs.rename(temporary,path))
+  end)
+  if not ok then
+    if disk then pcall(disk.close,disk) end
+    pcall(fs.remove,temporary)
+    error(err,0)
+  end
   cache=cfg
 end
 local function persist(cfg,opts)

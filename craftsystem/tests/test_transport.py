@@ -7,9 +7,10 @@ class TransportFixture(LuaCase):
         super().setUp()
         for name in ('tnet', 'api', 'pubsub', 'hosts', 'craft_client', 'craft_receipts', 'mes_config',
                      'craft_plan', 'item_identity', 'craft_tool_rules', 'craft_tool_budget',
-                     'craft_execution', 'craft_blueprint', 'craft_resources'):
+                     'craft_blueprint', 'craft_resources', 'cbor'):
             self.lua.globals()[name.upper() + '_SOURCE'] = (ROOT / 'usr/lib' / (name + '.lua')).read_text()
         self.lua.globals().CPROC_SOURCE = (ROOT / 'usr/bin/cproc.lua').read_text()
+        self.lua.globals().STORE_SOURCE = (ROOT.parent / 'drone-logistics/lib/store.lua').read_text()
         serial_path = ROOT.parent / '.cache/oc-source/src/main/resources/assets/opencomputers/loot/openos/lib/serialization.lua'
         self.lua.globals().SERIALIZATION_SOURCE = serial_path.read_text()
         self.lua.execute(r'''
@@ -19,7 +20,7 @@ class TransportFixture(LuaCase):
                 TASKS[#TASKS+1]=t;return t
             end
             function peer(address)
-                local p={address=address,listeners={},timers={},open={},loaded={},seq=0,
+                local p={address=address,listeners={},timers={},open={},loaded={},seq=0,wake=0,
                     executions=0,cleanups=0,duration=1,progressEvery=0.2,success=true,disk={}}
                 PEER_ID=PEER_ID+1;p.cid=address..'-'..string.format('%04x0000',PEER_ID)
                 PEERS[address]=p
@@ -44,17 +45,30 @@ class TransportFixture(LuaCase):
                 end,ignore=function(name,cb)
                     if p.ignoreThrow then error('ignore exception') end
                     if p.listeners[name] then p.listeners[name][cb]=nil end;return true
-                end,pull=function(n) coroutine.yield(n or 0.01) end,
+                end,pull=function(n) coroutine.yield(n or math.huge,p.wake) end,
                 push=function(name,...) emit(p,name,...) end,
                 timer=function(n,cb,times)
                     p.seq=p.seq+1;p.timers[p.seq]={due=NOW+n,interval=n,cb=cb,left=times or 1};return p.seq
                 end,cancel=function(id) p.timers[id]=nil;return true end}
                 local function open(path,mode)
-                    if mode=='r' then return {read=function() return p.disk[path] end,close=function() end} end
-                    return {write=function(_,data) p.disk[path]=data end,close=function() end}
+                    if mode=='r' or mode=='rb' then
+                        if p.disk[path]==nil then return nil,'missing' end
+                        local pos=1
+                        return {read=function(_,n)
+                            local data=p.disk[path]
+                            if n=='*a' then return data end
+                            if pos>#data then return nil end
+                            local text=data:sub(pos,pos+n-1);pos=pos+#text;return text
+                        end,close=function() end}
+                    end
+                    p.disk[path]=mode=='ab' and (p.disk[path] or '') or ''
+                    return {write=function(self,data) p.disk[path]=p.disk[path]..data;return self end,
+                        flush=function() return true end,close=function() end}
                 end
                 local fs={exists=function(path) return path=='/etc' or p.disk[path]~=nil end,
-                    makeDirectory=function() return true end,open=open}
+                    makeDirectory=function() return true end,open=open,
+                    remove=function(path) p.disk[path]=nil;return true end,
+                    rename=function(a,b) p.disk[b]=p.disk[a];p.disk[a]=nil;return true end}
                 local modules={event=p.event,component={modem=p.modem,computer={address=p.cid}},
                     computer={uptime=function() return NOW end,address=function() return p.cid end},
                     sides={front=3},shell={parse=function() return p.args or {},p.options or {} end},filesystem=fs,io={open=open},
@@ -108,6 +122,8 @@ class TransportFixture(LuaCase):
                 for cb in pairs(p.listeners[name] or {}) do
                     spawn(function() cb(name,table.unpack(args,1,args.n)) end,p)
                 end
+                -- OpenOS runs signal handlers before returning from event.pull.
+                spawn(function() p.wake=p.wake+1 end,p)
             end
             function tick()
                 local packets=PACKETS;PACKETS={}
@@ -127,10 +143,10 @@ class TransportFixture(LuaCase):
                 end
                 local current=TASKS;TASKS={}
                 for _,t in ipairs(current) do
-                    if NOW>=t.due then
-                        local ok,delay=coroutine.resume(t.co)
+                    if NOW>=t.due or (t.wake and t.wake~=t.peer.wake) then
+                        local ok,delay,wake=coroutine.resume(t.co)
                         assert(ok,delay)
-                        if coroutine.status(t.co)~='dead' then t.due=NOW+(delay or 0.01);TASKS[#TASKS+1]=t end
+                        if coroutine.status(t.co)~='dead' then t.due=NOW+(delay or 0.01);t.wake=wake;TASKS[#TASKS+1]=t end
                     else TASKS[#TASKS+1]=t end
                 end
                 NOW=NOW+0.01

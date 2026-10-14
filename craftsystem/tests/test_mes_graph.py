@@ -56,14 +56,15 @@ class MesGraphTests(LuaCase):
                 EVENTS[#EVENTS+1]={...};local f=LISTENERS[select(1,...)];if f then f(...) end
             end
             local ev={push=push,listen=function(name,f) LISTENERS[name]=f;return true end,
-                timer=function(n,f) TIMERS[#TIMERS+1]={period=n,due=TIME+n,fn=f};return #TIMERS end}
+                timer=function(n,f,times) TIMERS[#TIMERS+1]={period=n,due=TIME+n,fn=f,times=times or 1};return #TIMERS end,
+                cancel=function(id) if TIMERS[id] then TIMERS[id].due=math.huge end end}
             package.preload.event=function() return ev end
             package.preload.computer=function() return {uptime=function() return TIME end} end
             function at(when,fn) ACTIONS[#ACTIONS+1]={when=when,fn=fn} end
             ev.pull=function(n)
                     assert(not require('mes_service').guarded(),'blocking pull inside MES pump')
                     PULLS=(PULLS or 0)+1;assert(PULLS<20000,'service deadlock at '..TIME)
-                    local earliest=math.huge
+                    local earliest=n and TIME+n or math.huge
                     for _,t in ipairs(TIMERS) do earliest=math.min(earliest,t.due) end
                     for _,a in ipairs(ACTIONS) do earliest=math.min(earliest,a.when) end
                     for _,j in pairs(JOBS) do
@@ -73,12 +74,17 @@ class MesGraphTests(LuaCase):
                     assert(earliest<math.huge,'no scheduler wakeup');TIME=math.max(TIME,earliest)
                     for i=#ACTIONS,1,-1 do local a=ACTIONS[i];if a.when<=TIME then table.remove(ACTIONS,i);a.fn() end end
                     for id,j in pairs(JOBS) do
-                        if not j.terminal and j.finish<=TIME then j.terminal=true;j.state=j.outcome or 'done';push('logistics','job',id,j.state) end
+                        if not j.terminal and j.finish<=TIME then j.terminal=true;j.state=j.outcome or 'done';push('logistics',id,j.state) end
                         if not j.settled and j.settle<=TIME then j.settled=true;if j.apply then j.apply() end;push('warehouse','settled',id) end
                     end
-                    for _,t in ipairs(TIMERS) do if t.due<=TIME then t.due=TIME+t.period;t.fn() end end
+                    for _,t in ipairs(TIMERS) do if t.due<=TIME then
+                        t.times=t.times-1;t.due=t.times>0 and TIME+t.period or math.huge;t.fn()
+                    end end
             end
             package.preload.thread=function() error('MES must not import thread') end
+            function liveTimers()
+                local n=0;for _,t in ipairs(TIMERS) do if t.due<math.huge then n=n+1;assert(t.times==1) end end;return n
+            end
             function job(apply,outcome)
                 NEXT=NEXT+1;JOBS[NEXT]={state='active',finish=TIME+0.1,settle=TIME+0.3,
                     apply=apply,outcome=outcome,moved=1,trips=1};return NEXT
@@ -226,6 +232,7 @@ class MesGraphTests(LuaCase):
                 return rows
               end,
               tick=function() end,
+              nextDue=function() end,
               inspect=function(token,address)
                 PREPARED[address]=true
                 local unknown=false
@@ -436,7 +443,7 @@ class MesGraphTests(LuaCase):
                 task('t:right',{'t:raw'},'right',{[1]='raw'}),
                 task('t:final',{'t:left','t:right'},'final',{'left','right'})}
             local id=assert(M.run({tasks=tasks},{config=CFG}))
-            assert(type(id)=='number' and #CLIENTS==0 and INSTALLS==1 and #TIMERS==1)
+            assert(type(id)=='number' and #CLIENTS==0 and INSTALLS==1 and liveTimers()==0)
             local initial=M.status(id);assert(initial.status=='running' and #initial.stages==3)
             initial.stages[1].after[1]=99;assert(#M.status(id).stages[1].after==0)
             local r=M.wait(id)
@@ -509,9 +516,9 @@ class MesGraphTests(LuaCase):
     def test_partly_refused_load_counts_what_went_in_and_retries_the_rest(self):
         self.assertEqual(self._sand_added_by_hand(2), ('complete', None, 2, '2,2', 4, 0))
 
-    def test_load_refused_with_nothing_to_collect_fails_at_the_input_deadline(self):
+    def test_unexpected_full_input_is_read_cleared_and_retried_once(self):
         self.assertEqual(self._sand_added_by_hand(1),
-            ('failed', 'kiln: Machine input deadline exceeded', 4, '', 0, 4))
+            ('complete', None, 6, '2,2', 4, 0))
 
     def test_nonblocking_refused_load_returns_to_stock_and_retries_after_collection(self):
         self.assertEqual(self.lua.execute('''
@@ -557,6 +564,7 @@ class MesGraphTests(LuaCase):
             -- The robot answers idle again and the buffer was recovered.
             put('buf1','t:raw',0);OUTCOMES.robot1='complete'
             for _,c in ipairs(CLIENTS) do c.finish=c.finish or TIME;c.outcome='complete' end
+            require('mes_service').confirmIdle('robot1')
             local third=run({task('t:left',{'t:raw'})},{crafter='cpu1'})
             return third.status,#CLIENTS,M.resources{config=CFG}.crafters.cpu1.state
         '''), ('complete', 2, 'idle'))
@@ -627,22 +635,20 @@ class MesGraphTests(LuaCase):
             assert(not good and err:find('foreground watcher exits') and M.status(id).status=='running')
             ev.pull=pull
             while M.status(id).status=='running' do ev.pull() end
-            return held('stock','t:left'),M.status(id).status,INSTALLS,#TIMERS
-        '''), (2, 'complete', 1, 1))
+            return held('stock','t:left'),M.status(id).status,INSTALLS,liveTimers()
+        '''), (2, 'complete', 1, 0))
 
-    def test_collection_at_output_due_then_exponential_backoff(self):
+    def test_empty_output_gets_one_read_and_one_retry_not_exponential_probes(self):
         self.assertEqual(self.lua.execute('''
             OUTPUT_DELAY=18;CFG.machineTypes.furnace.seconds=1
             put('stock','t:ore',1)
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace')})
-            assert(r.status=='complete',r.reason)
-            -- Each collection attempt takes what is there; early ones find nothing.
-            local scans={};for _,m in ipairs(MOVES) do if m.kind=='store' and m.storage=='out1' then scans[#scans+1]=m.time end end
-            assert(#scans<=8 and scans[2]>=r.stages[1].loadLedger[1].delivered+1)
-            local first=scans[3]-scans[2];local last=scans[#scans]-scans[#scans-1]
-            return #scans<10,last>first,held('stock','t:metal')
-        '''), (True, True, 1))
+            assert(r.status=='failed' and r.reason=='kiln: Machine produced no output after recovery')
+            local collections=0
+            for _,m in ipairs(MOVES) do if m.kind=='store' and m.storage=='out1' then collections=collections+1 end end
+            return collections,#SCANS,held('stock','t:metal'),M.resources{config=CFG}.machines.kiln.state
+        '''), (2, 1, 0, 'unknown'))
 
     def test_fifo_batch_store_settlement_attributes_two_live_loads(self):
         self.assertEqual(self.lua.execute('''
@@ -707,7 +713,7 @@ class MesGraphTests(LuaCase):
             GROUPS.alloy.roles.b=nil
             CAPACITY.aa=1;put('stock','t:copper',1);put('stock','t:tin',1)
             local r=run({task('t:bronze',{'t:copper','t:tin'},'bronze',{'copper','tin'},'alloy')})
-            assert(r.status=='failed' and r.reason:find('input deadline'))
+            assert(r.status=='failed' and r.reason=='alloy: Machine input refused after recovery' and #SCANS==1)
             -- The one slot takes copper and refuses tin; the failure reports where the copper is.
             local where={};for _,w in ipairs(r.where or {}) do where[#where+1]=w.storage..':'..w.item..'='..w.count end
             return held('aa','t:copper'),held('stock','t:tin'),table.concat(where,',')
@@ -760,9 +766,9 @@ class MesGraphTests(LuaCase):
     def test_same_stage_concurrent_group_stores_keep_exact_partial_receipts(self):
         self.assertEqual(self._two_group_store_receipts(True), ('failed', True, 2))
 
-    def test_timed_out_load_keeps_machine_out_until_its_output_is_explained(self):
+    def test_failed_output_retry_keeps_machine_out_until_late_output_is_explained(self):
         self.assertEqual(self.lua.execute('''
-            CFG.machineTypes.furnace.seconds=0;OUTPUT_DELAY=200
+            CFG.machineTypes.furnace.seconds=0;CONSUME_DELAY=0;OUTPUT_DELAY=200
             put('stock','t:ore',2)
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local first=run({task('t:metal',{'t:ore'},'a',{'ore'},'furnace')})

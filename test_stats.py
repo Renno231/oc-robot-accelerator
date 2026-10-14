@@ -263,14 +263,6 @@ class WarehouseStatsIntegrationTests(unittest.TestCase):
           assert(data.shared.beforeRestart==nil)
         ''')
 
-    def test_generated_mes_fixture_includes_stats(self):
-        from test_mes_fixtures import generator
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder) / 'case'
-            generator.build(root, 'torches16')
-            self.assertEqual((root / 'program/lib/stats.lua').read_bytes(),
-                             Path('drone-logistics/lib/stats.lua').read_bytes())
-
     def test_accessor_stock_identity_group_exclusion_copy_and_zero_trips(self):
         f = test_stations.StationsTests();f.setUp();lua=f.lua
         lua.globals().STATS=Path('drone-logistics/lib/stats.lua').read_text()

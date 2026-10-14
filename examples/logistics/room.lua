@@ -1,9 +1,9 @@
 -- Shared native entry for the dense hallway and open pillar layout.
 return function(obstacle)
   local fs=require('filesystem')
-  fs.makeDirectory('/lib/logistics')
+  fs.makeDirectory('/usr/lib/logistics')
   for _,n in ipairs({'cbor','store','map','logistics'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
-  assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+  assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
   local event,computer=require('event'),require('computer')
   local serialization=require('serialization')
   local map=require('map')

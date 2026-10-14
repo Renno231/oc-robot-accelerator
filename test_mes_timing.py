@@ -17,14 +17,14 @@ class TimingTests(unittest.TestCase):
           function load(n,at)
             w.now=at or w.now
             local l={ops=n,request={perOp=1,run={},outputs={brick=1}},
-              bundle={action={submittedAt=w.now}},remaining={brick=n},deadline=10000}
+              bundle={action={submittedAt=w.now}},remaining={brick=n}}
             g.loads[#g.loads+1]=l
             local duration=T.load(w,g,l);l.duration=duration;l.due=w.now+duration
             return l,duration
           end
           function receipt(l,k,early,late,steps)
             w.now=late;l.consumed=k;l.remaining.brick=l.ops-k
-            T.observe(w,g,{bundle={action={submittedAt=early,ids={1}},run={jobs={[1]={steps=steps or {}}}}}})
+            T.observe(w,g,{bundle={action={submittedAt=early,results={{steps=steps or {}}}},run={jobs={}}}})
           end
           function clear() g.loads={} end
         ''')
@@ -83,7 +83,7 @@ class TimingTests(unittest.TestCase):
           assert(w.timing.a.hi<original)
         ''')
 
-    def test_unset_estimate_backoff(self):
+    def test_unset_estimate_uses_observed_lower_bound(self):
         self.lua.execute('''
           g.mt.seconds=nil;l,d=load(16);assert(d==0)
           receipt(l,0,1,2);assert(w.timing.a.lo==1)

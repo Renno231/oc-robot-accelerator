@@ -37,6 +37,7 @@ function handlers.craft(plan,id,retryOnly)
     local admitted, receipt = receipts.begin(id,owner,plan)
     if admitted~=true then return admitted==nil and "failed" or "status", admitted==nil and failed(id,receipt) or receipt end
     active={plan=plan,id=id}
+    publisher:publish('state',{busy=true,currentJobId=id})
     return "accepted",{status="ACCEPTED",jobId=id,receipt=true}
 end
 local function execute(job)
@@ -59,6 +60,7 @@ local function execute(job)
     local terminal=receipts.finish(job.id,completed and "COMPLETE" or "FAILED",executionError,completed and buffer or nil)
     active=nil
     publisher:publish("job:"..job.id,terminal)
+    publisher:publish('state',{busy=false})
 end
 -- cproc owns its computer's networking; a lost subscriber never cancels admitted work.
 local ok, startupError = xpcall(function()
@@ -87,7 +89,7 @@ local ok, startupError = xpcall(function()
     end
     print("CraftProcessor ready. Awaiting connection.")
     while running do
-        if active then execute(active) else os.sleep(0.1) end
+        if active then execute(active) else event.pull() end
     end
 end,debug.traceback)
 local listenerOk, listenerError = pcall(event.ignore,"interrupted",stopProgram)

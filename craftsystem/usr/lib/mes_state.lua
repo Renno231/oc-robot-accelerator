@@ -3,12 +3,6 @@
 local M = {}
 local identity = require('item_identity')
 local timing = require('mes_timing')
--- Machine timing. A load may run this long past its expected finish, and a
--- blocked request may wait this long for input room, before it fails.
-local MACHINE_GRACE = 60
--- Re-read delays for machine input and output start here and double up to
--- the maximum while nothing changes.
-local BACKOFF, MAX_BACKOFF = 0.5, 8
 local function copy(t)
   if type(t) ~= 'table' then
     return t
@@ -185,6 +179,15 @@ end
 function M.world()
   return { robots = {}, buffers = {}, machines = {}, facts = {}, groups = {}, toolReservations = {}, waiting = {}, serves = 0, now = 0, revision = 0 }
 end
+function M.nextDue(world)
+  local due = math.huge
+  for _,g in pairs(world.groups) do
+    if g.phase=='idle' then
+      if #g.loads>0 then due=math.min(due,g.outputDue) end
+    end
+  end
+  return due<math.huge and due or nil
+end
 function M.confirmIdle(world, address)
   local r = world.robots[address]
   if r and r.state == 'busy' and r.run then
@@ -227,7 +230,7 @@ function M.advanceWorld(world, dispatch, options)
     local d = f.data
     if f.what == 'reconcile' then
       for address in pairs(d.addresses) do
-        inspect(address, d.opts)
+        if not world.robots[address] then inspect(address, d.opts) end
       end
     else
       local previous = world.robots[d.address]
@@ -867,7 +870,14 @@ local function bad(w, g, r, err, unknown)
     w.machines[g.name].state = 'unknown'
   end
 end
-local function quarantine(w, g, load, state)
+local function rejectPending(w, g, problem)
+  w.machines[g.name].state = 'unknown'
+  for _, r in ipairs(g.pending) do
+    if r.left > 0 then bad(w, g, r, problem, true) end
+  end
+  g.pending = {}
+end
+local function quarantine(w, g, load, state, deferRecovery)
   if not load.quarantined then
     load.quarantined = true
     load.unresolved = copy(load.remaining)
@@ -876,7 +886,7 @@ local function quarantine(w, g, load, state)
   load.record.state = state or 'unknown'
   w.machines[g.name].state = 'unknown'
   -- The records no longer match the machine: it is read and recovered before more work.
-  if not g.recovery then
+  if not deferRecovery and not g.recovery then
     g.recovery = { request = load.request, phase = 'read' }
     load.request.active = load.request.active + 1
   end
@@ -965,7 +975,6 @@ function M.machineRequests(run, s)
       outputs = outputs,
       recipe = table.concat(signature, ';'),
       inputs = {},
-      deadline = run.now + MACHINE_GRACE,
       work = work,
       active = 0,
     }
@@ -990,7 +999,7 @@ local function startMachine(run, s)
   local available = run.ports.groups(s.machineType)
   assert(
     mt.seconds == nil or type(mt.seconds) == 'number' and mt.seconds >= 0 and mt.seconds < math.huge,
-    'Invalid batch/deadline configuration'
+    'Invalid machine timing'
   )
   local names = s.groups == 'any' and sorted(available)
     or type(s.groups) == 'string' and { s.groups }
@@ -1022,10 +1031,7 @@ local function startMachine(run, s)
         loads = {},
         quarantined = {},
         phase = 'idle',
-        inputDue = 0,
         outputDue = math.huge,
-        inputBackoff = BACKOFF,
-        outputBackoff = BACKOFF,
       }
       -- Fuel the MES has put in this machine and the inputs it has burned through
       -- outlive any one request.
@@ -1068,11 +1074,6 @@ local function additional(g, r, n)
   local f = g.mt.fuel
   return f and math.max(0, math.ceil((g.fuel.admitted + n * r.perOp) / f.per) - g.fuel.credit)
     or 0
-end
-local function blocked(w, g)
-  g.inputDue = w.now + g.inputBackoff
-  g.inputBackoff = math.min(g.inputBackoff * 2, MAX_BACKOFF)
-  g.phase = 'idle'
 end
 local function admit(w, g)
   local mt = g.mt
@@ -1175,20 +1176,14 @@ local function admit(w, g)
     -- Loads already in the machine, from any run, must clear first.
     if donor then
       r.blocked = true
-      for _, l in ipairs(g.loads) do
-        r.deadline = math.max(r.deadline, l.deadline or w.now + MACHINE_GRACE)
-      end
-      if w.now >= r.deadline then
-        bad(w, g, r, 'Machine input deadline exceeded', false)
-      end
     end
   end
   -- A blocking machine that could take nothing waits for its next collection.
   if mt.blocking ~= false and next(g.pending) and #g.loads > 0 then
     g.awaitCollection = true
   end
-  blocked(w, g)
-  return true
+  g.phase = 'idle'
+  return false -- Admission resumes on changed facts, not a retry timer.
 end
 local function tripSeconds(g, bundle)
   local longest
@@ -1256,8 +1251,20 @@ local function finishLoad(w, g)
         break
       end
     end
-    changed(r.run, r.stage, nil, 'Machine ' .. g.name .. ' refused the load; retrying after collection')
+    changed(r.run, r.stage, nil, 'Machine ' .. g.name .. ' refused the load')
+    if #g.loads == 0 then
+      w.machines[g.name].state = 'unknown'
+      if r.inputRetried then
+        bad(w, g, r, 'Machine input refused after recovery', true)
+        rejectPending(w, g, 'Machine input refused after recovery')
+      else
+        r.inputRetried = true
+        r.active = r.active + 1
+        g.recovery = { request = r, phase = 'read' }
+      end
+    end
   else
+    r.inputRetried = nil
     if mt.fuel then
       g.fuel.credit = g.fuel.credit + fuelMoved
       r.run.fuelAvailable[mt.fuel.item] = r.run.fuelAvailable[mt.fuel.item] + load.fuelAdditional - fuelMoved
@@ -1276,14 +1283,12 @@ local function finishLoad(w, g)
     load.duration = duration
     load.due = math.max(w.now, g.lastExpectedDue or w.now) + duration
     g.lastExpectedDue = load.due
-    load.deadline = load.due + duration + MACHINE_GRACE
     record.state = 'processing'
     record.started = w.now
     record.delivered = w.now
     g.fuel.admitted = g.fuel.admitted + record.items
     g.outputDue = math.min(g.outputDue, load.due)
     g.inputRecipe = r.recipe
-    r.deadline = load.deadline
     r.stage.loadsDelivered = (r.stage.loadsDelivered or 0) + 1
     changed(r.run, r.stage, nil, 'Load ' .. r.stage.loadsDelivered .. ' delivered')
     for i, candidate in ipairs(g.pending) do
@@ -1298,23 +1303,23 @@ local function finishLoad(w, g)
   end
   g.loading = nil
   g.phase = 'idle'
-  g.inputDue = w.now
-  g.inputBackoff = BACKOFF
   publish(w, g)
   return true
 end
-local function reap(w, g, collected)
+local function reap(w, g, collected, problem)
   g.outputDue = math.huge
+  if problem then rejectPending(w, g, problem) end
   for i = #g.loads, 1, -1 do
     local load = g.loads[i]
     local n = 0
     for _, q in pairs(load.remaining) do
       n = n + q
     end
-    if n == 0 or w.now >= load.deadline then
+    if n == 0 or problem then
       if n > 0 then
-        bad(w, g, load.request, 'Machine output deadline exceeded', true)
-        quarantine(w, g, load)
+        bad(w, g, load.request, problem, true)
+        -- The read/retry is exhausted. Keep ownership; do not start another read.
+        quarantine(w, g, load, nil, true)
       elseif load.record.state ~= 'failed' then
         load.record.state = 'done'
         load.record.collected = w.now
@@ -1324,13 +1329,12 @@ local function reap(w, g, collected)
       table.remove(g.loads, i)
     else
       if w.now >= load.due then
-        -- Short: come back when the missing output should be done. The backoff
-        -- only matters for a machine that has stopped making progress.
+        -- Schedule remaining work from receipt timing, not a failure clock.
         local ops = 0
         for id, q in pairs(load.remaining) do
           ops = math.max(ops, math.ceil(q / load.request.outputs[id]))
         end
-        load.due = w.now + math.max(ops * load.request.perOp * timing.seconds(w, g), g.outputBackoff)
+        load.due = w.now + ops * load.request.perOp * timing.seconds(w, g)
       end
     end
   end
@@ -1339,16 +1343,15 @@ local function reap(w, g, collected)
   for _, load in ipairs(g.loads) do
     if previous and load.due < previous.due + load.duration then
       load.due = previous.due + load.duration
-      load.deadline = math.max(load.deadline, load.due + load.duration + MACHINE_GRACE)
     end
-    g.outputDue = math.min(g.outputDue, load.due, load.deadline)
+    g.outputDue = math.min(g.outputDue, load.due)
     g.lastExpectedDue = math.max(g.lastExpectedDue or load.due, load.due)
     previous = load
   end
   if collected then
     g.awaitCollection = nil
+    g.outputRetried = nil
   end
-  g.outputBackoff = collected and BACKOFF or math.min(g.outputBackoff * 2, MAX_BACKOFF)
   g.phase = 'idle'
   publish(w, g)
 end
@@ -1489,7 +1492,16 @@ local function finishCollection(w, g)
   end
   timing.observe(w, g, c, err)
   g.collection = nil
-  reap(w, g, any)
+  if not err and not any and not g.outputRetried then
+    local faces = {}
+    for _, storage in pairs(g.roles) do faces[#faces + 1] = storage end
+    table.sort(faces)
+    g.outputRetried = true
+    g.outputRead = action(c.bundle.run, 'scan', { storage = faces })
+    g.phase = 'checking'
+  else
+    reap(w, g, any, not err and not any and 'Machine produced no output after recovery' or nil)
+  end
   return true
 end
 -- Recovery: read the machine if its contents are unknown, take its inputs and
@@ -1534,16 +1546,13 @@ local function recovered(w, g, problem)
   if problem then
     -- Work may still be inside: the machine stays out of service and is read
     -- again when a run next wants it.
-    for _, r in ipairs(g.pending) do
-      if r.left > 0 then
-        bad(w, g, r, problem)
-      end
-    end
+    rejectPending(w, g, problem)
   else
     for i = #g.quarantined, 1, -1 do
       g.quarantined[i] = nil
     end
     resource.state = 'idle'
+    g.awaitCollection = nil
     local f = g.mt.fuel
     if f then
       local held = 0
@@ -1647,21 +1656,37 @@ local function groupAdvance(w, g)
         ready = true
       end
     end
-    if not ready or w.now < g.inputDue then
+    if not ready then
       return false
-    end
-    g.phase = 'admit'
-    return true
-  elseif g.phase == 'admit' then
-    if not next(g.pending) then
-      g.phase = 'idle'
-      return true
     end
     return admit(w, g)
   elseif g.phase == 'loading' then
     return finishLoad(w, g)
   elseif g.phase == 'storing' then
     return finishCollection(w, g)
+  elseif g.phase == 'checking' then
+    local run = g.loads[1].request.run
+    local read = g.outputRead
+    local done, err = outcome(run, read)
+    if not done then return false end
+    g.outputRead = nil
+    if err then
+      reap(w, g, false, 'Machine could not be read: ' .. tostring(err))
+    else
+      local available = false
+      local contents = (run.ports.contents(g.roles[g.mt.output]) or {}).items or {}
+      for _, load in ipairs(g.loads) do
+        for id, n in pairs(load.remaining) do
+          if n > 0 and contents[id] and contents[id].count > 0 then available = true end
+        end
+      end
+      -- A confirmed empty output supplies another timing bound, not another
+      -- retry allowance. Unknown slow machines may need a configured estimate.
+      if not available then timing.observe(w, g, {bundle={action=read}}) end
+      reap(w, g, false)
+      if available then g.outputDue = w.now end
+    end
+    return true
   end
   return false
 end

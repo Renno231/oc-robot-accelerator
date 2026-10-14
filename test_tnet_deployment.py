@@ -6,7 +6,7 @@ import unittest
 
 from lupa.lua53 import LuaRuntime
 
-from examples.mes.build_fixtures import build
+from examples.mes.build_fixtures import build_native
 
 
 ROOT = Path(__file__).resolve().parent
@@ -34,7 +34,7 @@ class TnetDeploymentTests(unittest.TestCase):
     def test_both_controller_and_robot_deploy_unchanged_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'fixture'
-            build(target, 'torches16')
+            build_native(target, 'torches16')
             for role in ('computer', 'robot'):
                 for name in ('tnet.lua', 'api.lua', 'hosts.lua', 'pubsub.lua'):
                     paths = list(target.glob('**/usr/lib/' + name))

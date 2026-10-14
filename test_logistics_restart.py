@@ -27,7 +27,7 @@ class LogisticsRestartTests(unittest.TestCase):
           map.link('home','source');map.link('source','dest') -- Straight-line fixture graph.
           map.name('stock','source',0);map.name('out','dest',0)
           map.theta=function(a,b) return {a,b} end
-          files['/lib/logistics/agent.lua']='return true'
+          files['/usr/lib/logistics/agent.lua']='return true'
           files['/etc/logistics.drones']=require('serialization').serialize({
             d1={address='remote',token='secret',home='home'}})
           files['/etc/warehouse.cfg']=require('serialization').serialize({members={stock={}},groups={}})
@@ -171,7 +171,7 @@ class LogisticsRestartTests(unittest.TestCase):
           component={list=function(kind) return function() return kind end end,
             proxy=function(kind) return kind=='drone' and drone or inv end}
           computer={energy=function() return 5000 end,freeMemory=function() return 32000 end,
-            pullSignal=function() return coroutine.yield() end}
+            pullSignal=function(timeout) assert(timeout==nil,'idle drone must wait for a signal');return coroutine.yield() end}
           local ready
           local modem={send=function(_,_,_,kind,id,payload)
             if kind=='report' then ready=assert(load('return '..payload))() end
@@ -334,7 +334,7 @@ class LogisticsRestartTests(unittest.TestCase):
                   s=require('store').open('/etc/logistics.state');r=s:load();s:close()
                   assert(r['job_'..first]==nil)
                   local x=lg.transfer(item,1,'stock','out');local y=lg.scan('home')
-                  reload();answerStatus();drain();assert(FAKE.working and FAKE.task.from)
+                  reload();answerStatus();drain();assert(FAKE.working and FAKE.task.steps[1].take)
                   assert(lg.status(x).state=='active' and lg.status(y).state=='queued')
                 ''')
 
@@ -343,14 +343,12 @@ class LogisticsRestartTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.start(mode).execute('''
                   local id=lg.transfer(item,4,'stock','out',{split=false});drain()
-                  assert(FAKE.working and FAKE.task.count==4)
-                  FAKE.working=false;FAKE.stock=6;FAKE.dest=4
-                  FAKE.last={id=FAKE.trip,result={state='idle',taken=4,moved=4,held=0,maxSize=64}}
+                  assert(FAKE.working and FAKE.task.steps[1].count==4)
+                  finishPhysical(false)
                   reload();answerStatus();drain()
                   local s=lg.status(id);assert(s.state=='done' and s.moved==4 and s.taken==4)
                   assert(wh.count(item)==6)
                 ''')
-
 
     def test_unknown_navigation_trip_answers_known_token_only(self):
         for mode in ('log', 'files'):
@@ -421,6 +419,16 @@ class AgentRestartTests(unittest.TestCase):
           command('status');assert(#SENT==1 and SENT[1].kind=='report' and SENT[1].payload==original)
           BLOCKED=false;command('navigation',11,ROUTE)
           assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle' and POSITION==1)
+        ''')
+
+    def test_arrival_during_yield_is_not_misreported_as_a_stall(self):
+        self.route_fixture(True).execute('''
+          command('navigation',11,ROUTE)
+          TIME=.1;POSITION=.91;resume()
+          -- The last .09 block settles during the yield, after the stall time.
+          TIME=4.1;POSITION=TARGET;resume()
+          assert(TARGET==1,'an arrived drone must not undo its movement')
+          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle')
         ''')
 
     def test_unknown_trip_route_response_fails_loudly(self):

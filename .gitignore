@@ -19,6 +19,15 @@ robot-programs/
 private/
 worlds/
 
+# MES worlds and assembly disks are generated from current source on demand.
+examples/mes/torches16/
+examples/mes/bricks16/
+examples/mes/specific-group/
+examples/mes/shortfall/
+examples/mes/concurrent-fetch/
+examples/mes/ocparts/
+examples/mes/concurrent/
+
 .DS_Store
 Thumbs.db
 Desktop.ini

@@ -106,7 +106,9 @@ class ExecutorTests(ExecutorFixture):
     def test_insufficient_capacity_fails_with_explicit_reason(self):
         self.assertEqual(self.lua.execute("""
             local p=plan(1);p.inventory_needed={}
-            for i=1,5 do local item='t:raw'..i;p.inventory_needed[item]=1;table.insert(CHEST,stack(item,1)) end
+            for i=1,ROBOT.inventorySize()-12+1 do
+                local item='t:raw'..i;p.inventory_needed[item]=1;table.insert(CHEST,stack(item,1))
+            end
             local ok,err=EX.executePlan(p);return ok,err:find('capacity')~=nil,CRAFT_CALLS
         """), (False, True, 0))
 

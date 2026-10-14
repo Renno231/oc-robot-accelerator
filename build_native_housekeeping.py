@@ -2,13 +2,12 @@
 import argparse
 import json
 from pathlib import Path
-from build_machine_comparisons import prepare
+from examples.mes.build_fixtures import build_native, write_fixture
 
 RUN = r'''
-local source=assert(io.open('/home/program/recipes.tsv'));local text=source:read('*a');source:close()
-local archive=assert(require('liblz16').open('/usr/lib/recipes/minecraft.dblz','wb'));assert(archive:write(text));archive:close()
-local builder=require('recipes.build');local db=builder.build();assert(builder.save(db));require('recipes').install(db)
-assert(require('recipes').registerProcessingRecipe('minecraft:brick','furnace',{recipe={'minecraft:clay_ball'},qty=1}))
+return assert(loadfile('/home/program/main.lua'))(function(wait)
+local mes,wh,lg,event=require('mes'),require('warehouse'),require('logistics'),require('event')
+local function count(id) return wh.count({name=id,damage=0}) end
 local plan,why=mes.plan('minecraft:brick_block',4);assert(plan,why)
 local hk=require('housekeeping');hk.set('enabled',false);hk.set('minFill',0);hk.set('idleSeconds',0)
 local result={case='housekeeping',before={coal=count('minecraft:coal'),clay=count('minecraft:clay_ball')},hkJobs={}}
@@ -35,23 +34,23 @@ assert(result.after.clay==result.before.clay-16 and result.after.blocks==4)
 local filtered=wh.contents('s7_0_N');local used=0
 for _,v in pairs(filtered.items) do if v.count>0 then used=used+v.stacks end end
 assert(used>0)
-result.jobs=jobs;result.trips=0
+result.trips=0
 for id in pairs(result.hkJobs) do
   local s=assert(lg.status(id));assert(s.state=='done',s.reason)
   for _,v in ipairs(s.steps) do assert(not v.read,'HK read inventory') end
-  result.jobs[id]=s;result.trips=result.trips+s.trips
+  result.trips=result.trips+s.trips
 end
-assert(result.trips>=1);result.status='complete';save('/home/warehouse-results.lua',result)
+assert(result.trips>=1)
 print('HK complete',result.trips,'bounded tours, zero HK reads, real MES complete')
 return true
+end)
 '''
 
 
 def build(root):
-    path = prepare('examples/mes/bricks16', Path(root) / 'fixture', 'coordinated')
+    path = build_native(Path(root) / 'fixture', 'bricks16')
     program = path.parent / 'program'
-    prefix = Path('examples/mes/main.lua').read_text().split('local result={case=case')[0]
-    (program / 'native-main.lua').write_text(prefix + RUN)
+    (program / 'housekeeping.lua').write_text(RUN)
     # Retain MES routes/buffers but only eight stock inventories, one filtered.
     setup = Path('examples/mes/setup.lua').read_text().split('-- Dedicated destinations')[0]
     setup += "\nfor name in pairs(wh.members()) do if not name:match('^s%d_0_N$') then wh.remove(name) end end\n"
@@ -60,6 +59,7 @@ def build(root):
     setup = setup.replace('return {homes=homes}\n\nfor', 'for')
     (program / 'setup.lua').write_text(setup)
     value = json.loads(path.read_text()); value['id'] = 'housekeeping'
+    value['controller']['program']['entry'] = 'housekeeping.lua'
     for c in value['containers']:
         c['slots'] = []
         x,y,z = c['position']
@@ -70,8 +70,7 @@ def build(root):
                                          (3,'minecraft:clay_ball'),(4,'minecraft:clay_ball'))]
     value['expect'] = {'drones': value['expect']['drones']}
     value['execution'].update(maxTicks=20000,timeoutSeconds=1000)
-    path.write_text(json.dumps(value,indent=2)+'\n')
-    return path
+    return write_fixture(path, value)
 
 
 if __name__ == '__main__':
