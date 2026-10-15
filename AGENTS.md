@@ -104,6 +104,10 @@ reduce the thinking."
   physical cause.
 
 ## Ownership
+- **OC application sources** live in OC-Utilities: `craftsystemv4_mes/` and
+  `drone-logistics/`. This checkout's `craftsystem/` and `drone-logistics/` are
+  local directory links created by `python bind_oc_sources.py /path/to/OC-Utilities`.
+  Commit application changes in OC-Utilities; native harness changes belong here.
 - **User libraries** (tnet, api, pubsub, hosts, pair, store, cbor): never edit
   them without asking. The source of truth for tnet and api is
   `C:/Users/Conner/Documents/GitHub/Renno-Programs/tnet`. Copies here are

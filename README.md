@@ -29,6 +29,24 @@ Supported profile: Minecraft **1.12.2**, Forge **14.23.5.2860**, OpenComputers *
 
 ## Requirements
 
+### MES and logistics source
+
+The OC applications live in [OC-Utilities](https://github.com/Renno231/OC-Utilities):
+`craftsystemv4_mes/` and `drone-logistics/`. Native fixtures and their runner live here.
+Bind each accelerator checkout once:
+
+```sh
+python bind_oc_sources.py /path/to/OC-Utilities
+```
+
+This creates local directory links, not copies, and refuses to replace existing
+files or directories. Edits through `craftsystem/` or `drone-logistics/` belong to
+the OC-Utilities repository and must be committed there. Existing test commands,
+including `python run_mes_scenarios.py`, stage those canonical sources directly.
+The historical `craftsystemv1/`, `craftsystemv2/`, and `craftsystemv3/` stay unchanged.
+
+### Host dependencies
+
 - Python 3.11+ and `curl`
 - Java 8 (a JDK to build from source)
 - Internet access during setup, which downloads the pinned server files and checks their hashes
