@@ -204,6 +204,7 @@ function M.start(opts, prepare)
   require('map')
   wh = require('warehouse')
   require('stations')
+  require('survey')
   require('stats')
   require('iochest')
   client = require('craft_client')
@@ -396,9 +397,16 @@ function M.fuel(name)
   local m = world.machines[name]
   return state.copy(m and m.fuel or { credit = 0, admitted = 0 })
 end
-function M.confirmIdle(address)
-  enqueue(nil, 'robot_status', { address = address, busy = false })
-  M.pump()
+function M.robots()
+  local robots, err = require('mes_config').robots()
+  if not robots then return nil, err end
+  for _, robot in ipairs(robots) do
+    local r = world.robots[robot.address]
+    if r and (r.state == 'idle' or r.state == 'busy') then
+      robot.busy = r.state == 'busy'
+    end
+  end
+  return robots
 end
 function M.cancel(id, reason)
   if not history[id] then

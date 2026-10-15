@@ -242,15 +242,17 @@ class ConcurrentTransportTests(TransportFixture):
             untilDone(function() return C.duplicate end);assert(C.duplicate.success and A.executions==1)
         ''')
 
-    def test_repeated_status_listing_coexists_with_live_job_and_listener(self):
+    def test_repeated_host_listing_coexists_with_live_job_and_listener(self):
         self.lua.execute('''
             A.duration=2;job(C,'robot-a');untilDone(function() return A.executions==1 end)
             assert(C.require('tnet').listen(6000,function() end))
             spawn(function()
-                for _=1,3 do local robots=C.require('mes_config').robots(0.1)
+                local packets=#TRACE
+                for _=1,3 do local robots=C.require('mes_config').robots()
                     assert(#robots==2 and robots[1].address=='robot-a' and robots[2].address=='robot-b')
-                    assert(type(robots[1].busy)=='boolean' and robots[2].busy==false)
+                    assert(robots[1].busy==nil and robots[2].busy==nil)
                 end
+                assert(#TRACE==packets)
                 C.listed=true
             end,C)
             untilDone(function() return C.listed end)

@@ -663,17 +663,8 @@ end
 function M.cancel(id, reason)
   return service.cancel(id, reason)
 end
-function M.robots(timeout, opts)
-  local discovered, err = require('mes_config').robots(timeout)
-  if not discovered then
-    return nil, err
-  end
-  for _, robot in ipairs(discovered) do
-    if robot.busy == false then
-      service.confirmIdle(robot.address)
-    end
-  end
-  return copy(discovered)
+function M.robots()
+  return service.robots()
 end
 for _, name in ipairs({ 'setType', 'removeType', 'setCrafter', 'removeCrafter', 'pendingRobots', 'registerRobot' }) do
   M[name] = function(...)

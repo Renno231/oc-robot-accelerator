@@ -11,13 +11,14 @@ class MesRestartTests(unittest.TestCase):
         lua = test_logistics_restart.LogisticsRestartTests().start(mode)
         lib = (Path(__file__).parent / 'craftsystem/usr/lib').as_posix()
         lua.execute(f'package.path="{lib}/?.lua;"..package.path')
-        lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
-        lua.globals().HOUSEKEEPING = Path('drone-logistics/lib/housekeeping.lua').read_text()
+        for name in ('stats', 'housekeeping', 'survey'):
+            lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
         for name in ('mes_alerts','mes_alert_sources'):
             lua.globals()[name.upper()] = Path('craftsystem/usr/lib/'+name+'.lua').read_text()
         lua.execute(r'''
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
           package.preload.stations=function() return {} end
+          package.preload.survey=function() return assert(load(SURVEY))() end
           package.preload.stats=function() return assert(load(STATS))() end
           package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
           package.preload.iochest=function() return {list=function() return {} end} end
@@ -155,7 +156,7 @@ class MesRestartTests(unittest.TestCase):
             slots=27,freeSlots=25,verified=true,time=TIME});catalogue:flush();catalogue:close()
           function reboot()
             BOOT=TIME;TIMERS={};LISTEN={};EVENTS={}
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','housekeeping','mes_alerts','mes_alert_sources'}) do package.loaded[name]=nil end
+            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','survey','housekeeping','mes_alerts','mes_alert_sources'}) do package.loaded[name]=nil end
             lg=require('logistics');wh=require('warehouse');M=require('mes');assert(M.start{config=CFG})
             answerStatus();drain();require('mes_service').pump()
           end

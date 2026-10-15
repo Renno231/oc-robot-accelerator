@@ -1,5 +1,5 @@
 """Thin service plumbing, guarded reconnect, and frontend-independent progress."""
-from test_support import LuaCase
+from test_support import LuaCase, ROOT
 import test_mes_graph as graph
 
 
@@ -8,6 +8,50 @@ class MesServiceTests(LuaCase):
         fixture = graph.MesGraphTests()
         fixture.setUp()
         self.lua = fixture.lua
+
+    def test_robot_listing_reads_pushed_state_including_unassigned_robots(self):
+        self.lua.execute('''
+          require('mes_config').robots=function() return {
+            {address='robot1',name='One'},{address='robot2',name='Two'},
+            {address='unassigned',name='New'},{address='unseen',name='Offline'}} end
+          assert(M.start{config=CFG})
+          robotState('robot2',true);robotState('unassigned',true)
+          local c=require('craft_client')
+          c.status=function() error('listing polled status') end
+          c.inspect=function() error('listing inspected robot') end
+          local svc=require('mes_service');local pump=svc.pump
+          svc.pump=function() error('listing changed service state') end
+          for i=1,3 do
+            local rows=M.robots(3)
+            assert(rows[1].name=='One' and rows[1].busy==false)
+            assert(rows[2].busy==true and rows[3].busy==true and rows[4].busy==nil)
+            rows[1].name='changed';rows[1].busy=true
+          end
+          svc.pump=pump
+          svc.enqueue(nil,'robot_transport',{address='unassigned',state='disconnected',unknown=true})
+          svc.pump();assert(M.robots()[3].busy==nil)
+          robotState('unassigned',false);assert(M.robots()[3].busy==false)
+          require('mes_config').robots=function() return nil,'hosts unavailable' end
+          local rows,err=M.robots();assert(rows==nil and err=='hosts unavailable')
+        ''')
+
+    def test_headless_start_loads_real_survey_and_recovers_interrupted_work_once(self):
+        self.module('survey', ROOT.parent / 'drone-logistics/lib/survey.lua')
+        self.lua.execute('''
+          local disk=require('store').open('/etc/survey','log')
+          disk:put('sv_1',{id=1,state='surveying'});disk:flush()
+          local loads=0;local load=package.preload.survey
+          package.preload.survey=function() loads=loads+1;return load() end
+          local e=require('event');local listen=e.listen;local listeners={}
+          e.listen=function(name,fn)
+            listeners[name]=(listeners[name] or 0)+1;return listen(name,fn)
+          end
+          assert(M.start{config=CFG});assert(M.start{config=CFG})
+          assert(loads==1 and listeners.survey_result==1 and listeners.logistics==2)
+          local r=disk:load().sv_1
+          assert(r.state=='failed' and r.reason=='survey interrupted; request again')
+          for name in pairs(package.loaded) do assert(not name:match('^mes_ui')) end
+        ''')
 
     def test_failed_restore_does_not_report_started_or_leave_pump_guarded(self):
         self.lua.execute('''

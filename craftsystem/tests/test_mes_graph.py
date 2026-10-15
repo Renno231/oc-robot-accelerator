@@ -14,6 +14,7 @@ class MesGraphTests(LuaCase):
         self.lua.execute(r'''
             TIME=0; EVENTS={}; JOBS={}; NEXT=0; ACTIONS={};TIMERS={};LISTENERS={}
             package.preload.stations=function() return {} end
+            package.preload.survey=function() return {} end
             package.preload.stats=function() return {} end
             package.preload.iochest=function() return {} end
             package.preload.housekeeping=function() return {} end
@@ -225,6 +226,10 @@ class MesGraphTests(LuaCase):
             package.preload.map=function() MAIN_REQUIRES_DONE=true;return {} end
             PREPARED={}
             local sink
+            function robotState(address,busy)
+                sink(nil,'robot_status',{address=address,busy=busy})
+                require('mes_service').pump()
+            end
             package.preload.craft_client=function() return {
               install=function(cb)
                 INSTALLS=INSTALLS+1;sink=cb;local rows={}
@@ -564,7 +569,7 @@ class MesGraphTests(LuaCase):
             -- The robot answers idle again and the buffer was recovered.
             put('buf1','t:raw',0);OUTCOMES.robot1='complete'
             for _,c in ipairs(CLIENTS) do c.finish=c.finish or TIME;c.outcome='complete' end
-            require('mes_service').confirmIdle('robot1')
+            robotState('robot1',false)
             local third=run({task('t:left',{'t:raw'})},{crafter='cpu1'})
             return third.status,#CLIENTS,M.resources{config=CFG}.crafters.cpu1.state
         '''), ('complete', 2, 'idle'))
@@ -601,7 +606,7 @@ class MesGraphTests(LuaCase):
             return p.craftable,#MOVES,#CLIENTS
         '''), (False, 0, 0))
 
-    def test_public_configuration_copy_and_idle_discovery_confirmation(self):
+    def test_public_configuration_copy_and_listing_cannot_confirm_idle(self):
         self.assertEqual(self.lua.execute('''
             CFG.crafters.cpu1.buffer='configured-buffer'
             local c=M.crafters{config=CFG};assert(c.cpu1.buffer=='configured-buffer' and c.cpu1.status==nil)
@@ -611,10 +616,11 @@ class MesGraphTests(LuaCase):
             run({task('t:left',{'t:raw'})},{crafter='cpu1'})
             package.loaded.mes_config=nil
             package.preload.mes_config=function() return {installRobots=function() end,robots=function() return DISCOVERED end} end
-            DISCOVERED={{address='robot1',busy=true}}
-            M.robots(0,{config=CFG});assert(M.resources{config=CFG}.crafters.cpu1.state=='unknown')
-            DISCOVERED={{address='robot1',busy=false}}
-            local discovered=M.robots(0,{config=CFG});discovered[1].busy=true
+            DISCOVERED={{address='robot1'}}
+            assert(M.robots()[1].busy==nil)
+            assert(M.resources{config=CFG}.crafters.cpu1.state=='unknown')
+            robotState('robot1',false)
+            local discovered=M.robots();assert(discovered[1].busy==false);discovered[1].busy=true
             assert(M.resources{config=CFG}.crafters.cpu1.state=='idle')
             local status=M.status(999);local result,problem=M.wait(999)
             return status==nil,result==nil,problem,M.runs()[1].status
@@ -798,9 +804,7 @@ class MesGraphTests(LuaCase):
             assert(failed.status=='unknown' and blocked.status=='failed' and #CLIENTS==before)
             local resource=M.resources{config=CFG}
             assert(resource.crafters.cpu1.state=='unknown' and resource.crafters.cpu2.state=='unknown')
-            package.loaded.mes_config=nil
-            package.preload.mes_config=function() return {installRobots=function() end,robots=function() return {{address='robot1',busy=false}} end} end
-            M.robots(0,{config=CFG})
+            robotState('robot1',false)
             return M.resources{config=CFG}.crafters.cpu1.state,M.resources{config=CFG}.crafters.cpu2.state
         '''), ('idle', 'idle'))
 
@@ -973,18 +977,14 @@ class MesGraphTests(LuaCase):
             assert(resource.crafters.cpu2.bufferOwner=='robot1')
             local second=run({task('t:right',{'t:raw'})},{crafter='cpu2'})
             assert(second.status=='failed' and #CLIENTS==1 and #ACTIONS==1)
-            package.loaded.mes_config=nil
-            package.preload.mes_config=function() return {installRobots=function() end,robots=function() return DISCOVERED end} end
-            DISCOVERED={{address='robot2',busy=false}}
-            M.robots(0,{config=CFG})
+            robotState('robot2',false)
             assert(M.resources{config=CFG}.crafters.cpu2.state=='unknown')
             local third=run({task('t:right',{'t:raw'})},{crafter='cpu2',isCrafterIdle=function() return true end})
             assert(third.status=='failed' and #CLIENTS==1) -- wrong owner hook also cannot clear it
             -- The old operation physically completes, then its OWN robot is
-            -- confirmed idle. Discovery does not pretend its output was stored.
+            -- confirmed idle. The push does not pretend its output was stored.
             local ev=require('event');while #ACTIONS>0 do ev.pull(0.2) end
-            DISCOVERED={{address='robot1',busy=false}}
-            M.robots(0,{config=CFG})
+            robotState('robot1',false)
             assert(M.resources{config=CFG}.crafters.cpu2.state=='idle')
             -- The leftover is not looked for; the robot's report after its next craft
             -- lists everything in the buffer and all of it goes back to stock.
