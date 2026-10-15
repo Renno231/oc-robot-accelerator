@@ -97,8 +97,7 @@ end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
 function S:signal(name)
   if name~="alert" then return end
-  self.dirty=true
-  if ui.current()==self and not ui.inModal() then self:draw() end
+  self.dirty,self.outdated=true,true
 end
 function S:dismiss(r)
   if not (r and r.id) then return end

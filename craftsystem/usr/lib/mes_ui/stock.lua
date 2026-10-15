@@ -63,13 +63,15 @@ function S:detail(i)
   ui.pane(e and self:lines(e) or {},self.lw+1,a.y+4,a.w-self.lw,a.h-4)
 end
 function S:filtered() self:rebuild();self.list:set(1);self:draw() end
--- A warehouse change re-reads the stats; drawn now when Stock is on top,
--- else when it is shown again.
+-- A warehouse change re-reads the stats, and the totals when the revision
+-- moved; once per batch when Stock is on top, else when it is shown again.
 function S:signal(name,what)
   if name~="warehouse" then return end
-  if what=="changed" then self.dirty=true end
+  if what=="changed" then self.dirty=true end;self.outdated=true
+end
+function S:update()
   if wh.revision()~=self.rev then self:rebuild();self.list:refresh();self.dirty=true end
-  if self.dirty and ui.current()==self and not ui.inModal() then self:draw() end
+  if self.dirty then self:draw() end
 end
 function S:refresh() self:rebuild();self.list:refresh();self.dirty=true;self:draw() end
 function S:close() package.loaded["mes_ui.stockstats"]=nil end

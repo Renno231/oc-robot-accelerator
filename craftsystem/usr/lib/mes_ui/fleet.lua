@@ -109,7 +109,8 @@ end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
 function S:signal(name,drone,status)
   if name=="logistics_released" then self:released(drone,status)
-  elseif name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce" then self:refresh() end
+  elseif name=="logistics" or name=="mes" or name=="logistics_announce" or name=="mes_robot_announce"
+    or name=="logistics_drone" or name=="logistics_held" then self.outdated=true end
 end
 
 local show=ui.show
@@ -152,7 +153,7 @@ function S:register(address)
     if #free==0 then ui.fail("no charger nodes mapped");return end
     ui.pick("Register "..name.." · home charger",free,function(home)
       ui.confirm("Register drone","Register "..address:sub(1,8).."… as "..name.." at "..home.."?",function()
-        if ui.try(lg.register,address,name,home) then ui.ok("Registered "..name.." at "..home) end
+        if ui.try(lg.register,address,name,home) then ui.ok("Registered "..name.." at "..home);ui.restatus() end
         self:refresh()
       end)
     end)

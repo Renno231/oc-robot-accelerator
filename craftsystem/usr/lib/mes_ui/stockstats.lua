@@ -123,9 +123,9 @@ function S:draw()
 end
 function S:signal(name,what)
   if name~="warehouse" or what~="changed" then return end
-  self.dirty=true
-  if ui.current()==self and not ui.inModal() then self:draw() end
+  self.dirty,self.outdated=true,true
 end
+function S:update() self:draw() end
 function S:key(_,code)
   if code==ui.keys.t then S.thresholds();return true end
 end

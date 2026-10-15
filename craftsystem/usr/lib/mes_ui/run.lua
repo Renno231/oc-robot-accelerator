@@ -43,7 +43,6 @@ function S:draw()
 end
 function S:refresh() self:rebuild();self.list:refresh();self:draw() end
 function S:signal(name,what,id)
-  if name=="mes" and id==self.id then self:refresh()
-  elseif name=="logistics" and self.st and self.st.status=="running" then self:refresh() end
+  if name=="mes" and id==self.id or (name=="logistics" or name=="logistics_drone") and self.st and self.st.status=="running" then self.outdated=true end
 end
 return S
