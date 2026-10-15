@@ -43,6 +43,7 @@ public final class RobotSpike {
     private Robot robot;
     private EEPROM eeprom;
     private ForgeChunkManager.Ticket ticket;
+    private final java.util.List<ForgeChunkManager.Ticket> buildTickets=new java.util.ArrayList<>();
     private ItemStack firmware;
     private ItemStack initialTool;
     private long started, tickStarted, ticks, maxTicks, timeoutNanos, cpuTickNanos, taskStarted;
@@ -63,6 +64,7 @@ public final class RobotSpike {
         if (Files.exists(runnerFile)) {
             if (Files.isSymbolicLink(runnerFile) || Files.size(runnerFile) > 128 * 1024) throw new IllegalArgumentException("Runner scenario file bound");
             runnerScenario = RunnerScenario.parse(new String(Files.readAllBytes(runnerFile), StandardCharsets.UTF_8));
+            RunnerAutosave.configure(runnerScenario.autosaveWallSeconds);
             MinecraftForge.EVENT_BUS.register(this);
             ForgeChunkManager.setForcedChunkLoadingCallback(this, (ForgeChunkManager.LoadingCallback)(tickets, world) -> {
                 for (ForgeChunkManager.Ticket old : tickets) ForgeChunkManager.releaseTicket(old);
@@ -179,11 +181,22 @@ public final class RobotSpike {
 
     private void setup() throws Exception {
         if (runner != null) {
+            if(ticket==null) {
             ticket = ForgeChunkManager.requestTicket(this, world, ForgeChunkManager.Type.NORMAL);
             if (ticket == null) throw new IllegalStateException("Chunk ticket unavailable");
             for (int x = Math.floorDiv(runnerScenario.min[0], 16); x <= Math.floorDiv(runnerScenario.max[0], 16); x++)
                 for (int z = Math.floorDiv(runnerScenario.min[2], 16); z <= Math.floorDiv(runnerScenario.max[2], 16); z++)
                     ForgeChunkManager.forceChunk(ticket, new net.minecraft.util.math.ChunkPos(x, z));
+            if(runnerScenario.fullBuild!=null) {
+                int[] lo=RunnerScenario.position(runnerScenario.fullBuild.get("min")),hi=RunnerScenario.position(runnerScenario.fullBuild.get("max"));
+                ForgeChunkManager.Ticket current=null;int count=0;
+                for(int x=Math.floorDiv(lo[0]-1,16);x<=Math.floorDiv(hi[0]+1,16);x++)
+                    for(int z=Math.floorDiv(lo[2]-1,16);z<=Math.floorDiv(hi[2]+1,16);z++) {
+                        if(count%16==0){current=ForgeChunkManager.requestTicket(this,world,ForgeChunkManager.Type.NORMAL);if(current==null)throw new IllegalStateException("Full build chunk ticket unavailable");buildTickets.add(current);}
+                        ForgeChunkManager.forceChunk(current,new net.minecraft.util.math.ChunkPos(x,z));count++;
+                    }
+            }
+            }
             runner.setup(); return;
         }
         ticket = ForgeChunkManager.requestTicket(this, world, ForgeChunkManager.Type.NORMAL);
@@ -351,6 +364,8 @@ public final class RobotSpike {
         } catch (Exception e) { e.printStackTrace(); }
         finally {
             if (ticket != null) { ForgeChunkManager.releaseTicket(ticket); ticket = null; }
+            for(ForgeChunkManager.Ticket extra:buildTickets)ForgeChunkManager.releaseTicket(extra);
+            buildTickets.clear();
             server.initiateShutdown();
         }
     }

@@ -124,6 +124,9 @@ def _upgrade(value):
 
 
 def _hardware(value):
+    if isinstance(value, str):
+        from runner_hardware_profiles import resolve_profile
+        value = resolve_profile(value)
     _object(value, HARDWARE_FIELDS,
             ['tier', 'cpu', 'memory', 'storage', 'bootDrive'])
     tier = value['tier']
@@ -141,6 +144,8 @@ def _hardware(value):
         entry = {'item': _component_name(container['item'])}
         if 'component' in container: entry['component'] = _upgrade(container['component'])
         result['containers'].append(entry)
+    from runner_hardware_profiles import preflight_standard_builder_recipe
+    preflight_standard_builder_recipe(result)
     return result
 
 
@@ -154,7 +159,7 @@ def normalize(value):
     relative(program['directory'])
     entry = relative(program.get('entry', 'main.lua'))
     if not entry.endswith('.lua'): raise ValueError('entry must be a Lua file')
-    world = _object(value['world'], ['region', 'blocks', 'source'], ['region'])
+    world = _object(value['world'], ['region', 'blocks', 'source', 'fullBuild'], ['region'])
     bounds = _object(world['region'], ['min', 'max'], ['min', 'max'])
     region = {key: _position(bounds[key]) for key in ('min', 'max')}
     dimensions = [b - a + 1 for a, b in zip(region['min'], region['max'])]
@@ -173,6 +178,30 @@ def normalize(value):
         properties = {_text(k, PROPERTY, 64): _text(v, PROPERTY, 64) for k, v in properties.items()}
         blocks.append({'min': low, 'max': high, 'block': _text(block['block'], REGISTRY, 128), 'properties': properties})
     normalized_world = {'region': region, 'blocks': blocks}
+    if 'fullBuild' in world:
+        fixture = _object(world['fullBuild'], ['min', 'max', 'expected', 'palette', 'chest', 'materials', 'resume', 'returnSlots'],
+                          ['min', 'max', 'expected', 'palette', 'chest', 'materials'])
+        low, high = _position(fixture['min']), _position(fixture['max'])
+        if version != 3 or any(a > b for a,b in zip(low,high)) or math.prod(b-a+1 for a,b in zip(low,high)) > 2147483647:
+            raise ValueError('full build fixture bound')
+        expected = relative(fixture['expected'])
+        palette = [_text(s, REGISTRY, 128) for s in _array(fixture['palette'],256)]
+        if not palette: raise ValueError('full build palette required')
+        materials=[]
+        for m in _array(fixture['materials'],27):
+            _object(m,['item','count'],['item','count'])
+            materials.append({'item':_text(m['item'],REGISTRY,128),'count':_integer(m['count'],1,2147483647)})
+        if not materials: raise ValueError('full build materials required')
+        normalized_world['fullBuild']={'min':low,'max':high,'expected':expected,'palette':palette,
+            'chest':_inside(fixture['chest'],region),'materials':materials}
+        if 'returnSlots' in fixture:
+            normalized_world['fullBuild']['returnSlots']=_integer(fixture['returnSlots'],0,26)
+        if 'resume' in fixture:
+            if 'source' not in world: raise ValueError('full build resume requires saved source world')
+            resume=_object(fixture['resume'],['robot','builtBlocks'],['robot','builtBlocks'])
+            normalized_world['fullBuild']['resume']={
+                'robot':_position(resume['robot']),
+                'builtBlocks':_integer(resume['builtBlocks'],0,sum(m['count'] for m in materials))}
     if 'source' in world:
         relative(world['source']); normalized_world['source'] = 'world'
     robot = _object(value['robot'], ['position', 'facing', 'hardware', 'energy', 'tool', 'inventory'] +
@@ -189,21 +218,31 @@ def normalize(value):
     slots = 64 if version == 3 else 16
     inventory = [_item(item, True, slots) for item in _array(robot.get('inventory', []), slots)]
     if len({i['slot'] for i in inventory}) != len(inventory): raise ValueError('duplicate inventory slot')
-    normalized_robot = {'position': _inside(robot['position'], region), 'facing': facing, 'hardware': hardware,
+    robot_position = _position(robot['position'])
+    if 'fullBuild' in normalized_world:
+        fixture=normalized_world['fullBuild']
+        if not all(lo<=p<=hi for p,lo,hi in zip(robot_position,region['min'],region['max'])):
+            if not all(lo-1<=p<=hi+1 for p,lo,hi in zip(robot_position,fixture['min'],fixture['max'])):
+                raise ValueError('robot outside full build work space and observation region')
+    else: robot_position=_inside(robot_position,region)
+    normalized_robot = {'position': robot_position, 'facing': facing, 'hardware': hardware,
                         'energy': energy, 'tool': _item(robot.get('tool', {'item': 'minecraft:diamond_pickaxe'})),
                         'inventory': inventory}
     if 'randomSeed' in robot: normalized_robot['randomSeed'] = _integer(robot['randomSeed'], 0, 2147483647)
-    execution = _object(value.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks'])
+    execution = _object(value.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks', 'autosaveWallSeconds'])
     mode = execution.get('mode', 'baseline' if version == 2 else 'coordinated')
     delay = execution.get('executionDelayMillis', 12)
     if mode not in (('baseline', 'coordinated', 'paced') if version == 3 else ('baseline', 'coordinated')) or type(delay) is not int or delay not in (0, 12):
         raise ValueError('unsupported mode/execution delay')
-    tick_limit = 10000 if version == 1 else MAX_TICKS
+    tick_limit = 2147483647 if 'fullBuild' in world else 10000 if version == 1 else MAX_TICKS
     time_limit = 600 if version == 1 else MAX_TIMEOUT_SECONDS
     execution = {'mode': mode, 'executionDelayMillis': delay,
                  'maxTicks': _integer(execution.get('maxTicks', 10000), 1, tick_limit),
                  'timeoutSeconds': _integer(execution.get('timeoutSeconds', 120 if version == 1 else 600), 1, time_limit),
                  'stallTicks': _integer(execution.get('stallTicks', 0), 0, tick_limit)}
+    source_execution=value.get('execution', {})
+    if 'autosaveWallSeconds' in source_execution:
+        execution['autosaveWallSeconds']=_integer(source_execution['autosaveWallSeconds'],0,2147483647)
     observations = _object(value.get('observations', {}),
                            ['everyTicks'] if version == 1 else ['everyTicks', 'maxBytes', 'onFull'])
     normalized_observations = {'everyTicks': _integer(observations.get('everyTicks', 20), 1, 200)}

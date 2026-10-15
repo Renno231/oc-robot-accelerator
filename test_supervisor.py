@@ -131,6 +131,20 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(len(runs), 2)
         self.assertNotEqual(runs[0], runs[1])
 
+    def test_java_root_preserves_validated_working_directory_alias(self):
+        original_resolve = Path.resolve
+
+        def resolve(path, *args, **kwargs):
+            # Model Python expanding a drive alias while Java retains it.
+            if path.parent == self.output:
+                return self.base / 'different-path-spelling'
+            return original_resolve(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'resolve', resolve):
+            code, runs, report = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertIn('-Drobotspike.root=' + str(runs[0]), report['command'])
+
     def test_pinned_artifact_mismatch_prevents_launch(self):
         (self.template / 'mods/OpenComputers.jar').write_bytes(b'wrong binary')
         with mock.patch.object(supervisor.subprocess, 'Popen') as launch:

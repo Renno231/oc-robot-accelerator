@@ -310,7 +310,9 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
         java_executable = _no_link(java_path)
         report['sha256']['runtime/java'] = _digest(java_executable, deadline, check)
         command = [str(java_executable), '-Xmx2G', '-Dfml.disableVersionCheck=true',
-                   '-Drobotspike.root=' + str(root.resolve()),
+                   # Preserve the same validated path as cwd, including SUBST drives.
+                   # Python resolves these aliases differently from Java 8 toRealPath.
+                   '-Drobotspike.root=' + str(root),
                    '-Drobotspike.mode=' + args.mode, '-Drobotspike.maxTicks=' + str(args.ticks),
                    '-Drobotspike.timeoutSeconds=' + str(args.timeout)]
         if scenario_id is not None:

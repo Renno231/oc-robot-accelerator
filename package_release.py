@@ -14,7 +14,7 @@ from runtime_profile import PROFILE_ID
 from supervisor import _no_link
 
 HERE=Path(__file__).resolve().parent
-MODULES=('bootstrap','runner','runner_jobs','runner_observations','runner_scenario',
+MODULES=('bootstrap','runner','runner_jobs','runner_observations','runner_scenario','runner_hardware_profiles',
          'runner_setup','runner_support','runner_viewer','runtime_profile','supervisor')
 FILES=tuple(sorted([name+'.py' for name in MODULES]+[
     'viewer/viewer.html','viewer/viewer.css','viewer/viewer.js',

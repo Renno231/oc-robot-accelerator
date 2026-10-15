@@ -10,7 +10,7 @@ robot-runner validate PATH/scenario.json
 
 ## Robot hardware (schema 3)
 
-Schema 3 is what `init` and the examples use. It requires `robot.hardware`, either as a full recipe or as a reference to a preset. Execution is accelerated by default (`coordinated` mode, with OC's normal 12 ms worker delay). Schema 1 and 2 scenarios keep their old fixed loadout and defaults.
+Schema 3 is what `init` and the examples use. It requires `robot.hardware`, as a full recipe, a reference to a preset, or the `"builder-max"` task profile. Execution is accelerated by default (`coordinated` mode, with OC's normal 12 ms worker delay). Schema 1 and 2 scenarios keep their old fixed loadout and defaults.
 
 ```json
 "hardware": {
@@ -26,6 +26,8 @@ Schema 3 is what `init` and the examples use. It requires `robot.hardware`, eith
 ```
 
 ### Presets
+
+For builder workloads, `"hardware": "builder-max"` selects a native survival tier-3 robot: CPU3, two RAM6 modules, HDD3, four inventory upgrades, inventory controller, Angel upgrade, Hover II, level-30 experience upgrade, and two tier-3 batteries (one through a tier-3 upgrade container). Native assembly checks its 31/32 complexity, 64 inventory slots and 210,500 energy capacity. The job freezes the resolved recipe. Supply tools and materials explicitly, and keep starting energy within the actual capacity.
 
 `init` puts four editable recipes in the scenario's `hardware/` folder: `tier1.json`, `tier2.json`, `tier3.json`, and `creative.json`. Edit them, copy them, or write your own. To use one, optionally overriding some fields:
 
@@ -137,7 +139,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 | `world.blocks` | Up to 128 `{min,max,block,properties?}` fills inside the region, applied in order. |
 | `robot.position` | Starting position inside the region. Must be air after setup. Required. |
 | `robot.facing` | `north` (default), `south`, `east`, or `west`. |
-| `robot.hardware` | Schema 3: the recipe described above. Required. Schema 1/2: only `tier3`, a fixed CPU3, RAM6, inventory upgrade, and OpenOS floppy. |
+| `robot.hardware` | Schema 3: a recipe, preset reference, or `"builder-max"` profile described above. Required. Schema 1/2: only `tier3`, a fixed CPU3, RAM6, inventory upgrade, and OpenOS floppy. |
 | `robot.energy` | Starting energy. Default 20,000. Max 2,147,483,647 in schema 3 and 50,000 in schema 1/2, and never above the robot's real capacity (20,500 for the schema 1/2 robot). |
 | `robot.randomSeed` | Schema 3 only. Optional 0–2,147,483,647. Seeds the robot's RNG for repeatable tool wear. Doesn't seed the world or Lua. |
 | `robot.tool` | `{item,metadata?,nbt?}`. Default: a diamond pickaxe. |
@@ -177,6 +179,14 @@ The time limit starts before input copying, and the tick limit includes server s
 `executionDelayMillis: 0` changes how OC schedules Lua and isn't needed for acceleration. When comparing runs, keep it and the hardware the same, and expect some natural variation between runs. See [How accurate is it?](README.md#how-accurate-is-it).
 
 ## Recording and replay
+
+### World saves and completion sampling
+
+`execution.autosaveWallSeconds` accepts a positive integer to schedule periodic world/player saves by host wall time. For example, `45` retains roughly the normal-speed cadence while construction is accelerated. Omission or zero keeps the native 900-simulated-tick schedule. Final shutdown saves, explicit saves, HDD buffering and VM persistence remain active. Longer intervals expose more unsaved work. `result.json.autosavePolicy` records the clock, interval and periodic save branches, not every disk write.
+
+`runnerTiming.outcomePollNanos` measures the runner's completion-file inspection, including native filesystem monitor waits. `diskReadNanos` retains the same measurement for compatibility; neither measures schematic reads. Completion sampling runs at most once per 10 ms of wall time at native tick boundaries, with final inspection when the machine stops.
+
+### Observation recording
 
 - `observations.everyTicks`: how often to sample, 1–200 ticks. Default 20.
 - `observations.maxBytes` (schema 2/3): recording size limit, 1–32 MiB. Default 32 MiB.

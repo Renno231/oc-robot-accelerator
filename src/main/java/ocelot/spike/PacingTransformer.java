@@ -19,7 +19,7 @@ public final class PacingTransformer implements IClassTransformer {
         if (!server && !machine && !safePool && !chunks && !chunkPool && clocks==0) return bytes;
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
-        if (server) patchPacer(node);
+        if (server) { patchPacer(node); patchAutosave(node); }
         if (machine) { patchObservation(node); patchSchedulerObservations(node); patchWorkerDispatch(node); }
         if(safePool) patchSafePool(node);
         if(chunks) patchChunkSubmission(node);
@@ -65,6 +65,23 @@ public final class PacingTransformer implements IClassTransformer {
             changes++;
         }
         if (changes != 1) throw new IllegalStateException("Missing server run method");
+    }
+
+    static void patchAutosave(ClassNode node) {
+        int changes=0;
+        for(MethodNode method:node.methods) {
+            if(!(method.name.equals("tick") || method.name.equals("func_71217_p")) || !method.desc.equals("()V"))continue;
+            for(AbstractInsnNode instruction:method.instructions.toArray()) {
+                if(!(instruction instanceof IntInsnNode) || instruction.getOpcode()!=Opcodes.SIPUSH ||
+                    ((IntInsnNode)instruction).operand!=900)continue;
+                AbstractInsnNode remainder=instruction.getNext();
+                if(remainder==null || remainder.getOpcode()!=Opcodes.IREM)continue;
+                method.instructions.set(instruction,new MethodInsnNode(Opcodes.INVOKESTATIC,
+                    "ocelot/spike/RunnerAutosave","remainder","(I)I",false));
+                method.instructions.remove(remainder);changes++;
+            }
+        }
+        if(changes!=1)throw new IllegalStateException("Unrecognized native autosave branch: "+changes);
     }
 
     /** Hash complete instructions, operands, branches and exception handlers; omit debug metadata. */

@@ -34,11 +34,15 @@ final class RunnerRuntime {
     private RunnerProgram program;
     private RunnerObservations observations;
     private RunnerScheduler scheduler;
+    private RunnerFullBuild fullBuild;
+    private RunnerHardware assembledHardware;
     private Robot robot;
     private Field stateField, completedWorkerField;
     private boolean booted;
     private boolean prebootObserved;
     private long diskReadNanos, workerWaitNanos, observationNanos;
+    private final RunnerOutcomePoll outcomePoll=new RunnerOutcomePoll();
+    private long outcomePollCount;
     private String status="not_returned",message="";
     RunnerRuntime(RunnerScenario spec,WorldServer world,Path root) {
         this.spec=spec;this.world=world;this.root=root;
@@ -48,13 +52,21 @@ final class RunnerRuntime {
     boolean ready() {return robot!=null;}
     private static BlockPos pos(int[] p) {return RunnerObservations.pos(p);}
     void setup() throws Exception {
+        if(spec.fullBuild!=null) {
+            if(fullBuild==null)fullBuild=new RunnerFullBuild(spec.fullBuild);
+            fullBuild.removeRecoveryRobot(world);
+        }
         checkOtherMachines();
+        if(spec.fullBuild!=null){
+            if(!fullBuild.setup(world,spec,root))return;
+        }
         for(JsonElement entry:spec.blocks) {
             JsonObject volume=entry.getAsJsonObject(); int[] min=RunnerScenario.position(volume.get("min")),max=RunnerScenario.position(volume.get("max"));
             IBlockState state=blockState(volume);
             for(int x=min[0];x<=max[0];x++) for(int y=min[1];y<=max[1];y++) for(int z=min[2];z<=max[2];z++)
                 world.setBlockState(new BlockPos(x,y,z),state,3);
         }
+        if(fullBuild!=null)fullBuild.refill(world);
         BlockPos location=pos(spec.position);
         if(!world.isAirBlock(location)) throw new IllegalStateException("robot_cell_not_air");
         program=new RunnerProgram(root);
@@ -67,6 +79,7 @@ final class RunnerRuntime {
         }
         ItemStack firmware=li.cil.oc.api.Items.registerEEPROM("robot-runner-bios",bios,new byte[0],false);
         RunnerHardware hardware=spec.hardware==null?null:RunnerHardware.assemble(spec.hardware,firmware);
+        assembledHardware=hardware;
         RobotData data;
         if(hardware==null) {
             ItemStack floppy=program.provision(spec.entry,bios);
@@ -131,6 +144,7 @@ final class RunnerRuntime {
     }
     /** Returns terminal reason, or null if work continues. */
     String tick(long tick,String mode) throws Exception {
+        if(fullBuild!=null && robot!=null && ((TileEntity)robot).getPos().distanceSq(fullBuild.chest)<16)fullBuild.refill(world);
         checkOtherMachines();
         if(!booted) {
             if(shouldPreparePreboot(tick,robot.node().network()!=null,prebootObserved)) {
@@ -150,6 +164,12 @@ final class RunnerRuntime {
                         " network="+(power.network()!=null));
                 }
                 if(spec.hardware!=null) program.observeNativeDrive(robot);
+                if(assembledHardware!=null) {
+                    JsonObject report=new JsonParser().parse(assembledHardware.assemblyReport.toString()).getAsJsonObject();
+                    report.addProperty("inventoryCapacity",robot.mainInventory().getSizeInventory());
+                    report.addProperty("energyCapacity",power.globalBufferSize());
+                    Files.write(root.resolve("hardware-preflight.json"),report.toString().getBytes(StandardCharsets.UTF_8));
+                }
                 observations=new RunnerObservations(spec,world,robot,root);
                 observations.sample("initial",tick,machineState());
                 prebootObserved=true;
@@ -164,18 +184,19 @@ final class RunnerRuntime {
                 booted=true;
             }
         } else {
-            long observedAt=System.nanoTime();
-            String outcome=program.outcome();
-            diskReadNanos+=System.nanoTime()-observedAt;
-            if(outcome.startsWith("returned\n")) status="returned";
-            else if(outcome.startsWith("error\n")) {status="error";message=outcome.substring(6);}
+            if(outcomePoll.due(System.nanoTime(),robot.machine().isRunning()))pollOutcome();
             if(scheduler!=null || mode.equals("coordinated")) {
                 long waitedAt=System.nanoTime();
                 try {if(scheduler!=null) scheduler.checkProgress();else awaitWorker();}
                 finally {workerWaitNanos+=System.nanoTime()-waitedAt;}
             }
             String state=machineState();
-            if(state.equals("Stopped")) return status.equals("returned") ? (assertions()?"passed":"assertion_failed") : "program_not_returned";
+            if(state.equals("Stopped")) {
+                // Worker progress may stop the machine after the periodic poll.
+                // Always inspect the final native outcome before classifying it.
+                pollOutcome();
+                return status.equals("returned") ? (assertions()?"passed":"assertion_failed") : "program_not_returned";
+            }
             // A worker can enter Stopping after OC's START machine.update but before its
             // tile update unregisters the robot (isRunning is already false). In that
             // ordering no native close was queued by Machine.stop(). Queue OC's own
@@ -191,6 +212,14 @@ final class RunnerRuntime {
             if(observations.stalled(tick)) return "stall_limit";
         }
         return null;
+    }
+    private void pollOutcome() throws Exception {
+        long started=System.nanoTime();
+        String outcome;
+        try {outcome=program.outcome();}
+        finally {diskReadNanos+=System.nanoTime()-started;outcomePollCount++;}
+        if(outcome.startsWith("returned\n"))status="returned";
+        else if(outcome.startsWith("error\n")){status="error";message=outcome.substring(6);}
     }
     static boolean shouldPreparePreboot(long tick,boolean networkReady,boolean alreadyObserved) {
         return tick>=3 && networkReady && !alreadyObserved;
@@ -226,8 +255,15 @@ final class RunnerRuntime {
         for(int slot=0;slot<inventory.getSizeInventory();slot++) if(!inventory.getStackInSlot(slot).isEmpty()) return false;
         return true;
     }
+    private static final ClassValue<Boolean> MACHINE_TILE=new ClassValue<Boolean>() {
+        @Override protected Boolean computeValue(Class<?> type) {
+            return hasNamedAncestor(type,false) || hasComputerTrait(type);
+        }
+    };
     static boolean isMachineTile(Class<?> type) {
-        return hasNamedAncestor(type,false) || hasComputerTrait(type);
+        // Class ancestry/interfaces are immutable; creative-case eligibility
+        // still inspects the live machine and inventory on every tick.
+        return type!=null && MACHINE_TILE.get(type);
     }
     static boolean isMachineEntity(Class<?> type) {
         return hasNamedAncestor(type,true);
@@ -301,7 +337,8 @@ final class RunnerRuntime {
         } catch(Exception error) {text.append(" diagnosticError=").append(error.getClass().getSimpleName());}
         return text.substring(0,Math.min(4500,text.length()));
     }
-    private boolean assertions() {
+    private boolean assertions() throws IOException {
+        if(fullBuild!=null && !fullBuild.verify(world,root))return false;
         if(spec.expect.has("position") && !((TileEntity)robot).getPos().equals(pos(RunnerScenario.position(spec.expect.get("position"))))) return false;
         for(JsonElement e:spec.expectedBlocks) {
             JsonObject b=e.getAsJsonObject();BlockPos location=pos(RunnerScenario.position(b.get("position")));
@@ -322,6 +359,9 @@ final class RunnerRuntime {
         JsonObject value=new JsonObject();value.addProperty("runnerSchemaVersion",1);value.addProperty("scenarioId",spec.id);
         value.add("robot",JsonNull.INSTANCE); // setup failures may have no robot state to report.
         JsonObject timing=new JsonObject();timing.addProperty("diskReadNanos",diskReadNanos);
+        timing.addProperty("outcomePollNanos",diskReadNanos);
+        timing.addProperty("outcomePollCount",outcomePollCount);
+        timing.addProperty("outcomePollIntervalNanos",RunnerOutcomePoll.INTERVAL_NANOS);
         timing.addProperty("workerWaitNanos",workerWaitNanos);
         if(scheduler!=null) {
             timing.addProperty("workerScheduling","idle-compression");
@@ -329,6 +369,7 @@ final class RunnerRuntime {
             timing.addProperty("skippedIdleNanos",scheduler.skippedNanos());
         }
         timing.addProperty("observationNanos",observationNanos);value.add("runnerTiming",timing);
+        value.add("autosavePolicy",RunnerAutosave.report());
         JsonObject programResult=new JsonObject();programResult.addProperty("status",status);
         programResult.addProperty("message",message.length()>8192?message.substring(0,8192):message);value.add("program",programResult);
         try {if(program!=null && program.observing()) program.exportConsole();}
