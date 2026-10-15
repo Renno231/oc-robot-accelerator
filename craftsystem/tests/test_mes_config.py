@@ -278,33 +278,31 @@ class MesConfigTests(LuaCase):
         ''')
 
 class MesPairedHostsTests(TransportFixture):
-    def test_sorted_status_copies_preserve_names_cid_wake_keys(self):
+    def test_sorted_host_copies_preserve_names_cid_wake_keys_without_network(self):
         self.lua.execute('''
             local hosts=C.require('hosts')
             assert(hosts.addHost('robot-a',A.cid,'My Robot','wake-robot-a',{service='craftServer',tool='key'},true))
             hosts.addHost('other','other-cid','other','secret',{service='unrelated'},true)
             hosts.addHost('no-key','no-key-cid','no-key',nil,{service='craftServer'},true)
-            spawn(function() C.robots=C.require('mes_config').robots(0.3) end,C)
-            untilDone(function() return C.robots end)
-            local robots=C.robots
+            local packets=#TRACE
+            local robots=C.require('mes_config').robots()
             assert(#robots==2 and robots[1].address=='robot-a' and robots[2].address=='robot-b')
-            assert(robots[1].name=='My Robot' and robots[1].busy==false and robots[2].busy==false)
+            assert(robots[1].name=='My Robot' and robots[1].busy==nil and robots[2].busy==nil)
             local a=hosts.getHost('My Robot')
             assert(a:getCID()==A.cid and a:getWakeKey()=='wake-robot-a' and a:get('tool')=='key')
             robots[1].address='changed'
-            spawn(function() C.again=C.require('mes_config').robots() end,C)
-            untilDone(function() return C.again end)
+            C.again=C.require('mes_config').robots()
             assert(C.again[1].address=='robot-a' and C.again[1].name=='My Robot')
+            assert(#TRACE==packets)
             job(C,'My Robot');untilDone(function() return C.result end)
             assert(C.result.success and C.result.serverAddress=='robot-a')
         ''')
 
-    def test_host_listing_failure_and_timeout_validation(self):
+    def test_host_listing_failure(self):
         self.lua.execute('''
             C.require('hosts').getAll=function() error('hosts unavailable') end
-            local m=C.require('mes_config');local robots,err=m.robots(0)
+            local m=C.require('mes_config');local robots,err=m.robots()
             assert(not robots and err:find('hosts unavailable'))
-            assert(not pcall(m.robots,-1) and not pcall(m.robots,math.huge))
         ''')
 
 

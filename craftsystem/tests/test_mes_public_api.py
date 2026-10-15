@@ -25,9 +25,9 @@ class MesPublicApiTests(LuaCase):
             for _,name in ipairs({'setType','removeType','setCrafter','removeCrafter'}) do
               c[name]=function(...) CALLS[#CALLS+1]={name=name,args={...}};return name,'second return' end
             end
-            c.robots=function(timeout)
-              CALLS[#CALLS+1]={name='robots',args={timeout}}
-              return {{address='address',busy=false}}
+            c.robots=function(...)
+              CALLS[#CALLS+1]={name='robots',args={...}}
+              return {{address='address'}}
             end
             return c
           end
@@ -49,8 +49,8 @@ class MesPublicApiTests(LuaCase):
           local call=CALLS[#CALLS]
           assert(call.name=='search' and call.args[1]=='query' and call.args[2]==7)
           local robots=M.robots(2)
-          assert(robots[1].address=='address' and robots[1].busy==false)
-          call=CALLS[#CALLS];assert(call.name=='robots' and call.args[1]==2)
+          assert(robots[1].address=='address' and robots[1].busy==nil)
+          call=CALLS[#CALLS];assert(call.name=='robots' and #call.args==0)
         ''')
 
     def test_config_copies_are_faithful_without_group_or_resource_fields(self):

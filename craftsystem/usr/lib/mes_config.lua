@@ -135,15 +135,12 @@ function M.removeCrafter(name,opts)
   wh.ungroup(name);if cfg.crafters then cfg.crafters[name]=nil end
   return persist(cfg,opts)
 end
-function M.robots(timeout)
-  timeout=timeout==nil and 3 or timeout
-  assert(finite(timeout) and timeout>=0,"Timeout must be finite and non-negative")
+function M.robots()
   local ok,result=pcall(function()
     local out={}
     for _,host in ipairs(require("hosts").getAll()) do
       if host:getKeys().service=="craftServer" and text(host:getWakeKey()) then
-        local status=require("craft_client").status(host:getAddress(),{connectTimeout=timeout})
-        out[#out+1]={address=host:getAddress(),name=host:getName(),busy=status and status.busy}
+        out[#out+1]={address=host:getAddress(),name=host:getName()}
       end
     end
     table.sort(out,function(a,b) return a.address<b.address end)

@@ -10,7 +10,7 @@ class StationsTests(unittest.TestCase):
         f = test_stock_api.LibraryApiTests(); f.setUp(); self.lua = f.lua
         self.lua.execute('oldIO=io.open')
         install_store(self.lua)
-        for name in ('map', 'logistics', 'warehouse', 'stations', 'iochest', 'stats', 'housekeeping'):
+        for name in ('map', 'logistics', 'warehouse', 'stations', 'survey', 'iochest', 'stats', 'housekeeping'):
             self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
         for name in ('mes_alerts', 'mes_alert_sources'):
             self.lua.globals()[name.upper()] = Path(f'craftsystem/usr/lib/{name}.lua').read_text()
@@ -57,6 +57,7 @@ class StationsTests(unittest.TestCase):
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
           package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
           package.preload.stations=function() return assert(load(STATIONS))() end
+          package.preload.survey=function() return assert(load(SURVEY))() end
           package.preload.stats=function() return assert(load(STATS))() end
           package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
           package.preload.iochest=function() return assert(load(IOCHEST))() end
@@ -154,6 +155,7 @@ class StationsTests(unittest.TestCase):
           require('event').cancel=function() end
           assert(require('mes_service').start())
           assert(package.loaded.stations and package.loaded.stats and package.loaded.mes_alerts and LISTEN.logistics)
+          assert(package.loaded.survey and LISTEN.survey_result)
           for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
           finishAll()
           st=package.loaded.stations
