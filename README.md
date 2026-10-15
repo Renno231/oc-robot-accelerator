@@ -10,6 +10,8 @@ OC Robot Accelerator runs your program on a real Forge server with real OpenComp
 
 In one test, a 48-block mining run across three chunk boundaries took **94.6 s natively and 18.5 s accelerated (5.1×)**. All 144 robot actions returned the same results, and the final blocks, inventory, and position matched exactly.
 
+A full **1,013,113-block island** was also built and independently checked with zero block mismatches. A maximized survival builder completed it in **89.5 minutes**, including restocking and charging. This is a measured workload, not a speed guarantee for every program.
+
 ## What you get
 
 - **Real robots**: tier 1–3 or creative, with your choice of CPU, memory, cards, upgrades, containers, and HDDs, validated the same way the in-game assembler would. Editable presets for each tier are included.
@@ -63,7 +65,7 @@ robot-runner wait JOB_ID --jobs-root DIR --timeout 600
 robot-runner cancel JOB_ID --jobs-root DIR
 ```
 
-A run succeeds when your program returns, the robot shuts down cleanly, and the scenario's final checks pass. A Lua error or hitting a limit counts as a failure. Runs are capped at 24 simulated hours.
+A run succeeds when your program returns, the robot shuts down cleanly, and the scenario's final checks pass. A Lua error or hitting a limit counts as a failure. Ordinary runs are capped at 24 simulated hours; [full-build scenarios](docs/full-build-fixtures.md) support larger explicit budgets.
 
 ## Watching the replay
 
@@ -87,7 +89,7 @@ If a job's worker crashed, check that its Java process is really gone, then run 
 
 ## How accurate is it?
 
-Acceleration skips idle waiting, not game logic. World ticks, autosave, action delays, power, and tool wear all still run natively. Lua keeps running asynchronously, just as in the real game.
+Acceleration skips idle waiting, not game logic. World ticks, action delays, power, and tool wear all still run natively. Autosaves can follow simulated ticks or a configured wall-clock interval; final and explicit saves remain enabled. Lua keeps running asynchronously, just as in the real game.
 
 Action results, blocks, inventory, and position matched in testing. Exact action timing and energy can differ slightly (2.5 energy over the 48-block run). Two plain native runs also differ from each other around autosave, so treat exact timing as approximate either way. If your program depends on precise timing or randomness, compare against a `baseline` run, which is native speed, no acceleration. [docs/simulation-time.md](docs/simulation-time.md) explains the design.
 

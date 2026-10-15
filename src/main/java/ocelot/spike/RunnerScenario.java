@@ -13,11 +13,11 @@ final class RunnerScenario {
     final String id, entry, mode, onFull;
     final int[] min, max, position;
     final JsonArray blocks, inventory, expectedBlocks, expectedInventory;
-    final JsonObject tool, expect, hardware;
+    final JsonObject tool, expect, hardware, fullBuild;
     final String facing;
     final double energy;
     final Integer randomSeed;
-    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes;
+    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes, autosaveWallSeconds;
     final boolean source;
     final RunnerDroneScenario v4;
     private RunnerScenario(JsonObject root) {
@@ -30,11 +30,31 @@ final class RunnerScenario {
         if (!"program".equals(string(program.get("directory")))) throw bad("program directory");
         entry = path(string(program.get("entry")));
         if (!entry.endsWith(".lua")) throw bad("Lua entry");
-        JsonObject world = object(root.get("world"), "region,blocks,source");
+        JsonObject world = object(root.get("world"), "region,blocks,source,fullBuild");
+        fullBuild=world.has("fullBuild")?object(world.get("fullBuild"),"min,max,expected,palette,chest,materials,resume,returnSlots"):null;
+        if(fullBuild!=null && fullBuild.has("returnSlots"))integer(fullBuild.get("returnSlots"),0,26);
+        if(fullBuild!=null) {
+            if(version!=3) throw bad("full build version");
+            int[] lo=position(fullBuild.get("min")),hi=position(fullBuild.get("max"));long cells=1;
+            for(int i=0;i<3;i++){if(lo[i]>hi[i])throw bad("full build order");cells*=((long)hi[i]-lo[i]+1);}
+            if(cells>Integer.MAX_VALUE)throw bad("full build integer representation");
+            path(string(fullBuild.get("expected")));position(fullBuild.get("chest"));
+            if(array(fullBuild.get("palette"),256).size()==0 || array(fullBuild.get("materials"),27).size()==0)throw bad("full build palette/materials required");
+            for(JsonElement e:array(fullBuild.get("palette"),256))registry(e);
+            for(JsonElement e:array(fullBuild.get("materials"),27)) {
+                JsonObject m=object(e,"item,count");registry(m.get("item"));integer(m.get("count"),1,Integer.MAX_VALUE);
+            }
+        }
         source = world.has("source");
         if (source && !"world".equals(string(world.get("source")))) throw bad("world source");
+        if(fullBuild!=null && fullBuild.has("resume")) {
+            if(!source)throw bad("full build resume requires source world");
+            JsonObject resume=object(fullBuild.get("resume"),"robot,builtBlocks");
+            position(resume.get("robot"));integer(resume.get("builtBlocks"),0,Integer.MAX_VALUE);
+        }
         JsonObject region = object(world.get("region"), "min,max");
         min = position(region.get("min")); max = position(region.get("max"));
+        if(fullBuild!=null)inside(position(fullBuild.get("chest")));
         if (regionCells() > 32768 || regionCells() < 1 ||
             ((long)Math.floorDiv(max[0],16)-Math.floorDiv(min[0],16)+1) *
             ((long)Math.floorDiv(max[2],16)-Math.floorDiv(min[2],16)+1) > 64) throw bad("region bounds");
@@ -53,7 +73,15 @@ final class RunnerScenario {
         }
         JsonObject robot = object(root.get("robot"), "position,facing,hardware,energy,tool,inventory"+(version==3?",randomSeed":""));
         randomSeed=robot.has("randomSeed")?integer(robot.get("randomSeed"),0,Integer.MAX_VALUE):null;
-        position = position(robot.get("position")); inside(position);
+        position = position(robot.get("position"));
+        if(fullBuild==null)inside(position);
+        else {
+            boolean observed=true;for(int i=0;i<3;i++)observed&=position[i]>=min[i] && position[i]<=max[i];
+            if(!observed) {
+                int[] lo=position(fullBuild.get("min")),hi=position(fullBuild.get("max"));
+                for(int i=0;i<3;i++)if(position[i]<lo[i]-1 || position[i]>hi[i]+1)throw bad("robot outside full build workspace");
+            }
+        }
         hardware=version==3?hardware(robot.get("hardware")):null;
         if (version<3 && !"tier3".equals(string(robot.get("hardware")))) throw bad("hardware");
         facing = string(robot.get("facing"));
@@ -69,10 +97,11 @@ final class RunnerScenario {
             JsonObject item = item(element,true,capacity);
             if (!slots.add(integer(item.get("slot"),1,capacity))) throw bad("duplicate slot");
         }
-        JsonObject execution = object(root.get("execution"),"mode,maxTicks,timeoutSeconds,executionDelayMillis,stallTicks");
+        JsonObject execution = object(root.get("execution"),"mode,maxTicks,timeoutSeconds,executionDelayMillis,stallTicks,autosaveWallSeconds");
+        autosaveWallSeconds=execution.has("autosaveWallSeconds")?integer(execution.get("autosaveWallSeconds"),0,Integer.MAX_VALUE):0;
         mode = string(execution.get("mode"));
         if (!mode.equals("baseline") && !mode.equals("coordinated") && !(version==3 && mode.equals("paced"))) throw bad("mode");
-        maxTicks=integer(execution.get("maxTicks"),1,version==1?10000:1728000);
+        maxTicks=integer(execution.get("maxTicks"),1,fullBuild!=null?Integer.MAX_VALUE:version==1?10000:1728000);
         timeoutSeconds=integer(execution.get("timeoutSeconds"),1,version==1?600:90000);
         delay=integer(execution.get("executionDelayMillis"),0,12);
         if (delay!=0 && delay!=12) throw bad("delay");
@@ -136,7 +165,7 @@ final class RunnerScenario {
             if (!allowed.equals(present)) {
                 // Optional fields stay absent rather than gaining implicit values.
                 Set<String> missing=new HashSet<>(allowed); missing.removeAll(present);
-                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed").containsAll(missing)) throw bad("object fields: "+keys);
+                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","autosaveWallSeconds").containsAll(missing)) throw bad("object fields: "+keys);
             }
         }
     }
