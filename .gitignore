@@ -12,6 +12,11 @@ __pycache__/
 .pi/
 .worktrees/
 
+# Local bindings to the canonical OC-Utilities packages (not source copies).
+/craftsystem
+/drone-logistics
+/downloaded_files/
+
 # Private inputs and evidence: keep user programs/worlds outside the public source.
 .taskreports/
 evidence/
