@@ -13,6 +13,9 @@ class SetupProcessTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
+        self.now=[1000.0]
+        clock=patch.object(setup.time,'monotonic',side_effect=lambda:self.now[0])
+        clock.start(); self.addCleanup(clock.stop)
 
     def test_large_single_write_fails_without_retaining_over_cap(self):
         owner=setup._Owner(self.root,time.monotonic()+5)
@@ -31,9 +34,23 @@ class SetupProcessTests(unittest.TestCase):
 
     def test_deadline_kills_child_before_it_can_write_late_file(self):
         owner=setup._Owner(self.root,time.monotonic()+.15)
-        target=self.root/'late'
-        code='import time; from pathlib import Path; time.sleep(1); Path('+repr(str(target))+').write_text("bad")'
-        with self.assertRaises(TimeoutError): owner.run([sys.executable,'-c',code],timeout=5)
+        target=self.root/'late'; go=self.root/'go'
+        code=('import time\nfrom pathlib import Path\n'
+              'while not Path('+repr(str(go))+').exists(): time.sleep(.02)\n'
+              'Path('+repr(str(target))+').write_text("bad")\n')
+        launch=subprocess.Popen; children=[]
+        def expire_after_launch(*args,**kwargs):
+            child=launch(*args,**kwargs)
+            if args[0][0]==sys.executable:
+                children.append(child)
+                self.addCleanup(setup.supervisor._stop_tree,child)
+                self.now[0]=owner.deadline
+            return child
+        with patch.object(setup.subprocess,'Popen',side_effect=expire_after_launch):
+            with self.assertRaises(TimeoutError): owner.run([sys.executable,'-c',code],timeout=5)
+        self.assertEqual(len(children),1)
+        self.assertIsNotNone(children[0].poll())
+        go.write_text('late write permitted only after cleanup')
         self.assertFalse(target.exists())
 
     def test_command_failure_retains_log(self):

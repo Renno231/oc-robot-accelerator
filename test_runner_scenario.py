@@ -144,7 +144,7 @@ class ScenarioContract(unittest.TestCase):
 
     def test_root_overlap_and_source_world_requirements(self):
         for output in [self.source, self.source / 'jobs', self.root]:
-            with self.subTest(output=output), self.assertRaises(ValueError): self.load(forbidden_roots=[output])
+            with self.subTest(output=str(output)), self.assertRaises(ValueError): self.load(forbidden_roots=[output])
         data = minimal(); data['world']['source'] = 'program'
         with self.assertRaises(ValueError): self.load(data)
         (self.source / 'world').mkdir()
