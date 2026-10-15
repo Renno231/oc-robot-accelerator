@@ -470,7 +470,7 @@ unchanged.
   submit an MES request; `stockkeeper`, `craftplan`, `craftkit` and `craft.lua` use the MES through
   them without rewrites.
 - UIs: `mes_ui` is the controller UI and opens the user's `craft_management_ui` for plans, kits,
-  tools and stockkeeper rather than duplicating them. `inv.lua` stays the single-storage browser;
+  tools and stockkeeper rather than duplicating them. `craftsystem/usr/bin/inv.lua` stays the single-storage browser;
   on an MES controller the Stock tab covers it.
 - `cproc` is unchanged; on an MES station it serves its buffer side and receives inputs by drone.
 
