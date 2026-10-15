@@ -13,16 +13,18 @@ public final class PacingTransformer implements IClassTransformer {
         boolean server = "net.minecraft.server.MinecraftServer".equals(transformedName);
         boolean machine = "li.cil.oc.server.machine.Machine".equals(transformedName);
         boolean wireless="li.cil.oc.server.component.WirelessNetworkCard".equals(transformedName);
+        boolean network="li.cil.oc.server.component.NetworkCard".equals(transformedName) && Boolean.getBoolean("robotspike.hostCapture");
         boolean safePool="li.cil.oc.util.SafeThreadPool".equals(transformedName);
         boolean chunks="net.minecraftforge.common.chunkio.ChunkIOExecutor".equals(transformedName);
         boolean chunkPool="net.minecraftforge.common.chunkio.ChunkIOThreadPoolExecutor".equals(transformedName);
         int clocks=clockSites(transformedName);
-        if (!server && !machine && !wireless && !safePool && !chunks && !chunkPool && clocks==0) return bytes;
+        if (!server && !machine && !wireless && !network && !safePool && !chunks && !chunkPool && clocks==0) return bytes;
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
         if (server) patchPacer(node);
         if (machine) { patchObservation(node); patchSchedulerObservations(node); patchWorkerDispatch(node); patchEnergyMetrics(node); }
         if(wireless) patchWirelessEnergyMetrics(node);
+        if(network) patchHostPackets(node);
         if(safePool) patchSafePool(node);
         if(chunks) patchChunkSubmission(node);
         if(chunkPool) patchChunkCompletion(node);
@@ -30,6 +32,42 @@ public final class PacingTransformer implements IClassTransformer {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    /** Base callbacks dispatch virtually to wireless implementations: hook once. */
+    static void patchHostPackets(ClassNode node) {
+        int sends=0,receives=0;
+        for(MethodNode m:node.methods) {
+            if((m.name.equals("send") || m.name.equals("broadcast")) &&
+                    m.desc.equals("(Lli/cil/oc/api/machine/Context;Lli/cil/oc/api/machine/Arguments;)[Ljava/lang/Object;")) {
+                for(AbstractInsnNode i:m.instructions.toArray()) if(i instanceof MethodInsnNode) {
+                    MethodInsnNode call=(MethodInsnNode)i;
+                    if(call.owner.equals(node.name) && call.name.equals(m.name.equals("send")?"doSend":"doBroadcast") &&
+                            call.desc.equals("(Lli/cil/oc/api/network/Packet;)V")) {
+                        if(call.getOpcode()!=Opcodes.INVOKEVIRTUAL || !(i.getPrevious() instanceof VarInsnNode) ||
+                                i.getPrevious().getOpcode()!=Opcodes.ALOAD) throw new IllegalStateException("Unsupported OC packet local");
+                        int local=((VarInsnNode)i.getPrevious()).var;
+                        InsnList hook=new InsnList();
+                        hook.add(new VarInsnNode(Opcodes.ALOAD,0));hook.add(new VarInsnNode(Opcodes.ALOAD,local));
+                        hook.add(new VarInsnNode(Opcodes.ALOAD,1));
+                        hook.add(new MethodInsnNode(Opcodes.INVOKESTATIC,"ocelot/spike/HostCapture","sent",
+                                "(Ljava/lang/Object;Lli/cil/oc/api/network/Packet;Lli/cil/oc/api/machine/Context;)V",false));
+                        m.instructions.insert(i,hook);sends++;
+                    }
+                }
+            }
+            if(m.name.equals("isPacketAccepted") && m.desc.equals("(Lli/cil/oc/api/network/Packet;D)Z")) {
+                for(AbstractInsnNode i:m.instructions.toArray()) if(i.getOpcode()==Opcodes.IRETURN) {
+                    InsnList hook=new InsnList();hook.add(new InsnNode(Opcodes.DUP));
+                    hook.add(new VarInsnNode(Opcodes.ALOAD,0));hook.add(new VarInsnNode(Opcodes.ALOAD,1));
+                    hook.add(new VarInsnNode(Opcodes.DLOAD,2));
+                    hook.add(new MethodInsnNode(Opcodes.INVOKESTATIC,"ocelot/spike/HostCapture","accepted",
+                            "(ZLjava/lang/Object;Lli/cil/oc/api/network/Packet;D)V",false));
+                    m.instructions.insertBefore(i,hook);receives++;
+                }
+            }
+        }
+        if(sends!=2 || receives!=2) throw new IllegalStateException("Unsupported OC host packet sites: "+sends+"/"+receives);
     }
 
     private static void patchPacer(ClassNode node) {

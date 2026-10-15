@@ -9,7 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-from examples.mes.build_fixtures import ALL_CASES, OCPARTS_FINAL, build_native
+from examples.mes.build_fixtures import (ALL_CASES, OCPARTS_FINAL, OCPARTS_REPEAT_FINAL,
+                                        ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, build_native)
 from native_store_evidence import LuaData, read_store
 from supervisor import NO_WINDOW
 
@@ -26,7 +27,7 @@ def verify_case(case, runtime):
     native = json.loads((runtime / 'result.json').read_text())
     assert native['status'] == 'passed', native.get('reason')
     assert len(native['drones']) == 6
-    assert all(r['inventorySize'] == 85 and not r['inventory'] for r in native['robots'])
+    assert all(r['inventoryCapacity'] == 85 and not r['inventory'] for r in native['robots'])
     assert all(not d['inventory'] for d in native['drones'])
     totals = {}
     for chest in native['containers']:
@@ -41,7 +42,9 @@ def verify_case(case, runtime):
     paths = list(runtime.glob('world/opencomputers/*/etc/mes.state'))
     assert len(paths) == 1, 'missing/ambiguous MES receipt store'
     runs = [v for k, v in read_store(paths[0]).items() if k.startswith('done_')]
-    assert len(runs) == (2 if case == 'concurrent' else 1), 'missing completed run receipt'
+    expected_runs = len(ROBOT_PARTS) if case == 'robot-parts' else 2 if case in ('concurrent', 'ocparts-repeat') else 1
+    if case == 'robot-expand': expected_runs = len(ROBOT_PARTS) + 3
+    assert len(runs) == expected_runs, 'missing completed run receipt'
     assert all(r['status'] == ('failed' if case == 'shortfall' else 'complete') for r in runs)
     stages = [s for r in runs for s in rows(r['stages'])]
     intervals = [dict(crafter=s['crafter'], start=s['craftStarted'], finish=s['craftFinished'])
@@ -53,6 +56,33 @@ def verify_case(case, runtime):
         assert not intervals and not totals.get('minecraft:brick_block', 0)
         assert totals.get('minecraft:clay_ball', 0) + totals.get('minecraft:brick', 0) == 48
         assert any(s['kind'] == 'machine' and s['state'] == 'failed' for s in stages)
+    elif case in ('robot-parts', 'robot-expand'):
+        ordered = sorted(runs, key=lambda r: r['id'])
+        parts = ordered[:len(ROBOT_PARTS)]
+        assert [(r['item'], r['qty']) for r in parts] == list(ROBOT_PARTS.items()), 'wrong parts orders'
+        assert all(a['finished'] <= b['started'] for a, b in zip(parts, parts[1:])), 'overlapping orders'
+        assert totals == (ROBOT_EXPAND_FINAL if case == 'robot-expand' else ROBOT_PARTS_FINAL), totals
+        if case == 'robot-expand':
+            assert len(native['robots']) == 3
+            later = ordered[len(ROBOT_PARTS):]
+            assert [(r['item'], r['qty']) for r in later] == [('opencomputers:component:11', 2), ('minecraft:chest', 1), ('minecraft:chest', 1)]
+            for run, cpu in zip(later, ('cpu3', 'cpu1', 'cpu2')):
+                assert run['started'] >= parts[-1]['finished']
+                assigned = [s['crafter'] for s in rows(run['stages']) if s['kind'] == 'robot']
+                assert assigned and set(assigned) == {cpu}, 'new capacity not exercised'
+            assert max(r['started'] for r in later) < min(r['finished'] for r in later), 'requests were not concurrent'
+            for position in ([11, 65, 3], [12, 65, 1]):
+                assert not next(c for c in native['containers'] if c['position'] == position)['slots']
+    elif case == 'ocparts-repeat':
+        first, second = sorted(runs, key=lambda r: r['id'])
+        assert (first['qty'], second['qty']) == (5, 3)
+        assert first['finished'] <= second['started'], 'second order did not follow the first'
+        assert totals == OCPARTS_REPEAT_FINAL, totals
+        later = rows(second['stages'])
+        outputs = {o['item'] for s in later for o in rows(s['outputs'])}
+        assert outputs == {'minecraft:iron_nugget', 'opencomputers:material:4', 'opencomputers:component:6'}, 'surplus intermediates were remade'
+        loads = [l for s in later if s['kind'] == 'machine' for l in rows(s['loadLedger'])]
+        assert sum(l['items'] for l in loads) == 3
     elif case == 'ocparts':
         assert len(intervals) >= 4 and {r['crafter'] for r in intervals} == {'cpu1', 'cpu2'}
         assert totals == {id: count for id, count in OCPARTS_FINAL.items() if count}, totals
@@ -203,7 +233,7 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path('C:/or/mes-native') / datetime.now().strftime('%Y%m%d-%H%M%S'))
-    parser.add_argument('--installation', type=Path, default=Path('C:/or/drone-install-MES-E2E-finalization'))
+    parser.add_argument('--installation', type=Path, default=Path('C:/or/drone-install-MES-expansion'))
     parser.add_argument('--cases', nargs='+', choices=ALL_CASES, default=list(ALL_CASES))
     parser.add_argument('--parallel', type=int, choices=range(1, 5), default=4)
     parser.add_argument('--baseline', action='store_true')

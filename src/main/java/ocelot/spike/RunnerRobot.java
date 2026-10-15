@@ -10,6 +10,8 @@ import li.cil.oc.api.internal.Robot;
 import li.cil.oc.api.network.Connector;
 import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
+import net.minecraft.inventory.IInventory;
+import net.minecraft.inventory.InventoryBasic;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.math.BlockPos;
@@ -33,6 +35,32 @@ final class RunnerRobot {
         return robot!=null && tile.getWorld()==world && tile.getPos().equals(((TileEntity)robot).getPos());
     }
     void setup() throws Exception {
+        if(!spec.has("assembly")) place(null);
+    }
+    boolean placed() {return robot!=null;}
+    void assembleRequested(RunnerComputer first,RunnerComputer second,long tick) throws Exception {
+        if(!spec.has("assembly")) return;
+        JsonObject assembly=spec.getAsJsonObject("assembly"),request=assembly.getAsJsonObject("request");
+        RunnerComputer controller=request.get("computer").getAsInt()==0?first:second;
+        if(robot==null && controller.markerRequested(request.get("marker").getAsString())) {
+            IInventory source=RunnerContainers.inventory(world,RunnerObservations.pos(RunnerScenario.position(assembly.get("source"))));
+            InventoryBasic supply=new InventoryBasic("player parts",false,source.getSizeInventory());
+            for(int i=0;i<source.getSizeInventory();i++) supply.setInventorySlotContents(i,source.getStackInSlot(i).copy());
+            for(JsonElement entry:assembly.getAsJsonArray("blocks")) {
+                JsonObject block=entry.getAsJsonObject();
+                if(!world.isAirBlock(RunnerContainers.pos(block))) throw new IllegalStateException("assembly_block_not_air");
+                RunnerHardware.take(supply,new ItemStack(RunnerRuntime.blockState(block).getBlock()));
+            }
+            place(supply); // Native assembler validation and disk provisioning, using the manufactured stacks.
+            source.clear();source.markDirty();
+            for(JsonElement entry:assembly.getAsJsonArray("blocks")) {
+                JsonObject block=entry.getAsJsonObject();world.setBlockState(RunnerContainers.pos(block),RunnerRuntime.blockState(block),3);
+            }
+            controller.signal(request.get("signal").getAsString());
+        }
+        if(robot!=null) prepare(tick);
+    }
+    private void place(IInventory supply) throws Exception {
         BlockPos p=RunnerContainers.pos(spec);
         if(!world.isAirBlock(p)) throw new IllegalArgumentException("robot_cell_not_air:"+p);
         byte[] bios;
@@ -43,7 +71,9 @@ final class RunnerRobot {
             bios=out.toByteArray();
         }
         ItemStack firmware=li.cil.oc.api.Items.registerEEPROM("runner-robot-bios",bios,new byte[0],false);
-        RunnerHardware hardware=RunnerHardware.assemble(spec.getAsJsonObject("hardware"),firmware);
+        RunnerHardware hardware=RunnerHardware.assemble(spec.getAsJsonObject("hardware"),firmware,supply);
+        if(supply!=null) for(int i=0;i<supply.getSizeInventory();i++)
+            if(!supply.getStackInSlot(i).isEmpty()) throw new IllegalStateException("unused_assembly_parts");
         program.provision(spec.getAsJsonObject("program").get("entry").getAsString(),bios,hardware.bootDrive);
         hardware.data.name_$eq("runner-robot");
         int energy=(int)Math.ceil(spec.get("energy").getAsDouble());
@@ -60,6 +90,7 @@ final class RunnerRobot {
         RunnerScheduler.attachMachine((Runnable)robot.machine());
     }
     boolean prepare(long tick) throws Exception {
+        if(robot==null) return true;
         if(started) return true;
         if(tick<3 || robot.node().network()==null) return false;
         Connector power=(Connector)robot.machine().node();double energy=spec.get("energy").getAsDouble();
@@ -70,6 +101,7 @@ final class RunnerRobot {
         started=true;return true;
     }
     String tick() throws Exception {
+        if(robot==null || !started) return null;
         TileEntity proxy=world.getTileEntity(((TileEntity)robot).getPos());
         if(proxy==null || !proxy.getClass().getName().equals("li.cil.oc.common.tileentity.RobotProxy") ||
                 proxy.getClass().getMethod("robot").invoke(proxy)!=robot) return "robot_error:robot removed";
@@ -86,7 +118,7 @@ final class RunnerRobot {
         Field field=robot.machine().getClass().getDeclaredField("state");field.setAccessible(true);Object stack=field.get(robot.machine());
         synchronized(stack) {return String.valueOf(stack.getClass().getMethod("top").invoke(stack));}
     }
-    String checkInventory(JsonArray expected) {return RunnerContainers.checkSlots(robot.mainInventory(),expected,"robot inventory");}
+    String checkInventory(JsonArray expected) {return robot==null?"robot_not_assembled":RunnerContainers.checkSlots(robot.mainInventory(),expected,"robot inventory");}
     JsonObject snapshot(int index) throws Exception {
         JsonObject value=new JsonObject();value.addProperty("index",index);
         value.add("position",RunnerObservations.coords(((TileEntity)robot).getPos()));

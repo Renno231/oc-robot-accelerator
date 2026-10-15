@@ -538,3 +538,27 @@ class MesStateTests(LuaCase):
           local f=WORLD.machines.kiln.fuel
           assert(#RUN.stages[1].loadLedger==2 and fuel==2 and f.credit==2 and f.admitted==4,fuel..' '..f.credit..' '..f.admitted)
         ''')
+
+    def test_finished_group_keeps_whole_fuel_but_not_a_partial_burn(self):
+        for credited in (0, 2):
+            with self.subTest(credited=credited):
+                self.setUp()
+                self.lua.globals().CREDIT = credited
+                self.lua.execute('''
+                  CFG.machineTypes.furnace.fuel={role='fuel',item='t:fuel',per=8}
+                  WORLD.machines.kiln={state='idle',type='furnace',fuel={credit=CREDIT,admitted=0,processed=0}}
+                  local stage=machine('t:metal',{'t:ore'})
+                  stage.fuel={item='t:fuel',need=CREDIT==0 and 1 or 0}
+                  loaded({stage});put('mo','t:metal',1);tick(1);drain('collectMany')
+                  assert(RUN.status=='complete' and WORLD.groups.kiln==nil)
+                  local f=WORLD.machines.kiln.fuel
+                  assert(f.credit==math.max(0,CREDIT-1) and f.admitted==0 and f.processed==0)
+                  put('mo','t:metal',0)
+                  stage=machine('t:more',{'t:ore'});stage.fuel={item='t:fuel',need=CREDIT==0 and 1 or 0}
+                  new({stage})
+                  local fuel=0
+                  for _,a in ipairs(actions('fetchMany')) do for _,r in ipairs(a.requests) do
+                    if r.item.name=='t:fuel' then fuel=fuel+r.count end
+                  end end
+                  assert(fuel==(CREDIT==0 and 1 or 0))
+                ''')

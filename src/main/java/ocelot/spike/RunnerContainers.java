@@ -66,7 +66,14 @@ final class RunnerContainers {
     }
     static JsonArray result(RunnerScenario spec,WorldServer world) {
         JsonArray result=new JsonArray();
-        if(spec.v4!=null) for(JsonElement e:spec.v4.containers) {
+        JsonArray observed=new JsonArray();
+        if(spec.v4!=null) {
+            for(JsonElement c:spec.v4.containers) observed.add(c);
+            for(JsonElement r:spec.v4.robots) if(r.getAsJsonObject().has("assembly"))
+                for(JsonElement b:r.getAsJsonObject().getAsJsonObject("assembly").getAsJsonArray("blocks"))
+                    if(world.getTileEntity(pos(b.getAsJsonObject())) instanceof IInventory) observed.add(b);
+        }
+        for(JsonElement e:observed) {
             JsonObject c=e.getAsJsonObject(),value=new JsonObject();BlockPos p=pos(c);
             value.add("position",RunnerObservations.coords(p));value.addProperty("block",String.valueOf(world.getBlockState(p).getBlock().getRegistryName()));
             try {value.add("slots",contents(inventory(world,p)));} catch(IllegalArgumentException ex) {value.addProperty("error",ex.getMessage());}

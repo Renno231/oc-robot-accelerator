@@ -193,6 +193,29 @@ or program errors always fail, and robot inventory expectations still apply.
 checks described above; `inventory` is optional. Schema 2/3 behavior is unchanged.
 See `examples/robots/crafting-smoke/` for two robots crafting tables from chests.
 
+The final robot may be assembled later, after at least one existing robot, with
+an optional `assembly` object:
+
+```json
+"assembly": {
+  "source": [11, 65, 3],
+  "blocks": [{"position": [12, 65, 1], "block": "minecraft:chest", "properties": {}}],
+  "request": {"computer": 0, "marker": "home/assemble-robot", "signal": "robot_assembled"}
+}
+```
+
+`source` must name a declared container. The selected controller writes the
+marker relative to its OpenOS disk. The host consumes the robot's complete
+hardware recipe, including a blank EEPROM, and one item per infrastructure
+block from that container. Native OC rules validate the assembly; missing or
+unused parts fail the case. The runner provisions the normal robot disk and
+BIOS, places the robot and blocks in air cells, clears the consumed source,
+then emits the requested signal. This stages player assembly and installation;
+the robot's guest program owns subsequent networking and service startup.
+`blocks` accepts `position`, `block`, and optional `properties`; energy seeding
+is not part of assembly. Its inventory tiles can appear
+in `expect.containers` and are included in physical results after placement.
+
 ### Explicit infinite energy and container removal (schema 4)
 
 `execution.infiniteEnergy` is an optional boolean, default **false**. When true,

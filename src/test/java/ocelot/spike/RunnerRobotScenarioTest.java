@@ -49,6 +49,27 @@ public class RunnerRobotScenarioTest {
         assertEquals(1,RunnerScenario.parse(root.toString()).v4.robots.size());
         root.getAsJsonObject("expect").getAsJsonArray("robots").get(0).getAsJsonObject().add("inventory",new JsonParser().parse("[{\"slot\":86,\"count\":0}]"));rejects(root);
     }
+    @Test public void assemblyConsumesDeclaredPartsAfterAnExplicitPlayerTrigger() throws Exception {
+        JsonObject root=fixture();
+        root.add("computer",new JsonParser().parse("{\"position\":[-1,65,0],\"hardware\":{\"tier\":3,\"cpu\":\"cpu3\",\"memory\":[\"ram6\"],\"cards\":[\"wlancard2\"],\"storage\":[\"hdd3\"],\"bootDrive\":0},\"program\":{\"directory\":\"program\",\"entry\":\"main.lua\"}}"));
+        JsonArray robots=root.getAsJsonArray("robots");
+        JsonObject added=new JsonParser().parse(robots.get(0).toString()).getAsJsonObject();
+        added.add("position",new JsonParser().parse("[1,65,0]"));
+        added.getAsJsonObject("program").addProperty("directory","robot-program-1");
+        added.add("assembly",new JsonParser().parse("{\"source\":[0,65,0],\"blocks\":[],\"request\":{\"computer\":0,\"marker\":\"home/assemble\",\"signal\":\"assembled\"}}"));
+        robots.add(added);assertEquals(2,RunnerScenario.parse(root.toString()).v4.robots.size());
+        for(String fault:new String[]{"source","marker","controller","energy","unknown","first"}) {
+            JsonObject bad=new JsonParser().parse(root.toString()).getAsJsonObject();
+            JsonObject a=bad.getAsJsonArray("robots").get(1).getAsJsonObject().getAsJsonObject("assembly");
+            if(fault.equals("source")) a.add("source",new JsonParser().parse("[2,65,0]"));
+            else if(fault.equals("marker")) a.getAsJsonObject("request").addProperty("marker","../outside");
+            else if(fault.equals("controller")) a.getAsJsonObject("request").addProperty("computer",1);
+            else if(fault.equals("energy")) a.getAsJsonArray("blocks").add(new JsonParser().parse("{\"position\":[2,65,0],\"block\":\"minecraft:chest\",\"properties\":{},\"energy\":100}"));
+            else if(fault.equals("unknown")) a.addProperty("ignoreMissing",true);
+            else bad.getAsJsonArray("robots").get(0).getAsJsonObject().add("assembly",a);
+            rejects(bad);
+        }
+    }
     @Test public void strictContainerEditTriggerAndCapacity() throws Exception {
         for(String key:new String[]{"atTick","position","count","slot"}) {
             JsonObject root=fixture();root.getAsJsonArray("containerEdits").get(0).getAsJsonObject().remove(key);rejects(root);

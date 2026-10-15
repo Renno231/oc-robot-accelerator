@@ -7,6 +7,7 @@ import li.cil.oc.common.item.data.RobotData;
 import li.cil.oc.common.template.AssemblerTemplates;
 import li.cil.oc.common.template.AssemblerTemplates$;
 import net.minecraft.inventory.InventoryBasic;
+import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
 
 /** Builds a real OC assembler recipe; native drivers own slot, tier and complexity rules. */
@@ -22,26 +23,35 @@ final class RunnerHardware {
         if(info==null) throw new IllegalArgumentException("unknown OC hardware component: "+key);
         return info.createItemStack(1);
     }
-    private static ItemStack configured(JsonElement component) {
-        if(component.isJsonPrimitive()) return oc(component.getAsString());
+    static ItemStack take(IInventory supply,ItemStack expected) {
+        if(supply==null) return expected;
+        for(int slot=0;slot<supply.getSizeInventory();slot++)
+            if(supply.getStackInSlot(slot).isItemEqual(expected)) return supply.decrStackSize(slot,1);
+        throw new IllegalArgumentException("assembly part absent: "+expected);
+    }
+    private static ItemStack configured(JsonElement component,IInventory supply) {
+        if(component.isJsonPrimitive()) return take(supply,oc(component.getAsString()));
         JsonObject spec=component.getAsJsonObject();
-        ItemStack stack=oc(spec.get("item").getAsString());
+        ItemStack stack=take(supply,oc(spec.get("item").getAsString()));
         li.cil.oc.util.UpgradeExperience$ xp=li.cil.oc.util.UpgradeExperience$.MODULE$;
         double experience=spec.has("level")?xp.xpForLevel(spec.get("level").getAsInt()):spec.get("experience").getAsDouble();
         xp.setExperience(li.cil.oc.api.Driver.driverFor(stack,Robot.class).dataTag(stack),experience);
         return stack;
     }
     static RunnerHardware assemble(JsonObject hardware,ItemStack firmware) {
+        return assemble(hardware,firmware,null);
+    }
+    static RunnerHardware assemble(JsonObject hardware,ItemStack firmware,IInventory supply) {
         InventoryBasic inventory=new InventoryBasic("runner assembly",false,22);
-        ItemStack computerCase=oc("case"+hardware.get("tier").getAsString());
+        ItemStack computerCase=take(supply,oc("case"+hardware.get("tier").getAsString()));
         inventory.setInventorySlotContents(0,computerCase);
         scala.Option<AssemblerTemplates.Template> selected=AssemblerTemplates$.MODULE$.select(computerCase);
         if(selected.isEmpty()) throw new IllegalStateException("native robot assembler template absent");
         AssemblerTemplates.Template template=selected.get();
         List<ItemStack> containers=new ArrayList<>(), suppliedEquipment=new ArrayList<>();
         for(JsonElement entry:hardware.getAsJsonArray("containers")) {
-            JsonObject c=entry.getAsJsonObject(); containers.add(oc(c.get("item").getAsString()));
-            suppliedEquipment.add(c.has("component")?configured(c.get("component")):ItemStack.EMPTY);
+            JsonObject c=entry.getAsJsonObject(); containers.add(take(supply,oc(c.get("item").getAsString())));
+            suppliedEquipment.add(c.has("component")?configured(c.get("component"),supply):ItemStack.EMPTY);
         }
         int[] containerAssignment=place(inventory,template.containerSlots(),1,containers,"containers");
         List<ItemStack> equipment=new ArrayList<>();
@@ -49,14 +59,16 @@ final class RunnerHardware {
             for(int input=0;input<containerAssignment.length;input++)
                 if(containerAssignment[input]==slot) equipment.add(suppliedEquipment.get(input));
         }
-        place(inventory,template.upgradeSlots(),4,parts(hardware,"upgrades","upgrade"),"upgrades");
+        place(inventory,template.upgradeSlots(),4,parts(hardware,"upgrades","upgrade",supply),"upgrades");
         List<ItemStack> components=new ArrayList<>();
-        ItemStack cpu=oc(hardware.get("cpu").getAsString()); requireKind(cpu,"cpu"); components.add(cpu);
-        components.addAll(parts(hardware,"memory","memory"));
-        components.addAll(parts(hardware,"cards","card"));
-        List<ItemStack> storage=parts(hardware,"storage","hdd");
+        ItemStack cpu=take(supply,oc(hardware.get("cpu").getAsString())); requireKind(cpu,"cpu"); components.add(cpu);
+        components.addAll(parts(hardware,"memory","memory",supply));
+        components.addAll(parts(hardware,"cards","card",supply));
+        List<ItemStack> storage=parts(hardware,"storage","hdd",supply);
         ItemStack bootDrive=storage.get(hardware.get("bootDrive").getAsInt());
-        components.addAll(storage); components.add(firmware);
+        ItemStack eeprom=take(supply,firmware);
+        eeprom.setTagCompound(firmware.getTagCompound().copy()); // Player flashes the supplied blank EEPROM.
+        components.addAll(storage); components.add(eeprom);
         place(inventory,template.componentSlots(),13,components,"components");
         scala.Tuple3<Object,net.minecraft.util.text.ITextComponent,net.minecraft.util.text.ITextComponent[]> check=template.validate(inventory);
         if(!Boolean.TRUE.equals(check._1())) throw new IllegalArgumentException("invalid native robot assembly: "+
@@ -73,10 +85,10 @@ final class RunnerHardware {
         if(driveIndex<0) throw new IllegalStateException("boot drive absent from native assembly");
         return new RunnerHardware(data,data.components()[driveIndex],equipment);
     }
-    private static List<ItemStack> parts(JsonObject h,String key,String kind) {
+    private static List<ItemStack> parts(JsonObject h,String key,String kind,IInventory supply) {
         List<ItemStack> items=new ArrayList<>();
         for(JsonElement name:h.getAsJsonArray(key)) {
-            ItemStack stack=configured(name); requireKind(stack,kind); items.add(stack);
+            ItemStack stack=configured(name,supply); requireKind(stack,kind); items.add(stack);
         }
         return items;
     }
