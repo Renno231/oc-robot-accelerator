@@ -38,6 +38,7 @@ class PackageTests(unittest.TestCase):
         return package.build(self.root,self.jar,out or self.out,'0.1.0-rc.1')
 
     def test_deterministic_allowlist_identity_and_exclusions(self):
+        self.assertIn('runner_hardware_profiles.py',package.FILES)
         (self.root/'private-world.jar').write_bytes(b'never include')
         private_names=('robot-programs/example-private/main.lua', 'private/user-program.lua',
                        '.taskreports/raw-source.zip', 'evidence/program.lua')

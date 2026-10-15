@@ -15,8 +15,9 @@ final class RunnerHardware {
     final RobotData data;
     final ItemStack bootDrive;
     private final List<ItemStack> equipment;
-    private RunnerHardware(RobotData data,ItemStack bootDrive,List<ItemStack> equipment) {
-        this.data=data; this.bootDrive=bootDrive; this.equipment=equipment;
+    final JsonObject assemblyReport;
+    private RunnerHardware(RobotData data,ItemStack bootDrive,List<ItemStack> equipment,JsonObject report) {
+        this.data=data; this.bootDrive=bootDrive; this.equipment=equipment;this.assemblyReport=report;
     }
     static ItemStack oc(String key) {
         li.cil.oc.api.detail.ItemInfo info=li.cil.oc.api.Items.get(key);
@@ -73,6 +74,12 @@ final class RunnerHardware {
         scala.Tuple3<Object,net.minecraft.util.text.ITextComponent,net.minecraft.util.text.ITextComponent[]> check=template.validate(inventory);
         if(!Boolean.TRUE.equals(check._1())) throw new IllegalArgumentException("invalid native robot assembly: "+
             (check._2()==null?"CPU, memory or complexity":check._2().getUnformattedText()));
+        JsonObject report=new JsonObject();
+        report.addProperty("nativeValidated",true);
+        report.addProperty("creative",hardware.get("tier").getAsString().equals("creative"));
+        report.addProperty("complexity",li.cil.oc.common.template.RobotTemplate$.MODULE$.complexity(inventory));
+        report.addProperty("maxComplexity",li.cil.oc.common.template.RobotTemplate$.MODULE$.maxComplexity(inventory));
+        report.add("recipe",new JsonParser().parse(hardware.toString()));
         ItemStack robot=template.assemble(inventory)._1();
         if(robot.isEmpty()) throw new IllegalStateException("native robot assembly returned no robot");
         RobotData data=new RobotData(robot);
@@ -83,7 +90,7 @@ final class RunnerHardware {
             index++;
         }
         if(driveIndex<0) throw new IllegalStateException("boot drive absent from native assembly");
-        return new RunnerHardware(data,data.components()[driveIndex],equipment);
+        return new RunnerHardware(data,data.components()[driveIndex],equipment,report);
     }
     private static List<ItemStack> parts(JsonObject h,String key,String kind,IInventory supply) {
         List<ItemStack> items=new ArrayList<>();

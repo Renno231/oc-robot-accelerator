@@ -7,6 +7,16 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RunnerScenarioTest {
+    @Test public void optionalNativeFieldsCanBeAbsent() {
+        JsonObject value=new JsonObject();value.addProperty("min",1);
+        RunnerScenario.fields(value,"min,returnSlots,autosaveWallSeconds");
+    }
+    @Test public void autosavePolicyBoundary() throws Exception {
+        JsonObject value=fixture();value.getAsJsonObject("execution").addProperty("autosaveWallSeconds",45);
+        assertEquals(45,RunnerScenario.parse(value.toString()).autosaveWallSeconds);
+        value.getAsJsonObject("execution").addProperty("autosaveWallSeconds",-1);rejects(value);
+        value.getAsJsonObject("execution").addProperty("autosaveWallSeconds",true);rejects(value);
+    }
     private JsonObject fixture() throws Exception {
         return new JsonParser().parse(new String(Files.readAllBytes(Paths.get("fixtures/runner-normalized.json")), StandardCharsets.UTF_8)).getAsJsonObject();
     }
