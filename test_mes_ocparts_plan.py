@@ -9,16 +9,16 @@ ROOT = generator.ROOT
 
 
 class OcpartsMesPlanTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self, recipes=generator.OCPARTS_RECIPES, stock_items=generator.OCPARTS_STOCK):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         lib = (ROOT / 'craftsystem/usr/lib').as_posix()
         self.lua.execute(f'package.path="{lib}/?.lua;{lib}/?/init.lua;"..package.path')
         self.lua.execute(MOCKS)
-        self.lua.globals().SOURCE_TEXT = generator.OCPARTS_RECIPES
+        self.lua.globals().SOURCE_TEXT = recipes
         self.lua.globals().REQUEST_QTY = generator.OCPARTS_QTY
         self.lua.globals().BATCH = generator.OCPARTS_BATCH
         stock = self.lua.table()
-        for identity, qty in generator.OCPARTS_STOCK.items():
+        for identity, qty in stock_items.items():
             name, damage = generator.split_item(identity)
             stock[identity] = self.lua.table_from({
                 'item': self.lua.table_from({'name': name, 'damage': damage}),
@@ -61,8 +61,9 @@ class OcpartsMesPlanTests(unittest.TestCase):
             roleSlots={input={1},fuel={1},output={1}}}}}
         ''')
 
-    def plan(self):
-        result = self.lua.execute("return MES.plan('opencomputers:component:6',REQUEST_QTY,{config=CFG})")
+    def plan(self, target='opencomputers:component:6'):
+        self.lua.globals().TARGET = target
+        result = self.lua.execute("return MES.plan(TARGET,REQUEST_QTY,{config=CFG})")
         if isinstance(result, tuple):
             plan, error = result
         else:
@@ -95,6 +96,36 @@ class OcpartsMesPlanTests(unittest.TestCase):
         self.assertEqual(1, len(missing))
         self.assertEqual((generator.OCPARTS_QTY // 8, 1), (missing[0]['need'], missing[0]['have']))
 
+    def test_successive_orders_reuse_surplus_and_make_additional_components(self):
+        remaining = dict(generator.OCPARTS_STOCK)
+        for quantity in (5, 3):
+            self.lua.globals().REQUEST_QTY = quantity
+            plan = self.plan()
+            tasks = list(plan['tasks'].values())
+            self.assertEqual(0, len(plan['missing']))
+            if quantity == 3:
+                self.assertEqual({'minecraft:iron_nugget', 'opencomputers:material:4',
+                                  'opencomputers:component:6'}, {t['item'] for t in tasks})
+                self.assertEqual(6, plan['inventory_needed']['opencomputers:material:7'])
+                self.assertEqual(3, plan['inventory_needed']['opencomputers:material:2'])
+                self.assertEqual(3, next(t['qty_produced'] for t in tasks
+                                        if t['item'] == 'opencomputers:component:6'))
+            for task in tasks:
+                node = plan['blueprint']['nodes'][task['node']]
+                for slot, qty in node['input_quantities'].items():
+                    identity = node['recipe'][slot]
+                    remaining[identity] = remaining.get(identity, 0) - qty * task['repetitions']
+                identity = task['item']
+                remaining[identity] = remaining.get(identity, 0) + task['qty_produced']
+            for identity, count in remaining.items():
+                name, damage = generator.split_item(identity)
+                self.lua.globals().STOCK[identity] = self.lua.table_from({
+                    'item': self.lua.table_from({'name': name, 'damage': damage}),
+                    'count': count, 'maxSize': 64})
+        # Furnace fuel credit is execution state, verified by the native case.
+        self.assertEqual({k: v for k, v in generator.OCPARTS_REPEAT_FINAL.items() if k != 'minecraft:coal'},
+                         {k: v for k, v in remaining.items() if v and k != 'minecraft:coal'})
+
     def test_real_blueprint_consumption_and_leftovers(self):
         plan = self.plan()
         needed = dict(plan['inventory_needed'].items())
@@ -121,6 +152,56 @@ class OcpartsMesPlanTests(unittest.TestCase):
             remaining[identity] = remaining.get(identity, 0) + task['qty_produced']
         remaining['minecraft:coal'] -= generator.OCPARTS_QTY // 8
         self.assertEqual(generator.OCPARTS_FINAL, remaining)
+
+    def test_post_assembly_orders_use_remaining_stock_without_double_reserving(self):
+        remaining = {k: v - generator.ROBOT_PARTS.get(k, 0) for k, v in generator.ROBOT_PARTS_FINAL.items()}
+        self.setUp(generator.OCPARTS_RECIPES + (generator.SOURCE / 'robot-parts.tsv').read_text(), remaining)
+        plans = []
+        for item, quantity in [('opencomputers:component:11', 2), ('minecraft:chest', 1), ('minecraft:chest', 1)]:
+            self.lua.globals().REQUEST_QTY = quantity
+            plan = self.plan(item)
+            self.assertEqual(0, len(plan['missing']), item)
+            plans.append(plan)
+            for key, count in plan['inventory_needed'].items():
+                stock = self.lua.globals().STOCK[key]
+                stock['count'] -= count
+                self.assertGreaterEqual(stock['count'], 0, key)
+        for plan in plans:
+            for task in plan['tasks'].values():
+                node = plan['blueprint']['nodes'][task['node']]
+                for slot, qty in node['input_quantities'].items():
+                    key = node['recipe'][slot]
+                    remaining[key] = remaining.get(key, 0) - qty * task['repetitions']
+                key = task['item']
+                remaining[key] = remaining.get(key, 0) + task['qty_produced']
+            for stage in plan['stages'].values():
+                if stage['fuel']: remaining['minecraft:coal'] -= stage['fuel']['need']
+        self.assertEqual(generator.ROBOT_EXPAND_FINAL, {k: v for k, v in remaining.items() if v})
+
+    def test_complete_robot_parts_orders_from_raw_stock(self):
+        self.setUp(generator.OCPARTS_RECIPES + (generator.SOURCE / 'robot-parts.tsv').read_text(),
+                   generator.ROBOT_PARTS_STOCK)
+        remaining = dict(generator.ROBOT_PARTS_STOCK)
+        for identity, quantity in generator.ROBOT_PARTS.items():
+            self.lua.globals().REQUEST_QTY = quantity
+            plan = self.plan(identity)
+            self.assertEqual(0, len(plan['missing']), identity)
+            for task in plan['tasks'].values():
+                node = plan['blueprint']['nodes'][task['node']]
+                for slot, qty in node['input_quantities'].items():
+                    key = node['recipe'][slot]
+                    remaining[key] = remaining.get(key, 0) - qty * task['repetitions']
+                key = task['item']
+                remaining[key] = remaining.get(key, 0) + task['qty_produced']
+            for stage in plan['stages'].values():
+                if stage['fuel']: remaining['minecraft:coal'] -= stage['fuel']['need']
+            for key, count in remaining.items():
+                self.assertGreaterEqual(count, 0, key)
+                name, damage = generator.split_item(key)
+                self.lua.globals().STOCK[key] = self.lua.table_from({
+                    'item': self.lua.table_from({'name': name, 'damage': damage}),
+                    'count': count, 'maxSize': 64})
+        self.assertEqual(generator.ROBOT_PARTS_FINAL, {k: v for k, v in remaining.items() if v})
 
 
 if __name__ == '__main__':

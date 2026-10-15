@@ -1033,8 +1033,8 @@ local function startMachine(run, s)
         phase = 'idle',
         outputDue = math.huge,
       }
-      -- Fuel the MES has put in this machine and the inputs it has burned through
-      -- outlive any one request.
+      -- Share fuel accounting across overlapping requests. Whole unburned fuel
+      -- also survives an idle group.
       local resource = run.world.machines[name]
       resource.fuel = resource.fuel or { credit = 0, admitted = 0 }
       g.fuel = resource.fuel
@@ -1739,6 +1739,11 @@ local function finishRun(run)
   for name, g in pairs(w.groups) do
     g.runs[run.id] = nil
     if not next(g.runs) then
+      if g.mt.fuel and w.machines[name].state == 'idle' then
+        -- Partial burns can expire while idle; retain only whole, unburned fuel.
+        g.fuel.credit = g.fuel.credit - math.ceil((g.fuel.processed or 0) / g.mt.fuel.per)
+        g.fuel.admitted, g.fuel.processed = 0, 0
+      end
       w.groups[name] = nil
     end
   end

@@ -123,6 +123,7 @@ def slots(values, initial=False, limit=64):
 
 
 def normalize(value):
+    from runner_computer import normalize as computer, blocks as placed_blocks, expectation
     from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
                                  _component_name, relative, normalize as old, normalized_bytes)
     if isinstance(value, dict) and 'controller' in value:
@@ -203,13 +204,26 @@ def normalize(value):
         if not robots: raise ValueError('robots must contain 1..4 entries')
         result['robots'] = []
         for i, r in enumerate(robots):
-            _object(r, ['position', 'facing', 'hardware', 'program', 'inventory', 'energy'], ['position', 'hardware', 'program'])
+            _object(r, ['position', 'facing', 'hardware', 'program', 'inventory', 'energy', 'assembly'], ['position', 'hardware', 'program'])
             legacy = deepcopy(surrogate)
-            legacy['robot'] = {k: v for k, v in r.items() if k != 'program'}
+            legacy['robot'] = {k: v for k, v in r.items() if k not in ('program', 'assembly')}
             legacy['program'] = r['program']; legacy['expect'] = {}
             normalized = old(legacy)
             robot = normalized['robot']; robot.pop('tool')
             robot['program'] = dict(normalized['program'], directory=f'robot-program-{i}')
+            if 'assembly' in r:
+                if i == 0 or i != len(robots)-1: raise ValueError('assembly must add the last robot to an existing factory')
+                a = _object(r['assembly'], ['source', 'blocks', 'request'], ['source', 'blocks', 'request'])
+                for block in _array(a['blocks'], 128):
+                    _object(block, ['position', 'block', 'properties'], ['position', 'block'])
+                source = _inside(a['source'], region)
+                if source not in [c['position'] for c in value.get('containers', [])]: raise ValueError('assembly source must be declared')
+                req = _object(a['request'], ['computer', 'marker', 'signal'], ['computer', 'marker', 'signal'])
+                index = _integer(req['computer'], 0, 1)
+                if ('computer' if index == 0 else 'secondComputer') not in value: raise ValueError('assembly controller absent')
+                robot['assembly'] = {'source': source, 'blocks': placed_blocks(a['blocks'], region),
+                                     'request': {'computer': index, 'marker': relative(req['marker']),
+                                                 'signal': _text(req['signal'], PROPERTY, 64)}}
             result['robots'].append(robot)
         if len({tuple(r['position']) for r in result['robots']}) != len(robots): raise ValueError('duplicate robot position')
         result['expect']['robots'] = []
@@ -218,7 +232,6 @@ def normalize(value):
             entry = {'index': _integer(r['index'], 0, len(robots) - 1)}
             if 'inventory' in r: entry['inventory'] = slots(r['inventory'], limit=85)
             result['expect']['robots'].append(entry)
-    from runner_computer import normalize as computer, blocks as placed_blocks, expectation
     if 'computer' in value: result['computer'] = computer(value['computer'], region)
     if 'secondComputer' in value:
         result['secondComputer']=computer(value['secondComputer'],region,'second-program')
@@ -269,10 +282,11 @@ def normalize(value):
                 'request': {'computer': index, 'marker': relative(req['marker']),
                             'signal': _text(req['signal'], PROPERTY, 64)}})
     result['expect']['containers'] = []
+    assembly_positions = [b['position'] for r in result.get('robots', []) if 'assembly' in r for b in r['assembly']['blocks']]
     for c in _array(extended.get('containers', []), 128):
         _object(c, ['position', 'slots'], ['position', 'slots'])
         p = _inside(c['position'], region)
-        if p not in [c['position'] for c in containers]: raise ValueError('expect container must be declared')
+        if p not in [c['position'] for c in containers] + assembly_positions: raise ValueError('expect container must be declared')
         result['expect']['containers'].append({'position': p, 'slots': slots(c['slots'])})
     if drone_mode:
         result['expect'].pop('inventory', None)

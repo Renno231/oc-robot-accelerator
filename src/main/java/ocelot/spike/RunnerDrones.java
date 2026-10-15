@@ -168,6 +168,7 @@ final class RunnerDrones {
             storageRoomChestPlaced=true;
         }
         containerEdits.tick(tick,world,computer,secondComputer);
+        for(RunnerRobot robot:robots) robot.assembleRequested(computer,secondComputer,tick);
         droneActions.tick(new RunnerDroneActions.Environment() {
             private RunnerComputer controller(int index) {return index==0?computer:secondComputer;}
             public boolean requested(int index,String marker) {return controller(index).markerRequested(marker);}
@@ -260,7 +261,7 @@ final class RunnerDrones {
     }
     private static JsonArray exact(Vec3d p) {JsonArray a=new JsonArray();a.add(p.x);a.add(p.y);a.add(p.z);return a;}
     private JsonArray robotStates() throws Exception {
-        JsonArray result=new JsonArray();for(int i=0;i<robots.size();i++) result.add(robots.get(i).snapshot(i));return result;
+        JsonArray result=new JsonArray();for(int i=0;i<robots.size();i++) if(robots.get(i).placed()) result.add(robots.get(i).snapshot(i));return result;
     }
     private JsonArray states() throws Exception {
         JsonArray result=new JsonArray();

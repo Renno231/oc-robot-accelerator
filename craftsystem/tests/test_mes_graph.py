@@ -843,7 +843,7 @@ class MesGraphTests(LuaCase):
             return held('stock','t:bronze'),held('stock','t:steel')
         '''), (1, 1))
 
-    def test_fuel_plan_uses_what_the_mes_delivered(self):
+    def test_fuel_plan_does_not_reuse_partial_burn_after_completed_run(self):
         self.assertEqual(self.lua.execute('''
             GROUPS.kiln.roles.fuel='fuel1';MEMBERS.fuel1={}
             local mt=CFG.machineTypes.furnace;mt.batch=4;mt.fuel={role='fuel',item='t:fuel',per=8}
@@ -855,11 +855,12 @@ class MesGraphTests(LuaCase):
             MACHINE_RECIPES.kiln={{inputs={input={['t:ore']=1}},outputs={['t:metal']=1}}}
             local r=run({task('t:metal',{'t:ore'},'metal',{'ore'},'furnace',12)})
             assert(r.status=='complete',r.reason)
-            -- 2 fuel delivered for 12 inputs covers 4 more; 8 more needs one.
+            -- Both delivered fuel items have started burning. Their remaining
+            -- heat may expire while idle, so either new order needs fresh fuel.
             local four=assert(M.plan('t:metal',4,{config=CFG})).stages[1].fuel.need
             local eight=assert(M.plan('t:metal',8,{config=CFG})).stages[1].fuel.need
             return before,four,eight
-        '''), (1, 0, 1))
+        '''), (1, 1, 1))
 
     def test_load_redistribution_does_not_overspend_planned_fuel(self):
         self.assertEqual(self.lua.execute('''

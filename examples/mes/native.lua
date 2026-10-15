@@ -25,6 +25,7 @@ local rc=assert(loadfile('/bin/rc.lua'))
 assert(rc('mes','enable')~=1);assert(rc('mes','start')~=1)
 local mes,lg,wh=require('mes'),require('logistics'),require('warehouse')
 local case=assert(loadfile('/home/program/case.lua'))()
+local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand'
 local setup=assert(loadfile('/home/program/setup.lua'))()
 local drones=wait(function() local rows=lg.pending();if #rows==6 then return rows end end)
 table.sort(drones,function(a,b) return assert(distances[a])<assert(distances[b]) end)
@@ -74,10 +75,50 @@ else
   local recipes=require('recipes');recipes.install(db)
   assert(recipes.registerProcessingRecipe('minecraft:coal:1','furnace',{recipe={'minecraft:log'},qty=1}))
   assert(recipes.registerProcessingRecipe('minecraft:brick','furnace',{recipe={'minecraft:clay_ball'},qty=1}))
-  if case.name=='ocparts' then assert(loadfile('/home/program/ocparts-imports.lua'))() end
+  if ocparts then assert(loadfile('/home/program/ocparts-imports.lua'))() end
   if run then return run(wait,done) end
+  if case.orders then
+    for _,order in ipairs(case.orders) do
+      local plan=assert(mes.plan(order[1],order[2]))
+      assert(#plan.missing==0,'missing materials for '..order[1])
+      local result=assert(mes.wait(assert(mes.run(plan))))
+      assert(result.status=='complete',result.reason or result.error)
+    end
+    for _,order in ipairs(case.orders) do
+      assert(wh.count(item(order[1]))==order[2],'wrong parts count: '..order[1])
+    end
+    if case.name=='robot-expand' then
+      local map=require('map')
+      map.add('11:65:2',11,65,2,{faces={[3]=true}})
+      map.add('12:65:2',12,65,2,{faces={[2]=true}})
+      map.link('10:65:2','11:65:2');map.link('11:65:2','12:65:2')
+      map.name('assembly','11:65:2',3);map.name('cpu3.buf','12:65:2',2);map.save()
+      for _,order in ipairs(case.orders) do
+        local result=done(assert(wh.fetch(item(order[1]),order[2],'assembly')))
+        assert(result.state=='done' and result.moved==order[2],'parts pickup failed')
+      end
+      -- Host staging performs the player's assembly/installation/placement only.
+      assert(io.open('/home/assemble-robot','w')):close()
+      assert(event.pull('robot_assembled'))
+      local robot=wait(function() local pending=mes.pendingRobots();if #pending==1 then return pending[1] end end)
+      assert(mes.registerRobot(robot.address,'cpu3','cpu3.buf'))
+      wait(function() local cpu=mes.resources().crafters.cpu3;return cpu and cpu.state=='idle' end)
+      local ids={}
+      for i,order in ipairs({{'opencomputers:component:11',2,'cpu3'},
+                            {'minecraft:chest',1,'cpu1'},{'minecraft:chest',1,'cpu2'}}) do
+        local plan=assert(mes.plan(order[1],order[2]));assert(#plan.missing==0)
+        for n,stage in ipairs(plan.stages) do
+          if stage.kind=='robot' then assert(mes.choose(plan,n,order[3])) end
+        end
+        ids[i]=assert(mes.run(plan))
+      end
+      for _,id in ipairs(ids) do local result=assert(mes.wait(id));assert(result.status=='complete',result.reason or result.error) end
+      assert(wh.count(item('opencomputers:component:11'))==2)
+      assert(wh.count(item('minecraft:chest'))==2)
+    end
+  else
   local target=case.name=='torches16' and 'minecraft:torch' or
-    (case.name=='ocparts' and 'opencomputers:component:6' or 'minecraft:brick_block')
+    (ocparts and 'opencomputers:component:6' or 'minecraft:brick_block')
   local plan=assert(mes.plan(target,case.quantity))
   if case.name=='specific-group' then
     for i,stage in ipairs(plan.stages) do if stage.kind=='machine' then assert(mes.choose(plan,i,'furnaceA')) end end
@@ -86,7 +127,7 @@ else
     assert(event.pull(10,'warehouse_items_removed'),'native stock removal missing')
   end
   local ids
-  if case.name=='ocparts' then
+  if ocparts then
     -- The foreground submitter exits; only the rc service owns the running plan.
     local file=assert(io.open('/home/native.plan','w'))
     assert(file:write(require('serialization').serialize(plan,false)));file:close()
@@ -112,7 +153,14 @@ return 0
     end
   end
   if case.name~='shortfall' then assert(wh.count(item(target))==case.quantity,'wrong output count') end
+  if case.name=='ocparts-repeat' then
+    -- Same live service and stock: the first order's surplus feeds the next.
+    local id=assert(mes.run(assert(mes.plan(target,3))))
+    local result=assert(mes.wait(id));assert(result.status=='complete',result.reason or result.error)
+    assert(wh.count(item(target))==8,'second order did not add three components')
+  end
   if case.name=='concurrent' then assert(wh.count(item('minecraft:torch'))==16) end
+  end
 end
 wait(function()
   for _,drone in ipairs(lg.drones()) do if drone.state~='idle' then return end end

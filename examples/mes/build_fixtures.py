@@ -8,7 +8,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'examples/mes'
-ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'concurrent')
+ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent')
 OCPARTS_QTY = 64
 OCPARTS_BATCH = 16
 OCPARTS_STOCK = {'minecraft:iron_ingot': 128, 'minecraft:gold_ingot': 32,
@@ -21,6 +21,40 @@ OCPARTS_FINAL = {'minecraft:iron_ingot': 104, 'minecraft:gold_ingot': 23,
                  'opencomputers:material:6': 0, 'opencomputers:component:6': OCPARTS_QTY,
                  'opencomputers:material:2': 0, 'opencomputers:material:4': 0,
                  'opencomputers:material:7': 0}
+OCPARTS_REPEAT_FINAL = {'minecraft:iron_ingot': 122, 'minecraft:gold_ingot': 30,
+                       'minecraft:redstone': 59, 'minecraft:clay': 15,
+                       'minecraft:dye:2': 15, 'minecraft:paper': 15, 'minecraft:coal': 28,
+                       'minecraft:iron_nugget': 7, 'minecraft:gold_nugget': 7,
+                       'opencomputers:material:6': 6, 'opencomputers:component:6': 8}
+
+# The existing 85-slot robot: 31/32 assembler complexity, three built-in
+# inventory upgrades plus three removable ones. Blank disks still need installation.
+ROBOT_PARTS = {'opencomputers:case3': 1, 'opencomputers:component:2': 1,
+               'opencomputers:component:11': 2, 'opencomputers:storage:4': 1,
+               'opencomputers:card:7': 1, 'opencomputers:upgrade:11': 1,
+               'opencomputers:upgrade:18': 1, 'opencomputers:upgrade:17': 6,
+               'opencomputers:upgrade:10': 1, 'opencomputers:upgrade:9': 2,
+               'opencomputers:storage': 1, 'opencomputers:charger': 1,
+               'minecraft:chest': 1}  # Buffer last: earlier recipes consume chests.
+ROBOT_PARTS_STOCK = dict(OCPARTS_STOCK, **{'minecraft:diamond': 32, 'minecraft:log': 64,
+                                        'minecraft:cobblestone': 128, 'minecraft:ender_pearl': 1})
+ROBOT_PARTS_FINAL = dict(ROBOT_PARTS, **{
+    'minecraft:iron_ingot': 43, 'minecraft:gold_ingot': 12, 'minecraft:redstone': 15,
+    'minecraft:clay': 14, 'minecraft:dye:2': 14, 'minecraft:paper': 9, 'minecraft:coal': 19,
+    'minecraft:diamond': 19, 'minecraft:log': 12, 'minecraft:cobblestone': 35,
+    'minecraft:planks': 3, 'minecraft:iron_nugget': 7, 'minecraft:gold_nugget': 6,
+    'minecraft:iron_bars': 14, 'opencomputers:material:29': 2, 'opencomputers:material:6': 3,
+    'opencomputers:material:9': 1, 'opencomputers:material:2': 2,
+    'opencomputers:material:7': 6, 'opencomputers:material:8': 2})
+ROBOT_EXPAND_FINAL = {
+    'opencomputers:component:11': 2, 'minecraft:chest': 2, 'minecraft:iron_ingot': 40,
+    'minecraft:gold_ingot': 11, 'minecraft:redstone': 6, 'minecraft:clay': 14,
+    'minecraft:dye:2': 14, 'minecraft:paper': 8, 'minecraft:coal': 17,
+    'minecraft:diamond': 16, 'minecraft:log': 7, 'minecraft:cobblestone': 35,
+    'minecraft:planks': 3, 'minecraft:iron_nugget': 4, 'minecraft:gold_nugget': 7,
+    'minecraft:iron_bars': 14, 'opencomputers:material:29': 2, 'opencomputers:material:6': 7,
+    'opencomputers:material:9': 1, 'opencomputers:material:7': 6,
+    'opencomputers:material:8': 2, 'minecraft:stick': 2}
 
 # User database rows plus the native OC recipe imports below.
 OCPARTS_RECIPES = """minecraft:iron_nugget\t{qty=9,[1]='minecraft:iron_ingot'}
@@ -62,6 +96,8 @@ def rack_controller(position, program):
 def build_native(target, case, mode='coordinated', seconds=10):
     if case not in ALL_CASES or mode not in ('coordinated', 'baseline'):
         raise ValueError('unknown MES case or execution mode')
+    parts = case in ('robot-parts', 'robot-expand')
+    ocparts = case in ('ocparts', 'ocparts-repeat') or parts
     target = Path(target)
     target.mkdir(parents=True)  # Never overwrite an existing run's evidence.
     value = copy.deepcopy(json.loads((ROOT / 'examples/warehouse/room/scenario.json').read_text()))
@@ -118,10 +154,10 @@ def build_native(target, case, mode='coordinated', seconds=10):
                      {'position': [2, 66, 3], 'slots': [{'slot': 1, 'item': 'minecraft:coal', 'count': 8}]}]
     if case in ('torches16', 'bricks16', 'specific-group'):
         expected += [{'position': [10, 64, z], 'slots': [{'slot': 1, 'count': 0}, {'slot': 3, 'count': 0}]} for z in (7, 9)]
-    if case in ('ocparts', 'concurrent'):
-        if case == 'ocparts':
+    if ocparts or case == 'concurrent':
+        if ocparts:
             for chest in value['containers']: chest['slots'] = []
-            for identity, qty in OCPARTS_STOCK.items():
+            for identity, qty in (ROBOT_PARTS_STOCK if parts else OCPARTS_STOCK).items():
                 name, damage = split_item(identity)
                 for stack in range((qty + 63) // 64):
                     chest = value['containers'][stack]
@@ -137,6 +173,18 @@ def build_native(target, case, mode='coordinated', seconds=10):
         expected = [{'position': [x, 65, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}
                     for x in (8, 10)] + [{'position': [10, 64, z], 'slots': [{'slot': n, 'count': 0} for n in range(1, 4)]}
                                          for z in (7, 9)]
+    if case == 'robot-expand':
+        value['containers'].append({'position': [11, 65, 3], 'block': 'minecraft:chest', 'slots': []})
+        value['world']['blocks'].append({'min': [12, 64, 0], 'max': [12, 65, 1], 'block': 'minecraft:air'})
+        robot = copy.deepcopy(value['robots'][0]);robot['position'] = [12, 65, 0]
+        robot['program']['directory'] = 'robot-program-3'
+        robot['assembly'] = {'source': [11, 65, 3],
+            'blocks': [{'position': [12, 64, 0], 'block': 'opencomputers:charger', 'properties': {'facing': 'north'}},
+                       {'position': [12, 65, 1], 'block': 'minecraft:chest'}],
+            'request': {'computer': 0, 'marker': 'home/assemble-robot', 'signal': 'robot_assembled'}}
+        value['robots'].append(robot)
+        expected += [{'position': p, 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}
+                     for p in ([11, 65, 3], [12, 65, 1])]
     value['expect'] = {'containers': expected,
         'robots': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 86)]} for i in range(len(value['robots']))],
         'drones': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 5)]} for i in range(6)]}
@@ -154,16 +202,19 @@ def build_native(target, case, mode='coordinated', seconds=10):
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', target / 'loader.lua')
     shutil.copyfile(SOURCE / 'native.lua', program / 'main.lua')
     setup = (SOURCE / 'setup.lua').read_text()
-    if case in ('ocparts', 'concurrent'):
+    if ocparts or case == 'concurrent':
         setup = setup.replace("wh.group('cpu1','crafter',{buffer='cpu1.buf'})",
                               "wh.group('cpu1','crafter',{buffer='cpu1.buf'})\nmap.name('cpu2.buf','10:65:2',2)\nwh.group('cpu2','crafter',{buffer='cpu2.buf'})")
-    if case == 'ocparts': setup = setup.split('-- Dedicated destinations')[0] + '\nreturn {homes=homes}\n'
+    if ocparts: setup = setup.split('-- Dedicated destinations')[0] + '\nreturn {homes=homes}\n'
     (program / 'setup.lua').write_text(setup)
-    (program / 'recipes.tsv').write_text(OCPARTS_RECIPES if case == 'ocparts' else (SOURCE / 'recipes.tsv').read_text())
+    recipes = OCPARTS_RECIPES if ocparts else (SOURCE / 'recipes.tsv').read_text()
+    if parts: recipes += (SOURCE / 'robot-parts.tsv').read_text()
+    (program / 'recipes.tsv').write_text(recipes)
     (program / 'ocparts-imports.lua').write_text(OCPARTS_IMPORTS)
-    (program / 'case.lua').write_text("return {name='%s',robots=%d,batch=%d,quantity=%d,seconds=%s}\n" % (
-        case, len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if case == 'ocparts' else 64,
-        OCPARTS_QTY if case == 'ocparts' else 16, 'nil' if seconds is None else seconds))
+    orders = '{' + ','.join("{'%s',%d}" % order for order in ROBOT_PARTS.items()) + '}' if parts else 'nil'
+    (program / 'case.lua').write_text("return {name='%s',robots=%d,batch=%d,quantity=%d,seconds=%s,orders=%s}\n" % (
+        case, 2 if case == 'robot-expand' else len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
+        5 if case == 'ocparts-repeat' else OCPARTS_QTY if ocparts else 16, 'nil' if seconds is None else seconds, orders))
     for robot in value['robots']:
         disk = target / robot['program']['directory']
         shutil.copyfile(SOURCE / 'robot.lua', disk / 'main.lua')

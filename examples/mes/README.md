@@ -15,9 +15,11 @@ Use `--machine-seconds 1 --cases bricks16` to exercise an underestimated
 processing time through the same runner and acceptance checks.
 
 The default installed native addon is
-`C:/or/drone-install-MES-E2E-finalization`. `--installation <directory>` selects
-another checked installation; it must support host modem capture and 85-slot
-robot inventory assertions. This suite does not modify the installation.
+`C:/or/drone-install-MES-expansion`. `--installation <directory>` selects
+another checked installation built from this checkout, including host modem
+capture, 85-slot inventory assertions and deferred robot assembly. Use the
+[repository setup instructions](../../README.md#quick-start) to build and
+install the addon. This suite does not modify the installation.
 
 ## What runs
 
@@ -39,7 +41,35 @@ power behavior is outside these manufacturing cases.
 | shortfall | remove 16 clay after planning; report failure without crafting blocks; conserve 48 clay/brick |
 | concurrent-fetch | two independent 64-item deliveries from 128 stock |
 | ocparts | 64 memory components; two robots; foreground submitter exits while the rc service continues |
+| ocparts-repeat | Five memory components, then three additional components in the same live factory; reuse surplus intermediates, replenish burned fuel, and conserve stock |
+| robot-parts | Thirteen successive orders manufacture a complete 85-slot crafting robot's parts, charger and buffer chest from raw stock |
+| robot-expand | Manufacture those parts, deliver them for assembly, register the new robot, then make two RAM modules on it while both existing robots make chests |
 | concurrent | simultaneous brick and torch requests; no same-robot overlap |
+
+`robot-parts` orders a T3 case and CPU, two T3.5 RAM sticks, T3 HDD, T2
+wireless card, crafting and inventory-controller upgrades, six inventory
+upgrades, one T3 and two T2 upgrade containers, and a blank EEPROM. Three
+inventory upgrades are built in; the other three occupy the containers.
+This is the existing headless fixture robot: assembler complexity 31/32,
+with 85 usable inventory slots. Charger and buffer chest complete the parts
+order. Assembly, BIOS flashing, disk installation and adding the new robot
+to the factory are separate steps, not proved by this case.
+
+`robot-expand` continues those steps in the same server and world. Drones fetch
+the manufactured parts into a pickup chest. Host staging consumes those exact
+parts through OC's native assembler rules, flashes the EEPROM, installs the
+canonical OpenOS/cproc disk, and places the robot, charger and buffer chest.
+The new robot boots cproc through rc, announces and is paired through
+`mes.registerRobot`. Three simultaneous MES requests exercise all three robots;
+the new one makes two T3.5 RAM modules and each original robot makes one chest.
+Acceptance checks sixteen completed orders, exact remaining material/fuel
+counts, three empty 85-slot robots, and empty pickup/buffer inventories.
+Assembly is player staging, not an automated MES assembly service.
+
+`robot-parts.tsv` adds the required rows from the user's OC-Utilities recipe
+database, with explicit native OC/vanilla ingredient choices. It shares the
+existing OC-parts recipes and public PCB imports. Cutting wire is consumed
+by the native diamond-chip recipe; it is not a reusable tool profile.
 
 The layout's 64 stock inventories are surveyed by an initial warehouse scan.
 These cases stage the map through its public library. They do **not** establish

@@ -70,7 +70,8 @@ final class RunnerDroneScenario {
         }
         Set<String> robotPositions=new HashSet<>();
         for(int index=0;index<robots.size();index++) {
-            JsonObject r=RunnerScenario.object(robots.get(index),"position,facing,hardware,program,inventory,energy");
+            JsonObject r=robots.get(index).getAsJsonObject();
+            RunnerScenario.fields(r,"position,facing,hardware,program,inventory,energy"+(r.has("assembly")?",assembly":""));
             spec.inside(RunnerScenario.position(r.get("position")));
             if(!robotPositions.add(r.get("position").toString())) throw RunnerScenario.bad("duplicate robot position");
             if(!Arrays.asList("north","south","east","west").contains(RunnerScenario.string(r.get("facing")))) throw RunnerScenario.bad("robot facing");
@@ -80,6 +81,20 @@ final class RunnerDroneScenario {
             JsonObject program=RunnerScenario.object(r.get("program"),"directory,entry");
             if(!("robot-program-"+index).equals(RunnerScenario.string(program.get("directory")))) throw RunnerScenario.bad("robot program directory");
             if(!RunnerScenario.path(RunnerScenario.string(program.get("entry"))).endsWith(".lua")) throw RunnerScenario.bad("robot Lua entry");
+            if(r.has("assembly")) {
+                if(index==0 || index!=robots.size()-1) throw RunnerScenario.bad("assembly must add the last robot to an existing factory");
+                JsonObject a=RunnerScenario.object(r.get("assembly"),"source,blocks,request");
+                for(JsonElement b:RunnerScenario.array(a.get("blocks"),128)) RunnerScenario.fields(b.getAsJsonObject(),"position,block,properties");
+                spec.inside(RunnerScenario.position(a.get("source")));
+                boolean source=false;for(JsonElement c:containers) if(c.getAsJsonObject().get("position").equals(a.get("source"))) source=true;
+                if(!source) throw RunnerScenario.bad("assembly source must be a declared container");
+                RunnerComputerScenario.validate(spec,null,RunnerScenario.array(a.get("blocks"),128));
+                JsonObject request=RunnerScenario.object(a.get("request"),"computer,marker,signal");
+                int controller=RunnerScenario.integer(request.get("computer"),0,1);
+                if((controller==0?computer:secondComputer)==null) throw RunnerScenario.bad("assembly controller absent");
+                RunnerScenario.path(RunnerScenario.string(request.get("marker")));
+                if(!RunnerScenario.PROP.matcher(RunnerScenario.string(request.get("signal"))).matches()) throw RunnerScenario.bad("assembly signal");
+            }
         }
         for(JsonElement e:expectedRobots) {
             JsonObject r=e.getAsJsonObject();RunnerScenario.fields(r,"index"+(r.has("inventory")?",inventory":""));
@@ -127,6 +142,9 @@ final class RunnerDroneScenario {
             if(!positions.add(c.get("position").toString())) throw RunnerScenario.bad("duplicate container position");
             RunnerScenario.registry(c.get("block"));initialSlots(c.get("slots"),64);
         }
+        for(JsonElement r:robots) if(r.getAsJsonObject().has("assembly"))
+            for(JsonElement b:r.getAsJsonObject().getAsJsonObject("assembly").getAsJsonArray("blocks"))
+                positions.add(b.getAsJsonObject().get("position").toString());
         for(JsonElement e:expectedContainers) {
             JsonObject c=RunnerScenario.object(e,"position,slots");spec.inside(RunnerScenario.position(c.get("position")));
             if(!positions.contains(c.get("position").toString())) throw RunnerScenario.bad("expect container must be declared");
