@@ -71,7 +71,10 @@ function M.registerRobot(address,name,buffer)
 end
 -- Lab: a robot announces (sync.py's "announce" launcher argument).
 function M.labAnnounce() local a="5d6e7f80-9a0b-4c1d-8e2f-3a4b5c6d7e8f";pendingRobots[#pendingRobots+1]=a;event.push("mes_robot_announce",a) end
-function M.robots() return {{address="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",busy=false},{address="0b9e44d1-1c2d-4e3f-8a9b-7c6d5e4f3a2b",busy=true}} end
+-- As mes_config.robots: every paired robot, busy from its status reply (nil:
+-- no reply). Lab: `norobots` launcher argument, no robot is paired.
+function M.robots() if M.labNoRobots then return {} end
+  return {{address="0b9e44d1-1c2d-4e3f-8a9b-7c6d5e4f3a2b",name="cpu2",busy=true},{address="3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",name="cpu3"},{address="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",name="cpu1",busy=false}} end
 local names={"minecraft:torch","minecraft:brick_block","minecraft:brick","minecraft:coal:1","minecraft:planks","minecraft:stick",
   "minecraft:crafting_table","minecraft:chest","minecraft:furnace","minecraft:iron_ingot","minecraft:glass","minecraft:hopper",
   "minecraft:piston","minecraft:stone","minecraft:stonebrick","minecraft:iron_bars","minecraft:rail","minecraft:ladder",

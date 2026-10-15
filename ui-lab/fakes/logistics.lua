@@ -20,6 +20,10 @@ function M.fake(kind,ep,i,n,delay)
 end
 -- Fleet board: announcing drones, registration, held cargo, lost drones.
 local function drone(name) for _,d in ipairs(D.drones) do if d.name==name then return d end end end
+-- As the real one: every drone state change pushes logistics_drone.
+local function state(d,s) if d.state~=s then d.state=s;event.push("logistics_drone",d.name,s) end end
+-- A paired (or found) drone boots on its charger and reports ready 5 s later.
+local function boot(d) local function ready() if d.state=="booting" and not d.lost then state(d,"idle") end end;event.timer(5,ready) end
 -- As the real one: pending(kind) by announced kind (default drone); sensors
 -- register with no home and are not in drones() (D.sensors keeps their names).
 D.sensorAnnouncing={"6a7b8c9d-cccc-4ddd-8eee-ffffffffff05"};D.sensors={"sensor1","sensor2","sensor3"}
@@ -33,9 +37,9 @@ function M.register(address,name,home)
   if list==D.sensorAnnouncing then table.remove(list,k);D.sensors[#D.sensors+1]=name;return true end
   local node=D.nodes[home];if not node or not node.charger then return nil,"home must be a mapped charger" end
   table.remove(D.announcing,k)
-  D.drones[#D.drones+1]={name=name,address=address,state="booting",node=home,home=home,cargoSlots=8}
+  local d={name=name,address=address,state="booting",node=home,home=home,cargoSlots=8};D.drones[#D.drones+1]=d
   table.sort(D.drones,function(a,b) return a.name<b.name end)
-  return true
+  boot(d);return true
 end
 -- Returns at once; logistics_released follows: "ok" after 3 s (listing in
 -- drones() cargo; empty when M.labReleaseEmpty), or "timeout" after 5 s
@@ -50,19 +54,30 @@ function M.release(name)
     if M.labReleaseTimeout then d.cargo=got;event.push("logistics_released",name,"timeout");return end
     -- As the real one: the listing is what it still holds; empty means idle.
     if M.labReleaseEmpty then got={} end
-    d.cargo=got;if not next(got) then d.held=nil;d.state="idle" end;event.push("logistics_released",name,"ok")
+    d.cargo=got;if not next(got) then d.held=nil;state(d,"idle") end;event.push("logistics_released",name,"ok")
   end
   event.timer(M.labReleaseTimeout and 5 or 3,done);return true
 end
 function M.found(name)
   local d=drone(name);if not d then return nil,"unknown drone" end
   if not d.lost then return nil,"drone is not lost" end
-  d.lost=nil;d.state="booting";d.job=nil;d.trip=nil;d.node=d.home;return true
+  d.lost=nil;d.job=nil;d.trip=nil;d.node=d.home;state(d,"booting");boot(d);return true
 end
+-- Lab: drone name reports ready (sync.py's "boot6" launcher argument).
+function M.labReady(name) state(drone(name),"idle") end
 -- Lab: a drone announces (sync.py's "announce" launcher argument).
 function M.labAnnounce() local a="2f3e4d5c-bbbb-4ccc-8ddd-eeeeeeeeee03";D.announcing[#D.announcing+1]=a;event.push("logistics_announce",a,"drone") end
 function M.labAnnounceSensor() local a="1a2b3c4d-dddd-4eee-8fff-000000000006";D.sensorAnnouncing[#D.sensorAnnouncing+1]=a;event.push("logistics_announce",a,"sensor") end
 -- Not in the real API (proposed): registered sensor names. On only with the
 -- launcher's "sensorlist" argument.
 function M.labSensorList() M.sensors=function() local o=copy(D.sensors);table.sort(o);return o end end
+-- Lab `traffic`: 20 drones, 14 of them added working; every 0.25 s five
+-- logistics job events (20 a second) as busy drones send them, each moving
+-- a drone on. Returns the timer for the launcher to cancel.
+function M.labTraffic()
+  for k=#D.drones+1,20 do D.drones[k]={name="drone"..k,address=string.format("%08x-0000-4e00-8000-%012d",k,k),state="working",node=k..":66:2",home="-2:65:2",energy=4000,cargoSlots=8,job=60,trip=k,cargo={}} end
+  local n=0
+  local function burst() for _=1,5 do n=n+1;local d=D.drones[7+n%14];d.trip=d.trip+1;d.node=(n%9)..":66:"..(n%5);event.push("logistics",60,"running") end end
+  return event.timer(0.25,burst,math.huge)
+end
 return M

@@ -47,9 +47,7 @@ function S:key(char,code)
   if code==ui.keys.c then self:activate(self.rows[self.list.cur]);return true end
 end
 function S:signal(name,what)
-  if name=="mes" and (what=="done" or what=="stage") then
-    self:rebuild();self.list:refresh()
-  end
+  if name=="mes" and (what=="done" or what=="stage") then self.outdated=true end
 end
 function S:activate(r)
   if not r then return end

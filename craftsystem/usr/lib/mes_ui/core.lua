@@ -16,7 +16,7 @@ local gpu,W,H
 local stack,modals,tabHits={},{},{}
 local message,messageColour,messageUntil
 local running,repaintAll,footerDirty,headerDirty,guarded
-local status,statusAt="",-math.huge
+local status,statusStale="",false
 local termFg,termBg
 local ioLast={} -- IO chest name -> {state,reason} last signalled
 local alertText,alertHit -- the alert bar's text; its first column on the tab bar
@@ -290,7 +290,8 @@ end
 
 -- A form: rows of label/value; Enter edits a row. fields[k]={label,show=fn,
 -- edit=fn(refresh)}; the final row runs save(close). w: width, default 64.
-function ui.form(title,fields,saveText,save,w)
+-- on: signal names that re-read the rows (a value shown from pushed state).
+function ui.form(title,fields,saveText,save,w,on)
   local L
   local labelW=0;for _,f in ipairs(fields) do labelW=math.max(labelW,len(f.label)) end
   return ui.modal({title=title,w=math.min(W-4,w or 64),h=math.min(H-2,#fields+5),build=function(m)
@@ -306,6 +307,7 @@ function ui.form(title,fields,saveText,save,w)
       end})
     m.paint=function() modalNote(m,"Enter edits · ⌫ cancels") end
     m.key=function(_,code) if code==keys.back then ui.close(m);return true end end
+    if on then m.signal=function(name) if on[name] then L:refresh() end end end
     L:refresh()
   end})
 end
@@ -330,13 +332,23 @@ function ui.busy(text) ui.notify(text,P.accent);ui.flush() end
 -- A count after a tab's title, e.g. "Fleet (2)"; 0 or nil hides it.
 function ui.badge(name,n) n=(n or 0)>0 and n or nil;if ui.badges[name]~=n then ui.badges[name]=n;headerDirty=true end end
 -- Announcing drones, robots and sensors: read at start and on an announce,
--- never polled; sets the Fleet badge. Robots only once mes has pendingRobots.
+-- never polled; sets the Fleet badge.
 function ui.newHardware()
-  local ok,lg=pcall(require,"logistics");local d=ok and lg.pending() or {};local s=ok and lg.pending("sensor") or {}
-  local okm,m=pcall(require,"mes");local r=okm and m.pendingRobots and ui.try(m.pendingRobots) or {}
+  local lg=require("logistics");local d,s=lg.pending(),lg.pending("sensor")
+  local r=ui.try(require("mes").pendingRobots) or {}
   ui.badge("fleet",#d+#r+#s);return d,r,s
 end
+-- Surveys waiting for approval badge the Setup tab; read at start and on
+-- each survey signal, never polled.
+function ui.readSurveys()
+  local ok,sv=pcall(require,"survey");local n=0
+  if ok then for _,r in ipairs(ui.try(sv.list) or {}) do if r.state=="proposed" then n=n+1 end end end
+  ui.badge("setup",n)
+end
 function ui.setStatus(text) if text~=status then status=text;headerDirty=true end end
+-- The header's drone count is re-read on the next flush: a drone registered
+-- here joins booting without a logistics_drone push of its own.
+function ui.restatus() statusStale=true end
 -- Alerts (mes_alerts): kind and subject in plain words. The alert bar is
 -- the count and the newest active one at the right of the tab bar, read at
 -- start and on each "alert" signal (a "removed" one too: it is only a
@@ -497,10 +509,16 @@ local function key(char,code)
   end
   s.menu:handleEvent(code)
 end
+-- A screen's signal only marks it outdated; settle() brings the screen on top
+-- up to date once per batch of events, before it is drawn. Hidden screens
+-- (under it in the stack) do nothing until they are on top again; behind a
+-- modal the screen waits until the modal closes. s.update, else s.refresh.
+local function settle()
+  local s=current();if s and s.outdated and not modals[1] then s.outdated=nil;(s.update or s.refresh)(s) end
+end
 local function signal(name,...)
   for k=#stack,1,-1 do local s=stack[k];if s.signal then s:signal(name,...) end end
   for _,m in ipairs(modals) do if m.signal then m.signal(name,...) end end
-  if ui.statusSource and computer.uptime()-statusAt>=1 then statusAt=computer.uptime();ui.setStatus(ui.statusSource()) end
 end
 local handle
 -- A failing screen or callback reports in the footer; the UI keeps running.
@@ -519,7 +537,9 @@ function handle(e)
     for _=1,3 do menu:handleEvent((e[5] or 0)>0 and keys.up or keys.down) end
   elseif name=="interrupted" then running=false
   elseif name=="screen_resized" then W,H=gpu.getResolution();repaintAll=true
-  elseif name=="warehouse" or name=="logistics" or name=="mes" or name=="logistics_work" then signal(name,table.unpack(e,2))
+  elseif name=="warehouse" or name=="logistics" or name=="mes" or name=="logistics_work" or name=="logistics_held" then signal(name,table.unpack(e,2))
+  -- A drone's pushed state: the header's drone count, re-read once per batch.
+  elseif name=="logistics_drone" then statusStale=true;signal(name,table.unpack(e,2))
   elseif name=="alert" then ui.readAlerts();signal(name,table.unpack(e,2))
   elseif name=="logistics_announce" or name=="mes_robot_announce" then
     -- The open Fleet screen re-reads them itself.
@@ -543,6 +563,10 @@ function handle(e)
       ui.ok(n>0 and who.." holds "..n.." stack"..(n==1 and "" or "s") or who.." is empty")
     elseif stack[1].tab~="fleet" then ui.fail(who..": cargo report timeout") end
     signal(name,table.unpack(e,2))
+  elseif name=="survey" then
+    -- One line wherever the user is; a proposal waits for the user.
+    local st=e[3];if st=="proposed" then ui.notify("Survey #"..tostring(e[2]).." has a proposal: review it in Setup › Surveys",P.accent) elseif st=="failed" then ui.fail("Survey #"..tostring(e[2]).." failed: see Setup › Surveys") end
+    ui.readSurveys();signal(name,table.unpack(e,2))
   elseif name=="station" then
     -- One line wherever the user is; the station was started async.
     local st=e[3];if st=="ready" then ui.ok("Station "..e[2].." ready") elseif st=="failed" then ui.fail("Station "..e[2].." failed: see Setup") elseif st=="removed" then ui.ok("Station "..e[2].." removed") end
@@ -550,6 +574,7 @@ function handle(e)
   end
 end
 function ui.flush()
+  if statusStale and ui.statusSource then statusStale=false;ui.setStatus(ui.statusSource()) end
   if repaintAll then paint() return end
   if headerDirty then header() end
   local s=current();if s then s.menu:draw() end
@@ -583,7 +608,7 @@ function ui.suspend(fn,...)
   local r=table.pack(xpcall(fn,debug.traceback,...))
   pcall(function() require("term").setCursorBlink(false) end)
   W,H=gpu.getResolution();repaintAll=true
-  if ui.statusSource then statusAt=computer.uptime();status=ui.statusSource() end
+  if ui.statusSource then status=ui.statusSource() end
   ui.readAlerts()
   if not r[1] then
     pcall(function() local f=io.open("/tmp/mes_ui.log","a");f:write(r[2],"\n");f:close() end)
@@ -601,11 +626,10 @@ function ui.run(opts)
   end
   local fg,bg=gpu.getForeground(),gpu.getBackground();termFg,termBg=fg,bg
   ui.statusSource=opts.status or function()
-    local ok,lg=pcall(require,"logistics");if not ok then return "" end
-    local idle,total=0,0;for _,d in ipairs(lg.drones()) do total=total+1;if d.state=="idle" then idle=idle+1 end end
+    local idle,total=0,0;for _,d in ipairs(require("logistics").drones()) do total=total+1;if d.state=="idle" then idle=idle+1 end end
     return total>0 and (total.." drones · "..(total-idle).." busy") or "no drones"
   end
-  ui.setStatus(ui.statusSource());statusAt=computer.uptime();ui.newHardware();ui.readAlerts()
+  ui.setStatus(ui.statusSource());ui.newHardware();ui.readAlerts();ui.readSurveys()
   running=true;ui.switch(opts.tab or "craft")
   if opts.push then ui.push(opts.push,opts.arg) end
   ui.flush()
@@ -619,7 +643,7 @@ function ui.run(opts)
       local more=table.pack(event.pull(0));if not more[1] then break end;guarded(more)
     end
     if message and computer.uptime()>=messageUntil then message=nil;footerDirty=true end
-    if running then ui.flush() end
+    if running then settle();ui.flush() end
   end
   while #stack>0 do local s=table.remove(stack);if s.close then s:close() end;package.loaded[s.mod]=nil end
   for k=#modals,1,-1 do modals[k]=nil end

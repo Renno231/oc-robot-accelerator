@@ -56,6 +56,8 @@ function S:details(i,pane)
 end
 function S:refresh() self.fresh=false;local _,total=lg.jobs(true,1,0);self.total=total or 0;self.list:refresh();self:draw() end
 function S:signal(name)
-  if name=="logistics" or name=="logistics_work" then self.fresh=false;self.list:refresh();ui.title("Jobs",ui.num(self.total).." logistics jobs") end
+  if name=="logistics" or name=="logistics_work" then self.fresh,self.outdated=false,true end
+end
+function S:update() self.list:refresh();ui.title("Jobs",ui.num(self.total).." logistics jobs")
 end
 return S

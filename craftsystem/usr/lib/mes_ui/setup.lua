@@ -1,5 +1,5 @@
 -- Setup: one tree of machine types, machines (with their faces), crafters,
--- stations and storages. Enter on any row edits it; "+" rows start a flow.
+-- stations, surveys and storages. Enter on any row edits it; "+" rows start a flow.
 local ui=require("mes_ui.core");local map=require("map");local wh=require("warehouse")
 local F=require("mes_ui.flows")
 local S={hints="Enter edit · + rows add · D remove · R refresh · H help",filterable=false,
@@ -20,9 +20,9 @@ local function ioSummary(r,w)
   local n,parts=0,{};for _,e in ipairs(items) do n=n+math.ceil(e.count/(wh.stackSize(e.item) or 64));parts[#parts+1]=ui.label(e.item).." "..ui.num(e.count) end
   return ui.fit(n.." stack"..(n==1 and "" or "s")..": "..table.concat(parts,", "),w)
 end
-local phaseText={link="linking",row="testing row",read="reading"}
+local phaseText={link="linking",path="flying its path",row="testing row",read="reading"}
 local stateFg={checking="accent",removing="accent",ready="good",failed="bad"}
-local counts={} -- row sizes by station name: list() has no count
+local counts={} -- row sizes by station name, where list() has no count
 local function wrap(s,w)
   local out,line={},"";for word in tostring(s):gmatch("%S+") do
     if line~="" and #line+1+#word>w then out[#out+1]=line;line=word else line=line=="" and word or line.." "..word end
@@ -77,13 +77,23 @@ function S:rebuild()
   for _,x in ipairs(list) do self.stations[x.name]=x;n[x.state]=(n[x.state] or 0)+1 end
   add("Stations  "..(st and #list..((n.checking or 0)>0 and " · "..n.checking.." checking" or "")..((n.failed or 0)>0 and " · "..n.failed.." failed" or "") or "(stations library not loaded)"),P.accent,"heading")
   for _,x in ipairs(list) do
-    if x.kind=="row" and not counts[x.name] then local r=st.get(x.name);counts[x.name]=r and r.spec.count or "?" end
+    if x.kind~="storage" and not x.count and not counts[x.name] then local r=st.get(x.name);counts[x.name]=r and #r.members or "?" end
     local busy=x.state=="removing" and "moving items" or x.state=="checking" and phaseText[x.phase] or ""
-    add("  "..ui.fit(x.name,16)..ui.fit(x.kind=="row" and "row ×"..counts[x.name] or x.kind,10)..ui.fit(x.state,10)..busy,P[stateFg[x.state] or "fg"],"station",x.name)
+    add("  "..ui.fit(x.name,16)..ui.fit(x.kind=="storage" and x.kind or x.kind.." ×"..(x.count or counts[x.name]),10)..ui.fit(x.state,10)..busy,P[stateFg[x.state] or "fg"],"station",x.name)
     if x.state=="failed" and x.reason then for _,l in ipairs(wrap(x.reason,ui.size()-12)) do add("      "..l,P.dim,"station",x.name) end end
     if x.note then add("      note: "..x.note,P.warn,"station",x.name) end
   end
   if st then add("  + Add storage…",P.good,"newStation","storage");add("  + Add row…",P.good,"newStation","row") end
+  add("",nil,"heading")
+  -- Surveys: the ones waiting for approval or still scanning; the rest on
+  -- the Surveys screen.
+  local ok,sv=pcall(require,"survey");local svs=ok and ui.try(sv.list) or {};local ns={}
+  for _,x in ipairs(svs) do ns[x.state]=(ns[x.state] or 0)+1 end
+  add("Surveys  "..(ok and #svs..((ns.proposed or 0)>0 and " · "..ns.proposed.." waiting for approval" or "")..((ns.surveying or 0)>0 and " · "..ns.surveying.." surveying" or "") or "(survey library not loaded)"),P.accent,"heading")
+  for _,x in ipairs(svs) do if x.state=="proposed" or x.state=="surveying" then
+    add("  #"..ui.fit(x.id,5)..ui.fit(x.state,11)..(x.state=="proposed" and x.groups.." group"..(x.groups==1 and "" or "s").." · "..x.mismatches.." mismatch"..(x.mismatches==1 and "" or "es").." · "..x.ignored.." ignored   Enter reviews" or "a survey drone is scanning"),x.state=="proposed" and P.warn or P.accent,"survey",x.id)
+  end end
+  if ok then add("  All surveys…",nil,"surveys");add("  + Survey an area…",P.good,"newSurvey") end
   add("",nil,"heading")
   local io=iochest();local ios=io and ui.try(io.list) or {};self.io={}
   local nio={active=0,partial=0}
@@ -115,7 +125,7 @@ function S:refresh() self:rebuild();self.list:refresh();self:draw() end
 -- logistics jobs finishing re-read the list.
 function S:signal(name,what)
   local busy=false;for _,x in pairs(self.stations or {}) do if x.state=="checking" or x.state=="removing" then busy=true end end
-  if name=="warehouse" or name=="station" or name=="io" or (name=="mes" and what=="changed") or (name=="logistics" and busy) then self:refresh() end
+  if name=="warehouse" or name=="station" or name=="io" or name=="survey" or (name=="mes" and what=="changed") or (name=="logistics" and busy) then self.outdated=true end
 end
 
 -- Remove; a station holding items asks whether to move or forget them.
@@ -132,9 +142,9 @@ local function details(name)
   local r=st.get(name);if not r then ui.fail(name.." is gone");return end
   local P,sp=ui.P,r.spec;local pair=sp.pair or 1
   local lines={{name.."  "..r.state..(r.phase and r.state~="ready" and " · "..(phaseText[r.phase] or r.phase) or ""),P[stateFg[r.state] or "fg"]},
-    r.kind=="row" and ("row ×"..sp.count.."  face "..sp.face.." · runs "..sp.rowDir.." · spacing "..sp.spacing.." · pair "..pair.." · "..sp.role) or ("storage  face "..sp.face.." · "..sp.role),"",{"Members",P.accent}}
+    r.kind~="storage" and (r.kind.." ×"..#r.members.."  face "..sp.face.." · runs "..sp.rowDir.." · spacing "..sp.spacing.." · pair "..pair.." · "..sp.role) or ("storage  face "..sp.face.." · "..sp.role),"",{"Members",P.accent}}
   for i,m in ipairs(r.members) do
-    local inv=r.members[(i-1)//pair*pair+1].storage;local size=r.sizes[inv]
+    local inv=r.members[m.alias or (i-1)//pair*pair+1].storage;local size=r.sizes[inv]
     lines[#lines+1]="  "..ui.fit(m.storage,16)..ui.fit("("..m.x..","..m.y..","..m.z..")",16).."hover "..ui.fit(m.node.." "..ui.sideGlyph[m.side],18)
       ..(inv~=m.storage and "shares "..inv or size and size.." slots" or "not read")
   end
@@ -241,6 +251,8 @@ function S:activate(r)
   elseif k=="station" then self:station(r.ref)
   elseif k=="io" then self:ioRow(r.ref)
   elseif k=="newStation" then F.addStation(r.ref,function() self:refresh() end)
+  elseif k=="survey" then ui.push("mes_ui.survey_review",{id=r.ref})
+  elseif k=="surveys" or k=="newSurvey" then ui.push("mes_ui.survey",{request=k=="newSurvey"})
   elseif k=="storages" then self.showAll=not self.showAll;self:refresh()
   elseif k=="newStorage" then F.addStorage(nil,function() self:refresh() end)
   elseif k=="storage" then
@@ -256,6 +268,8 @@ function S:activate(r)
     end,{nofilter=true})
   end
 end
+-- Put the cursor on a row (the survey review's jump to a station).
+function S:focus(kind,ref) for i,r in ipairs(self.rows) do if r.kind==kind and r.ref==ref then self.list:set(i);return end end end
 function S:key(char,code)
   if code==ui.keys.d then -- D removes the selected thing
     local r=self.rows[self.list.cur]

@@ -37,6 +37,8 @@ for _,a in ipairs(args) do
   if a=="sensor" then local function fire() require("logistics").labAnnounceSensor() end;labTimers[#labTimers+1]=event.timer(6,fire) end
   if a=="deposit" then local function fire() require("iochest").labDeposit() end;labTimers[#labTimers+1]=event.timer(6,fire) end
   if a=="sensorlist" then require("logistics").labSensorList() end
+  -- `norobots`: mes().robots() is empty (no robot paired).
+  if a=="norobots" then require("mes").labNoRobots=true end
   -- `whchange`: 10 s in, 640 cobblestone arrive (a warehouse "changed").
   if a=="whchange" then local function fire() require("warehouse").labChange() end;labTimers[#labTimers+1]=event.timer(10,fire) end
   -- `stats76` (default), `stats96`, `statsempty`, `statsunread`: the stats scenario.
@@ -46,6 +48,11 @@ for _,a in ipairs(args) do
   -- `learn` (with `timing`): 10 s in, pressA learns a lower bound and
   -- signals ('mes','timing','pressA') as mes_timing.persist does.
   if a=="learn" then local function fire() require("mes").labLearn() end;labTimers[#labTimers+1]=event.timer(10,fire) end
+  -- `surveys`: one survey in each state (fakes/survey.lua); drone1 is the
+  -- survey drone; the surveying one is proposed 45 s in. `nosurveydrone`
+  -- (after it): no drone has a geolyzer.
+  if a=="surveys" then require("survey").labScenario() end
+  if a=="nosurveydrone" then require("survey").labNoDrone() end
   -- `alerts3`: three active alerts of different kinds at start (fakes/mes_alerts.lua).
   if a=="alerts3" then require("mes_alerts").labThree() end
   -- `alertshist`: failed runs (item, old id-only), a stuck machine named
@@ -62,6 +69,11 @@ for _,a in ipairs(args) do
     local function failed() al.labRaise("runFailed","7b3e90c1d24f6a85e0c9b7d13a2f4e68","Run failed: minecraft:stonebrick",nil,nil,nil,"minecraft:stonebrick") end
     for k,f in ipairs({held,found,elsewhere,failed}) do labTimers[#labTimers+1]=event.timer(5+k*10,f) end
   end
+  -- `boot6`: drone6 (booting) has a geolyzer and reports ready 10 s in
+  -- (logistics_drone drone6 idle).
+  if a=="boot6" then require("lab_data").drones[6].survey=true;local function fire() require("logistics").labReady("drone6") end;labTimers[#labTimers+1]=event.timer(10,fire) end
+  -- `traffic`: 20 drones working, 20 logistics events a second (fakes/logistics.lua).
+  if a=="traffic" then labTimers[#labTimers+1]=require("logistics").labTraffic() end
 end
 if args[2]=="mem" then
   -- settled: the most free over the last 10 samples, i.e. after the

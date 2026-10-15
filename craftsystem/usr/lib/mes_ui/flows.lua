@@ -183,13 +183,16 @@ function F.assignRoles(name,kind,def,roles,k)
 end
 
 ---------------------------------------------------------------- crafters
+-- Only a paired robot can be a crafter (mes_config.setCrafter), and robots
+-- pair on Fleet; robots() lists every paired one, so no address is typed.
 function F.newCrafter()
   ui.busy("Looking for crafting robots…")
   local robots=ui.try(mes().robots,3) or {}
+  if #robots==0 then ui.fail("no paired robots: register one on Fleet");return end
   local taken={};for _,c in pairs(mes().crafters()) do taken[c.robot]=true end
-  local rows={{text="Enter an address…",value=false,fg=ui.P.accent,keep=true}}
+  local rows={}
   for _,r in ipairs(robots) do
-    rows[#rows+1]={text=r.address:sub(1,8).."…  "..(r.busy and "busy" or "idle")..(taken[r.address] and "  (already a crafter)" or ""),value=r.address,locked=taken[r.address] or nil}
+    rows[#rows+1]={text=r.address:sub(1,8).."…  "..(r.busy==nil and "no reply" or r.busy and "busy" or "idle")..(taken[r.address] and "  (already a crafter)" or ""),value=r.address,locked=taken[r.address] or nil}
   end
   local function named(addr)
     local n=0;for _ in pairs(mes().crafters()) do n=n+1 end
@@ -199,9 +202,7 @@ function F.newCrafter()
       end)
     end)
   end
-  ui.pick("New crafter · robot ("..#robots.." found)",rows,function(addr)
-    if addr then named(addr) else ui.prompt("New crafter","Robot modem address","",named) end
-  end)
+  ui.pick("New crafter · robot ("..#robots.." found)",rows,named)
 end
 
 ---------------------------------------------------------------- stations
