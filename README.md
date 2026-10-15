@@ -25,7 +25,7 @@ A full **1,013,113-block island** was also built and independently checked with 
 
 Release candidate `0.1.0-rc.2`. Verified on Windows 10 and Debian Linux. There's no published download yet, so build from source for now (see below).
 
-Supported profile: Minecraft **1.12.2**, Forge **14.23.5.2860**, OpenComputers **1.8.9a**, one robot, 1–4 drones, or one OpenOS computer with 0–4 drones per run. Computer/drone scenarios support `baseline` and `coordinated` modes; see [schema 4](SCENARIO.md#drones-and-containers-schema-4), `examples/drones/`, and the [named-node logistics library](drone-logistics/README.md). Other mods, multiple robots/computers, and racks aren't supported.
+Supported profile: Minecraft **1.12.2**, Forge **14.23.5.2860**, OpenComputers **1.8.9a**. Computer/drone scenarios support `baseline` and `coordinated` modes; see [schema 4](SCENARIO.md#drones-and-containers-schema-4), `examples/drones/`, and the [named-node logistics library](https://github.com/Renno231/OC-Utilities/tree/main/drone-logistics). The MES suite exercises a T3 controller, six drones, multiple 85-slot robots and machines.
 
 ## Requirements
 
