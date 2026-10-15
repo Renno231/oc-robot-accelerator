@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,9 +21,12 @@ HERE = Path(__file__).resolve().parent
 FAKE_SERVER = '''import json, pathlib, sys, time
 root = pathlib.Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('-Drobotspike.root=')))
 mode = next(a.split('=',1)[1] for a in sys.argv if a.startswith('-Drobotspike.mode='))
-(root / 'launched').write_text(str(__import__('os').getpid()))
+marker = root / 'launched.tmp'
+marker.write_text(str(__import__('os').getpid()))
+marker.replace(root / 'launched')
 behavior = (root / 'behavior.txt').read_text().strip()
-if behavior == 'wait': time.sleep(60)
+if behavior == 'wait':
+    while True: time.sleep(.02)
 if behavior == 'pause': time.sleep(0.6)
 (root / 'program' / 'main.lua').write_text('changed execution copy')
 result = {'status':'passed','reason':'fake','mode':mode,'ticks':2,'elapsedNanos':1,
@@ -60,11 +64,27 @@ class JobsTests(unittest.TestCase):
         else:
             self.java.write_text('#!%s\n%s' % (sys.executable, FAKE_SERVER)); self.java.chmod(0o755)
         worker = self.base / 'worker.py'
+        self.clock_setup=('now=[0.0]\n'
+                          'worker=runner_jobs.worker\n'
+                          'def clocked_worker(root,jobid,token):\n'
+                          ' now[0]=runner_jobs.scenario.read_json(Path(root)/jobid/"launch.json",runner_jobs.META_LIMIT)["start"]\n'
+                          ' runner_jobs.time.monotonic=lambda:now[0]\n'
+                          ' return worker(root,jobid,token)\n'
+                          'runner_jobs.worker=clocked_worker\n')
+        # Own the fake interpreter directly, just as a real Java executable is
+        # owned. A batch shell introduces an unrelated extra process lifetime.
         worker.write_text('import sys,hashlib\nsys.path.insert(0, '+repr(str(HERE))+')\n'
+                          'from pathlib import Path\n'
                           'import runner_jobs,supervisor,runtime_profile\n'
                           'supervisor.PINNED={k:hashlib.sha256(b"fixture").hexdigest() for k in supervisor.PINNED}\n'
                           'runtime_profile.apply=lambda *a,**k:{}\n'
                           'runtime_profile.verify_proof=lambda *a,**k:{"fakeProcessBoundary":True}\n'
+                          'launch=supervisor.subprocess.Popen\n'
+                          'def fake_java(command,*args,**kwargs):\n'
+                          ' if command[0]=='+repr(str(self.java.resolve()))+':\n'
+                          '  command=[sys.executable,'+repr(str(server))+']+command[1:]\n'
+                          ' return launch(command,*args,**kwargs)\n'
+                          'supervisor.subprocess.Popen=fake_java\n'+self.clock_setup+
                           'sys.exit(runner_jobs.main())\n')
         self.worker = [sys.executable, str(worker)]
         self.workers = []
@@ -81,15 +101,42 @@ class JobsTests(unittest.TestCase):
         real = subprocess.Popen
         def launch(*args, **kw):
             process = real(*args, **kw); self.workers.append(process); return process
-        with mock.patch.object(jobs.subprocess, 'Popen', side_effect=launch):
+        # Explicit phase-clock tests supply their own advancing clock.
+        clock = (contextlib.nullcontext() if isinstance(time.monotonic,mock.Mock) else
+                 mock.patch.object(jobs.time,'monotonic',return_value=time.monotonic()))
+        with clock, mock.patch.object(jobs.subprocess, 'Popen', side_effect=launch):
             return jobs.submit(self.manifest,self.root,str(self.java),self.template,self.jar,
                                worker_command=kwargs.pop('worker_command_override',self.worker), **kwargs)
 
     def finish(self, value, timeout=12):
-        value = jobs.wait(self.root,value['jobId'],timeout)
+        with mock.patch.object(jobs.time,'monotonic',return_value=time.monotonic()):
+            value = jobs.wait(self.root,value['jobId'],timeout)
         for process in self.workers:
-            if process.poll() is None: process.wait(timeout=5)
+            process.wait()
         return value
+
+    def await_server(self, value):
+        launched=self.root/value['jobId']/'runtime/launched'
+        while not launched.exists():
+            self.assertIsNone(self.workers[-1].poll(),jobs.status(self.root,value['jobId']))
+            time.sleep(.02)
+        self.assertEqual(int(launched.read_text()),jobs.status(self.root,value['jobId'])['serverPid'])
+        return launched
+
+    def stop_server(self, pid):
+        # Abrupt-owner fixtures clean the recorded tree after worker loss.
+        if os.name == 'nt':
+            # This fixture owns a direct interpreter with no child processes.
+            # Capture its process object, kill it, then await actual exit/cwd
+            # release; a kill utility returning does not establish that fact.
+            script=("$ErrorActionPreference='Stop'; $p=Get-Process -Id %d; "
+                    "Stop-Process -InputObject $p -Force; $p.WaitForExit()" % pid)
+            subprocess.run(['powershell.exe','-NoLogo','-NoProfile','-NonInteractive',
+                            '-Command',script],capture_output=True,check=True,
+                           creationflags=supervisor.NO_WINDOW)
+        else:
+            try: os.killpg(pid,signal.SIGKILL)
+            except ProcessLookupError: pass
 
     def test_real_worker_immutable_inputs_and_success(self):
         output = io.StringIO()
@@ -177,9 +224,7 @@ class JobsTests(unittest.TestCase):
         self.manifest.write_text(json.dumps(self.spec))
         value=self.submit('wait')
         job=self.root/value['jobId']
-        deadline=time.monotonic()+5
-        while jobs.status(self.root,value['jobId'])['state']=='launching' and time.monotonic()<deadline:
-            time.sleep(.02)
+        self.await_server(value)
         launch=json.loads((job/'launch.json').read_text())
         self.assertEqual(launch['deadline'],launch['start']+90000)
         self.assertEqual(launch['execution']['maxTicks'],1728000)
@@ -317,16 +362,18 @@ class JobsTests(unittest.TestCase):
 
     def test_active_freeze_refreshes_heartbeat(self):
         original=jobs.scenario.freeze
+        now=[time.monotonic()]
         def checked(spec,destination,check):
             path=destination.parent/'job.json'
-            old=json.loads(path.read_text()); old['heartbeat']=time.time()-10
-            jobs._atomic(path,old)
-            time.sleep(.55); check()
-            value=jobs.status(self.root,destination.parent.name)
+            with mock.patch.object(jobs.time,'time',return_value=2000.0):
+                old=json.loads(path.read_text()); old['heartbeat']=1990.0
+                jobs._atomic(path,old)
+                now[0]+=.55; check()
+                value=jobs.status(self.root,destination.parent.name)
             self.assertEqual(value['state'],'launching',value)
-            self.assertLess(time.time()-value['heartbeat'],1)
+            self.assertEqual(value['heartbeat'],2000.0)
             return original(spec,destination,check)
-        with mock.patch.object(jobs.scenario,'freeze',side_effect=checked):
+        with mock.patch.object(jobs.time,'monotonic',side_effect=lambda:now[0]), mock.patch.object(jobs.scenario,'freeze',side_effect=checked):
             value=self.submit()
         self.assertEqual(self.finish(value)['state'],'passed')
 
@@ -361,7 +408,7 @@ class JobsTests(unittest.TestCase):
         def launch(*args,**kw):
             process=real_popen(*args,**kw); self.workers.append(process); return process
         output=io.StringIO(); start=time.monotonic()
-        with mock.patch.object(jobs.subprocess,'Popen',side_effect=launch), mock.patch.object(jobs,'submit',side_effect=submit), mock.patch.object(jobs,'status',side_effect=interrupt_once), contextlib.redirect_stdout(output):
+        with mock.patch.object(jobs.time,'monotonic',return_value=start), mock.patch.object(jobs.subprocess,'Popen',side_effect=launch), mock.patch.object(jobs,'submit',side_effect=submit), mock.patch.object(jobs,'status',side_effect=interrupt_once), contextlib.redirect_stdout(output):
             code=runner.main(['run',str(self.manifest),'--jobs-root',str(self.root),'--java',str(self.java),
                               '--template',str(self.template),'--control-jar',str(self.jar)])
         value=json.loads(output.getvalue())
@@ -387,25 +434,31 @@ class JobsTests(unittest.TestCase):
 
     def test_owner_death_before_java_keeps_admission(self):
         dead=self.base/'dead.py'; dead.write_text('import time\ntime.sleep(60)\n')
-        with self.assertRaises(TimeoutError):
-            self.submit(worker_command_override=[sys.executable,str(dead)],ack_timeout=0.2)
+        now=[1000.0]; launch=subprocess.Popen
+        def expire_after_launch(*args,**kwargs):
+            process=launch(*args,**kwargs)
+            now[0]=1001.0
+            return process
+        # Expire acknowledgement only after the actual detached owner exists,
+        # not while OS scheduling delays scenario preparation.
+        with mock.patch.object(jobs.time,'monotonic',side_effect=lambda:now[0]), mock.patch.object(jobs.subprocess,'Popen',side_effect=expire_after_launch):
+            with self.assertRaisesRegex(TimeoutError,'acknowledgement unavailable'):
+                self.submit(worker_command_override=[sys.executable,str(dead)],ack_timeout=0.2)
+        self.assertEqual(len(self.workers),1)
         self.assertTrue((self.root/'.owner').is_dir())
         with self.assertRaises(ValueError): self.submit()
 
     def test_owner_death_after_java_keeps_admission(self):
-        value=self.submit('wait'); job=self.root/value['jobId']; launched=job/'runtime/launched'
-        deadline=time.monotonic()+5
-        while not launched.exists() and time.monotonic()<deadline: time.sleep(.02)
+        value=self.submit('wait'); launched=self.await_server(value)
         self.assertTrue(launched.exists())
-        # Simulate abrupt owner-only loss, not a normal cancellation/cleanup path.
-        self.workers[-1].kill(); self.workers[-1].wait(timeout=5)
-        self.assertTrue((self.root/'.owner').exists())
-        with self.assertRaises(ValueError): self.submit()
-        pid=int(launched.read_text())
+        pid=jobs.status(self.root,value['jobId'])['serverPid']
         try:
-            if os.name=='nt': subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],capture_output=True,timeout=5,creationflags=supervisor.NO_WINDOW)
-            else: os.kill(pid,9)
-        except ProcessLookupError: pass
+            # Simulate abrupt owner-only loss, not normal cancellation/cleanup.
+            self.workers[-1].kill(); self.workers[-1].wait(timeout=5)
+            self.assertTrue((self.root/'.owner').exists())
+            with self.assertRaises(ValueError): self.submit()
+        finally:
+            self.stop_server(pid)
 
     def test_concurrent_submission_admits_only_one_owner(self):
         (self.template/'behavior.txt').write_text('wait')
@@ -413,7 +466,7 @@ class JobsTests(unittest.TestCase):
             try:
                 return jobs.submit(self.manifest,self.root,str(self.java),self.template,self.jar,worker_command=self.worker)
             except ValueError as exc: return str(exc)
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with mock.patch.object(jobs.time,'monotonic',return_value=time.monotonic()), ThreadPoolExecutor(max_workers=2) as pool:
             results=list(pool.map(lambda _:attempt(),range(2)))
         accepted=[result for result in results if isinstance(result,dict)]
         self.assertEqual(len(accepted),1,results)
@@ -423,12 +476,12 @@ class JobsTests(unittest.TestCase):
     def test_cleanup_failure_retains_owner_and_never_publishes_terminal(self):
         worker=self.base/'failed_cleanup.py'
         worker.write_text('import sys\nsys.path.insert(0,'+repr(str(HERE))+')\n'
-                          'import runner_jobs,supervisor\n'
+                          'from pathlib import Path\nimport runner_jobs,supervisor\n'+self.clock_setup+
                           'supervisor.execute=lambda *a,**k:{"report":{"cleanup_ok":False,"cancelled":False,'
                           '"status":"failed","reason":"test cleanup failure","elapsed_wall_seconds":0}}\n'
                           'sys.exit(runner_jobs.main())\n')
         value=self.submit(worker_command_override=[sys.executable,str(worker)])
-        self.workers[-1].wait(timeout=5)
+        self.workers[-1].wait()
         final=jobs.status(self.root,value['jobId'])
         self.assertNotIn(final['state'],jobs.TERMINAL)
         self.assertTrue((self.root/'.owner').exists())
@@ -445,12 +498,14 @@ class JobsTests(unittest.TestCase):
 
     def test_budget_is_applied_before_program_tree_scan(self):
         original=jobs.scenario._scan
+        now=[1000.0]
         def slow_scan(*args,**kwargs):
-            time.sleep(1.05)
+            now[0]=1001.0
             return original(*args,**kwargs)
         self.spec['execution']['timeoutSeconds']=1; self.manifest.write_text(json.dumps(self.spec))
-        with mock.patch.object(jobs.scenario,'_scan',side_effect=slow_scan):
+        with mock.patch.object(jobs.time,'monotonic',side_effect=lambda:now[0]), mock.patch.object(jobs.scenario,'_scan',side_effect=slow_scan) as scan:
             with self.assertRaises(TimeoutError): self.submit()
+            scan.assert_called_once()
         self.assertFalse((self.root/'.owner').exists())
 
     def test_overlap_rejected_before_admission(self):

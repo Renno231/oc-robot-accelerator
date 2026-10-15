@@ -565,3 +565,12 @@ the physical side through `toLocal`. Attach peripherals through ordinary
 ItemStack placement on the rack's west face and the screen's top face; OC uses
 the clicked face to mount the keyboard. Hardware names are the lowercase
 `Items.get` registry keys, including `graphicscard3` and `componentbus3`.
+
+## Process-boundary test fixtures
+
+Use serializable subtest labels (strings for paths). Exercise deadlines with a
+shared logical clock advanced at the tested phase; await real process launch
+and exit independently of that clock. Fake Java owns the interpreter directly,
+matching the production executable's lifetime. Crash cleanup uses `serverPid`
+and waits for exit before deleting the temporary directory. Publish complete
+PID markers by atomic replacement so existence permits one read.

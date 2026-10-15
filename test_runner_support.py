@@ -169,25 +169,19 @@ class SupportTests(unittest.TestCase):
         from test_runner_jobs import JobsTests
         fixture=JobsTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         value=fixture.submit('wait'); job=fixture.root/value['jobId']
-        launched=job/'runtime/launched'; deadline=time.monotonic()+5
-        while not launched.exists() and time.monotonic()<deadline: time.sleep(.02)
+        launched=fixture.await_server(value)
         self.assertTrue(launched.exists())
-        fixture.workers[-1].kill(); fixture.workers[-1].wait(timeout=5)
-        metadata=json.loads((job/'job.json').read_text()); metadata['heartbeat']=time.time()-60
-        jobs._atomic(job/'job.json',metadata)
+        metadata=json.loads((job/'job.json').read_text())
         try:
+            fixture.workers[-1].kill(); fixture.workers[-1].wait(timeout=5)
+            metadata['heartbeat']=time.time()-60
+            jobs._atomic(job/'job.json',metadata)
             with self.assertRaisesRegex(ValueError,'live'):
                 support.recover(fixture.root,value['jobId'],confirm_stopped=True)
             self.assertTrue((fixture.root/'.owner').exists())
         finally:
             # This test owns the just-launched fake process; production recovery never kills.
-            pid=metadata['serverPid']
-            if os.name=='nt':
-                subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],capture_output=True,timeout=5,creationflags=support.supervisor.NO_WINDOW)
-            else:
-                import signal
-                try: os.killpg(pid,signal.SIGKILL)
-                except ProcessLookupError: pass
+            fixture.stop_server(metadata['serverPid'])
 
     def test_cli_support_and_setup_cleanup_error_remain_json(self):
         import runner

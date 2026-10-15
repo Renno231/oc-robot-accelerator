@@ -90,7 +90,21 @@ class SupervisorTests(unittest.TestCase):
                 '--timeout', str(changes.get('timeout', 4))]
         before = set(self.output.iterdir())
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        # Fixture budgets describe logical work, not time spent waiting for
+        # the OS to schedule a Python child under concurrent native load.
+        now = [1000.0]
+        execute = supervisor.execute
+        def clocked_execute(args, **kwargs):
+            if scenario == 'timeout':
+                on_launch = kwargs.get('on_launch', lambda pid: None)
+                def expire(pid):
+                    on_launch(pid)
+                    now[0] += args.timeout
+                kwargs['on_launch'] = expire
+            return execute(args, **kwargs)
+        with contextlib.redirect_stdout(output), mock.patch.object(
+                supervisor.time, 'monotonic', side_effect=lambda: now[0]), mock.patch.object(
+                supervisor, 'execute', side_effect=clocked_execute):
             code = supervisor.main(args)
         self.last_output = output.getvalue()
         runs = list(self.output.iterdir())
@@ -201,6 +215,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn('timeout', report['reason'])
         self.assertIsNotNone(report['return_code'])
+        self.assertEqual(report['elapsed_wall_seconds'], 1)
 
     def test_oversized_output_fails_without_pipe_deadlock(self):
         code, runs, report = self.invoke('output')
