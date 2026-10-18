@@ -7,6 +7,48 @@ import test_mes_ocparts_plan
 
 
 class MesRestartTests(unittest.TestCase):
+    def test_mes_log_rotation_handles_outlive_the_foreground_command(self):
+        lua=self.start()
+        lua.execute('''
+          local root={data={handles={}}};local child={data={handles={}}};local current=child
+          local process={}
+          function process.info(level)
+            if not level or level<=1 then return current end
+            if level==2 and current==child then return root end
+          end
+          function process.removeHandle(h,p)
+            local handles=(p or current).data.handles
+            for i,v in ipairs(handles) do if v==h then return table.remove(handles,i) end end
+          end
+          function process.addHandle(h,p)
+            local close=h.close;table.insert((p or current).data.handles,h)
+            h.close=function(self,...)
+              process.removeHandle(self,p);self.close=close;return close(self,...)
+            end
+            return h
+          end
+          package.loaded.process=process
+          local open=io.open;local closed={}
+          io.open=function(...)
+            local h=open(...);if not h then return end
+            local write,flush,close=h.write,h.flush,h.close
+            h.write=function(self,...) assert(not closed[self],'closed command handle');return write(self,...) end
+            h.flush=function(self,...) assert(not closed[self],'closed command handle');return flush(self,...) end
+            h.close=function(self,...) local result=close(self,...);closed[self]=true;return result end
+            return process.addHandle(h)
+          end
+          local unrelated=assert(io.open('/home/command-output','w'))
+          local persist=require('mes_persist');local p=persist.open()
+          for n=1,60 do persist.plan(p,{id=1,plan={marker=n},opts={}}) end
+          assert(renames>0,'fixture did not exercise log compaction')
+          assert(#child.data.handles==1 and child.data.handles[1]==unrelated,'MES retained command-owned files')
+          while #child.data.handles>0 do child.data.handles[#child.data.handles]:close() end
+          current=root
+          persist.plan(p,{id=1,plan={marker=61},opts={}});p.store:flush()
+          assert(p.store:load().plan_1.plan.marker==61 and closed[unrelated])
+          p.store:close();assert(#root.data.handles==0)
+        ''')
+
     def start(self, mode='log'):
         lua = test_logistics_restart.LogisticsRestartTests().start(mode)
         lib = (Path(__file__).parent / 'craftsystem/usr/lib').as_posix()
@@ -16,6 +58,10 @@ class MesRestartTests(unittest.TestCase):
         for name in ('mes_alerts','mes_alert_sources'):
             lua.globals()[name.upper()] = Path('craftsystem/usr/lib/'+name+'.lua').read_text()
         lua.execute(r'''
+          package.preload.process=function()
+            local root={data={handles={}}}
+            return {info=function(level) if not level or level<=1 then return root end end}
+          end
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
           package.preload.stations=function() return {} end
           package.preload.survey=function() return assert(load(SURVEY))() end
@@ -205,6 +251,28 @@ class MesRestartTests(unittest.TestCase):
           local r=M.status(id);assert(r.status=='complete',r.reason)
           return held('source','mod:metal'),held('source','mod:raw')
         '''), (1, 99))
+
+    def test_waiting_for_stock_survives_restart_and_warehouse_read_wakes_order(self):
+        for machine in (False, True):
+            for mode in ('log', 'files'):
+                with self.subTest(machine=machine, mode=mode):
+                    lua = self.start(mode)
+                    lua.globals().MACHINE = machine
+                    lua.execute('''
+                      INV.source['mod:raw']=0
+                      wh.observed('stock',{});drain();require('mes_service').pump()
+                      local id=submit(MACHINE)
+                      untilFact(function() return (M.status(id).stages[1].detail or ''):find('Waiting for mod:raw',1,true) end)
+                      assert(M.status(id).status=='running')
+                      reboot()
+                      assert(M.status(id).status=='running')
+                      add('source','mod:raw',1)
+                      assert(wh.scan('stock'))
+                      untilFact(function() return M.status(id).status~='running' end)
+                      assert(M.status(id).status=='complete',M.status(id).reason)
+                      assert(held('source',MACHINE and 'mod:metal' or 'mod:crafted')==1)
+                      assert(ROBOT_CALLS==(MACHINE and 0 or 1))
+                    ''')
 
     def compare_restart(self, machine, predicate, setup='', two=False):
         for mode in ('log', 'files'):

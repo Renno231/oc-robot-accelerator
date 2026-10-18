@@ -22,10 +22,28 @@ class ReservationTests(unittest.TestCase):
             storage=function(s) return storages[s] end,
             storages=function() return storages end,place=function(s) return storages[s] and storages[s].node or s end,
             distances=function() return setmetatable({},{__index=function() return 1 end}) end} end
+          local mutationHook,readHook
           package.preload.logistics=function() return {
+            onMutation=function(_,fn) mutationHook=fn end,
+            onRead=function(_,fn) readHook=fn end,
             plan=function() return {{x=0,y=0,z=0},{x=1,y=0,z=0}} end,
             status=function(id) return jobs[id] end,
-            job=function(steps) local id=#jobs+1;jobs[id]={state='queued',submitted=steps};return id end} end
+            job=function(steps,opts)
+              local id=#jobs+1;local mutations,reads={},{}
+              for _,step in ipairs(steps) do
+                local value=step.take or step.put or step.read
+                if value then
+                  local e=type(value)=='string' and storages[value]
+                    or value.storage and storages[value.storage] or value
+                  local ep={node=e.node,side=e.side,slots=type(value)=='table' and value.slots or nil}
+                  local list=step.read and reads or mutations;list[#list+1]=ep
+                end
+              end
+              jobs[id]={state='queued',submitted=steps,opts=opts}
+              if #mutations>0 then mutationHook(id,mutations,steps) end
+              if #reads>0 then readHook(id,reads) end
+              return id
+            end} end
           io.open=function(path,mode)
             if mode=='r' then
               if path=='/etc/warehouse.cfg' then return {read=function() return require('serialization').serialize(cfg) end,close=function() end} end
@@ -39,7 +57,7 @@ class ReservationTests(unittest.TestCase):
         self.lua.globals().SOURCE = Path('drone-logistics/lib/warehouse.lua').read_text()
         self.lua.execute('''wh=assert(load(SOURCE))();item={name='minecraft:clay_ball',damage=0}
           function scan(storage,n,size)
-            local id=#jobs+1;jobs[id]={state='done',steps={{read=storages[storage],size=size or 27,
+            local id=require('logistics').job({{read=storage}});jobs[id]={state='done',steps={{read=storages[storage],size=size or 27,
               listing=n>0 and {{name=item.name,damage=0,size=n,maxSize=64}} or {}}}}
             listener('logistics',id)
           end

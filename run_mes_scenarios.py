@@ -42,10 +42,20 @@ def verify_case(case, runtime):
     paths = list(runtime.glob('world/opencomputers/*/etc/mes.state'))
     assert len(paths) == 1, 'missing/ambiguous MES receipt store'
     runs = [v for k, v in read_store(paths[0]).items() if k.startswith('done_')]
-    expected_runs = len(ROBOT_PARTS) if case == 'robot-parts' else 2 if case in ('concurrent', 'ocparts-repeat') else 1
+    if case == 'order-control':
+        assert len(runs) == 2, 'missing order receipt'
+        first, stopped = sorted(runs, key=lambda r: r['id'])
+        assert first['status'] == 'complete' and first['item'] == 'minecraft:planks' and first['qty'] == 16
+        assert stopped['status'] == 'failed' and stopped['reason'] == 'Stopped by player'
+        assert stopped['item'] == 'minecraft:stick' and stopped['qty'] == 4
+        assert first['started'] <= stopped['started'] < first['finished'], 'orders were not concurrent'
+        assert all(not s.get('craftStarted') and not s.get('physicalJobs') for s in rows(stopped['stages'])), 'stopped order dispatched work'
+        assert totals == {'minecraft:planks': 16, 'minecraft:log': 4, 'minecraft:clay_ball': 64, 'minecraft:coal': 16}, totals
+        return {'physicalCounts': totals, 'runs': runs}
+    expected_runs = len(ROBOT_PARTS) if case == 'robot-parts' else 2 if case in ('concurrent', 'ocparts-repeat', 'stockkeeper') else 1
     if case == 'robot-expand': expected_runs = len(ROBOT_PARTS) + 3
     assert len(runs) == expected_runs, 'missing completed run receipt'
-    assert all(r['status'] == ('failed' if case == 'shortfall' else 'complete') for r in runs)
+    assert all(r['status'] == 'complete' for r in runs)
     stages = [s for r in runs for s in rows(r['stages'])]
     intervals = [dict(crafter=s['crafter'], start=s['craftStarted'], finish=s['craftFinished'])
                  for s in stages if s.get('craftStarted') is not None]
@@ -53,9 +63,10 @@ def verify_case(case, runtime):
         for b in intervals[i+1:]:
             assert a['crafter'] != b['crafter'] or max(a['start'], b['start']) >= min(a['finish'], b['finish']), 'same robot overlap'
     if case == 'shortfall':
-        assert not intervals and not totals.get('minecraft:brick_block', 0)
-        assert totals.get('minecraft:clay_ball', 0) + totals.get('minecraft:brick', 0) == 48
-        assert any(s['kind'] == 'machine' and s['state'] == 'failed' for s in stages)
+        assert intervals and totals.get('minecraft:brick_block') == 16
+        assert not totals.get('minecraft:clay_ball', 0) and not totals.get('minecraft:brick', 0)
+        machine = next(s for s in stages if s['kind'] == 'machine')
+        assert sum(l['items'] for l in rows(machine['loadLedger'])) == 64, 'completed input repeated'
     elif case in ('robot-parts', 'robot-expand'):
         ordered = sorted(runs, key=lambda r: r['id'])
         parts = ordered[:len(ROBOT_PARTS)]
@@ -97,10 +108,25 @@ def verify_case(case, runtime):
     else:
         expected = ({'minecraft:torch': 16, 'minecraft:log': 3, 'minecraft:planks': 2, 'minecraft:coal': 14}
                     if case == 'torches16' else {'minecraft:brick_block': 16})
-        if case == 'concurrent':
+        if case in ('concurrent', 'merged-kit', 'selected-kit'):
             expected['minecraft:torch'] = 16
         for id, count in expected.items():
             assert totals.get(id, 0) == count, (id, totals.get(id, 0), count)
+        if case in ('merged-kit', 'selected-kit'):
+            assert {s['kind'] for s in stages} == {'robot', 'machine'}, 'missing kit execution stages'
+            assert not totals.get('minecraft:clay_ball', 0) and not totals.get('minecraft:brick', 0), 'unfinished brick batch'
+        if case == 'selected-kit':
+            for stage in stages:
+                outputs = {o['item'] for o in rows(stage['outputs'])}
+                if stage['kind'] == 'robot':
+                    assert stage['crafter'] == ('cpu2' if 'minecraft:brick_block' in outputs else 'cpu1'), 'selected crafter lost'
+                else:
+                    assert rows(stage['groups']) == (['furnaceA'] if 'minecraft:brick' in outputs else ['furnaceB']), 'selected machine lost'
+        if case == 'stockkeeper':
+            first, second = sorted(runs, key=lambda r: r['id'])
+            assert first['qty'] == second['qty'] == 8, 'stock rule changed the saved batch size'
+            assert first['finished'] <= second['started'], 'overlapping stock checks'
+            assert totals == {'minecraft:brick_block': 16, 'minecraft:coal': 8}, totals
         if case == 'specific-group':
             assert all(rows(s['groups']) == ['furnaceA'] for s in stages if s['kind'] == 'machine')
         if case in ('bricks16', 'specific-group'):

@@ -1,12 +1,36 @@
 """Current fixture setup and real recipe/archive contracts, not native evidence."""
 import unittest
+import json
+from pathlib import Path
+import re
+import tempfile
 
 from lupa.lua53 import LuaRuntime
-from examples.mes.build_fixtures import ROOT, SOURCE
+from examples.mes.build_fixtures import ROOT, SOURCE, build_native
 from craftsystem.tests.test_database import MOCKS
 
 
 class MesFixtureTests(unittest.TestCase):
+    def test_robot_disks_contain_execution_dependencies_not_server_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'case'
+            scenario = json.loads(build_native(target, 'concurrent').read_text())
+            for robot in scenario['robots']:
+                disk = target / robot['program']['directory']
+                self.assertEqual(['cproc.lua'], [p.name for p in (disk / 'usr/bin').iterdir()])
+                for unwanted in ('mes.lua', 'craft_plans.lua', 'dataio.lua', 'csv.lua', 'oredict'):
+                    self.assertFalse((disk / 'usr/lib' / unwanted).exists(), unwanted)
+                for path in (disk / 'usr').rglob('*.lua'):
+                    canonical = ROOT / 'craftsystem/usr' / path.relative_to(disk / 'usr')
+                    self.assertEqual(canonical.read_bytes(), path.read_bytes())
+                    for name in re.findall(r'require\s*\(?\s*[\'"]([^\'"]+)[\'"]', path.read_text()):
+                        dependency = Path('lib') / (name.replace('.', '/') + '.lua')
+                        if (ROOT / 'craftsystem/usr' / dependency).is_file():
+                            self.assertTrue((disk / 'usr' / dependency).is_file(), f'{path.name}: {name}')
+                self.assertTrue((disk / 'etc/rc.d/cproc.lua').is_file())
+                self.assertIn('"cproc"', (disk / 'etc/rc.cfg').read_text())
+            self.assertTrue((target / 'program/usr/lib/recipes/build.lua').is_file())
+
     def test_destination_filters_merge_shared_stock_targets(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute('''

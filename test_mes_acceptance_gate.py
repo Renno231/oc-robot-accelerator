@@ -148,9 +148,8 @@ class MesAcceptanceGateTests(unittest.TestCase):
                     for source in (ROOT/'drone-logistics/lib').glob('*.lua'):
                         self.assertEqual(source.read_bytes(), (program/'usr/lib'/source.name).read_bytes())
                     for source in (ROOT/'craftsystem/usr').rglob('*'):
-                        if source.is_file() and 'mes_ui' not in source.parts and source.name!='mesui.lua':
-                            for disk in [program]+[path.parent/r['program']['directory'] for r in value['robots']]:
-                                self.assertEqual(source.read_bytes(), (disk/'usr'/source.relative_to(ROOT/'craftsystem/usr')).read_bytes())
+                        if source.is_file() and 'mes_ui' not in source.parts and source.name != 'mesui.lua':
+                            self.assertEqual(source.read_bytes(), (program/'usr'/source.relative_to(ROOT/'craftsystem/usr')).read_bytes())
                     main = (program/'main.lua').read_text()
                     self.assertIn('mes.registerRobot(', main)
                     self.assertIn("rc('mes','start')", main)
@@ -167,6 +166,10 @@ class MesAcceptanceGateTests(unittest.TestCase):
                         self.assertEqual(3, len(robot['hardware']['containers']))
                         self.assertEqual(3, robot['hardware']['upgrades'].count('inventoryupgrade'))
                         disk = path.parent / robot['program']['directory']
+                        for installed in (disk/'usr').rglob('*'):
+                            if installed.is_file():
+                                source = ROOT/'craftsystem/usr'/installed.relative_to(disk/'usr')
+                                self.assertEqual(source.read_bytes(), installed.read_bytes())
                         self.assertEqual((ROOT/'craftsystem/usr/bin/cproc.lua').read_bytes(),
                                          (disk/'usr/bin/cproc.lua').read_bytes())
                         self.assertIn("rc('cproc','start')", (disk/'main.lua').read_text())

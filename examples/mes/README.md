@@ -38,7 +38,8 @@ power behavior is outside these manufacturing cases.
 | torches16 | 16 torches; same-recipe furnace top-ups precede collection |
 | bricks16 | 64 clay becomes 16 brick blocks |
 | specific-group | furnaceA selected; furnaceB unused |
-| shortfall | remove 16 clay after planning; report failure without crafting blocks; conserve 48 clay/brick |
+| order-control | real `mes runs/status/stop` commands stop a queued stick order while the selected robot finishes another order; 16 planks and both persisted outcomes |
+| shortfall | remove 16 clay after planning; keep the same order waiting after collecting 48 bricks; replenish through a normal logistics transfer; finish 16 brick blocks without repeating completed work |
 | concurrent-fetch | two independent 64-item deliveries from 128 stock |
 | ocparts | 64 memory components; two robots; foreground submitter exits while the rc service continues |
 | ocparts-repeat | Five memory components, then three additional components in the same live factory; reuse surplus intermediates, replenish burned fuel, and conserve stock |
