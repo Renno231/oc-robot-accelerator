@@ -4,13 +4,19 @@ local event=require("event");local computer=require("computer")
 local wh=require("warehouse")
 local M={}
 local function copy(t) if type(t)~="table" then return t end;local o={};for k,v in pairs(t) do o[k]=copy(v) end;return o end
-local types={furnace={roles={"input","fuel","output"},inputs={"input"},output="output",fuel={role="fuel",item="minecraft:coal",per=8},batch=64,seconds=10}}
+local types={furnace={roles={"input","fuel","output"},inputs={"input"},output="output",fuel={role="fuel",item="minecraft:coal",per=8},batch=64,seconds=10,blocking=true,roleSlots={input={1},fuel={2},output={3}}}}
 local crafters={cpu1={robot="7f3a91c2-55e1-4b0e-9d3c-2a6f1e0b8c44",buffer="cpu1.buf"},cpu2={robot="0b9e44d1-1c2d-4e3f-8a9b-7c6d5e4f3a2b",buffer="cpu2.buf"}}
 local runs={}
 local function changed() event.push("mes","changed") end
 function M.types() return copy(types) end
 function M.crafters() return copy(crafters) end
-function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");assert(math.type(def.batch)=="integer" and def.batch>0,"Batch must be a positive integer");types[name]=copy(def);changed();return true end
+function M.setType(name,def) assert(type(name)=="string" and name~="","type name required");assert(def.output and def.inputs and #def.inputs>0,"inputs and output required");assert(math.type(def.batch)=="integer" and def.batch>0,"Batch must be a positive integer")
+  -- As mes_config.definition: blocking boolean; a dense list of distinct slots for every role, none other.
+  assert(type(def.blocking)=="boolean","Blocking is required and must be boolean");assert(type(def.roleSlots)=="table","Role slots are required")
+  local roles={};for _,r in ipairs(def.roles) do roles[r]=true;local sl=def.roleSlots[r];assert(type(sl)=="table" and #sl>0,"Non-empty slot list required for role: "..r)
+    local seen={};for _,n in ipairs(sl) do assert(math.type(n)=="integer" and n>0 and not seen[n],"Invalid slot list for role: "..r);seen[n]=true end end
+  for r in pairs(def.roleSlots) do assert(roles[r],"Unknown role slots: "..tostring(r)) end
+  types[name]=copy(def);changed();return true end
 -- Learned bounds per machine as mes_timing keeps them (seconds per input
 -- item); a machine not listed has none (lo=0, hi=inf, 0 samples).
 local inf=math.huge
@@ -42,8 +48,8 @@ end
 -- without seconds and no learned machine).
 function M.labTiming()
   local D=require("lab_data")
-  types.macerator={roles={"input","output"},inputs={"input"},output="output",batch=64}
-  types.press={roles={"input","output"},inputs={"input"},output="output",batch=16}
+  types.macerator={roles={"input","output"},inputs={"input"},output="output",batch=64,blocking=true,roleSlots={input={1},output={2}}}
+  types.press={roles={"input","output"},inputs={"input"},output="output",batch=16,blocking=false,roleSlots={input={1},output={2}}}
   for i,n in ipairs({"furnaceC","maceratorA","maceratorB","pressA"}) do
     local roles={};for j,role in ipairs(n=="furnaceC" and types.furnace.roles or types.macerator.roles) do
       local node=(16+i)..":"..(63+j)..":4";local s=n.."."..role

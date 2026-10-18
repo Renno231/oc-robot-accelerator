@@ -8,7 +8,10 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'examples/mes'
-ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent')
+ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control')
+ROBOT_LIBRARIES = ('api', 'tnet', 'hosts', 'pubsub', 'craft_executor', 'craft_receipts',
+                   'craft_plan', 'craft_resources', 'craft_tool_budget', 'craft_tool_rules',
+                   'item_identity', 'robinv')
 OCPARTS_QTY = 64
 OCPARTS_BATCH = 16
 OCPARTS_STOCK = {'minecraft:iron_ingot': 128, 'minecraft:gold_ingot': 32,
@@ -96,12 +99,16 @@ def rack_controller(position, program):
 def build_native(target, case, mode='coordinated', seconds=10):
     if case not in ALL_CASES or mode not in ('coordinated', 'baseline'):
         raise ValueError('unknown MES case or execution mode')
+    scenario_case = case
+    if case in ('merged-kit', 'selected-kit'): case = 'concurrent'  # Same build and stock, ordered through a saved kit.
+    if case == 'order-control': case = 'concurrent'  # Same build; stop one order while another owns its selected robot.
+    if case == 'stockkeeper': case = 'bricks16'  # Same build, replenished in two saved batches.
     parts = case in ('robot-parts', 'robot-expand')
     ocparts = case in ('ocparts', 'ocparts-repeat') or parts
     target = Path(target)
     target.mkdir(parents=True)  # Never overwrite an existing run's evidence.
     value = copy.deepcopy(json.loads((ROOT / 'examples/warehouse/room/scenario.json').read_text()))
-    value['id'] = 'mes-' + case
+    value['id'] = 'mes-' + scenario_case
     controller = value.pop('computer')
     value['controller'] = rack_controller(controller['position'], controller['program'])
     x, y, z = controller['position']
@@ -142,6 +149,10 @@ def build_native(target, case, mode='coordinated', seconds=10):
     value['containerEdits'] = ([{'position': [0, 65, 1], 'slot': 1, 'count': 16, 'expectedCount': 64,
                                 'request': {'computer': 0, 'marker': 'home/warehouse-remove-items',
                                             'signal': 'warehouse_items_removed'}}] if case == 'shortfall' else [])
+    if case == 'shortfall':
+        # Outside warehouse membership until a normal transfer replenishes stock.
+        reserve = next(c for c in value['containers'] if c['position'] == [7, 68, 3])
+        reserve['slots'] = [{'slot': 1, 'item': 'minecraft:clay_ball', 'count': 16}]
     expected = [{'position': [8, 65, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}]
     if case == 'torches16':
         expected += [{'position': [0, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:log', 'count': 3}]},
@@ -190,8 +201,15 @@ def build_native(target, case, mode='coordinated', seconds=10):
         'drones': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 5)]} for i in range(6)]}
 
     program = target / 'program'
+    shutil.copytree(ROOT / 'craftsystem/usr', program / 'usr',
+                    ignore=shutil.ignore_patterns('mes_ui', 'mesui.lua'))
     for disk in [program] + [target / r['program']['directory'] for r in value['robots']]:
-        shutil.copytree(ROOT / 'craftsystem/usr', disk / 'usr', ignore=shutil.ignore_patterns('mes_ui', 'mesui.lua'))
+        if disk != program:
+            (disk / 'usr/bin').mkdir(parents=True)
+            (disk / 'usr/lib').mkdir()
+            shutil.copyfile(ROOT / 'craftsystem/usr/bin/cproc.lua', disk / 'usr/bin/cproc.lua')
+            for name in ROBOT_LIBRARIES:
+                shutil.copyfile(ROOT / 'craftsystem/usr/lib' / (name + '.lua'), disk / 'usr/lib' / (name + '.lua'))
         shutil.copyfile(SOURCE / 'install.lua', disk / 'install.lua')
     shutil.copytree(ROOT / 'craftsystem/etc', program / 'etc')
     for folder in ('lib', 'bin'):
@@ -213,7 +231,7 @@ def build_native(target, case, mode='coordinated', seconds=10):
     (program / 'ocparts-imports.lua').write_text(OCPARTS_IMPORTS)
     orders = '{' + ','.join("{'%s',%d}" % order for order in ROBOT_PARTS.items()) + '}' if parts else 'nil'
     (program / 'case.lua').write_text("return {name='%s',robots=%d,batch=%d,quantity=%d,seconds=%s,orders=%s}\n" % (
-        case, 2 if case == 'robot-expand' else len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
+        scenario_case, 2 if case == 'robot-expand' else len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
         5 if case == 'ocparts-repeat' else OCPARTS_QTY if ocparts else 16, 'nil' if seconds is None else seconds, orders))
     for robot in value['robots']:
         disk = target / robot['program']['directory']

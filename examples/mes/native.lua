@@ -27,6 +27,7 @@ local mes,lg,wh=require('mes'),require('logistics'),require('warehouse')
 local case=assert(loadfile('/home/program/case.lua'))()
 local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand'
 local setup=assert(loadfile('/home/program/setup.lua'))()
+if case.name=='shortfall' then wh.remove('s7_3_S') end
 local drones=wait(function() local rows=lg.pending();if #rows==6 then return rows end end)
 table.sort(drones,function(a,b) return assert(distances[a])<assert(distances[b]) end)
 for i,address in ipairs(drones) do assert(lg.register(address,'d'..i,setup.homes[i])) end
@@ -118,8 +119,9 @@ else
     end
   else
   local target=case.name=='torches16' and 'minecraft:torch' or
+    (case.name=='order-control' and 'minecraft:planks') or
     (ocparts and 'opencomputers:component:6' or 'minecraft:brick_block')
-  local plan=assert(mes.plan(target,case.quantity))
+  local plan=assert(mes.plan(target,case.name=='stockkeeper' and 8 or case.quantity))
   if case.name=='specific-group' then
     for i,stage in ipairs(plan.stages) do if stage.kind=='machine' then assert(mes.choose(plan,i,'furnaceA')) end end
   elseif case.name=='shortfall' then
@@ -127,7 +129,52 @@ else
     assert(event.pull(10,'warehouse_items_removed'),'native stock removal missing')
   end
   local ids
-  if ocparts then
+  if case.name=='order-control' then
+    for i in ipairs(plan.stages) do assert(mes.choose(plan,i,'cpu1')) end
+    local first=assert(mes.run(plan))
+    local other=assert(mes.plan('minecraft:stick',4))
+    for i in ipairs(other.stages) do assert(mes.choose(other,i,'cpu1')) end
+    local second=assert(mes.run(other))
+    assert(mes.status(first).status=='running')
+    for _,s in ipairs(mes.status(second).stages) do assert(s.state=='waiting') end
+    local shell=require('shell')
+    assert(shell.execute('mes runs'))
+    assert(shell.execute('mes status '..second))
+    assert(shell.execute('mes stop '..second))
+    local stopped=assert(mes.wait(second))
+    assert(stopped.status=='failed' and stopped.reason=='Stopped by player')
+    for _,s in ipairs(stopped.stages) do assert(not s.craftStarted) end
+    assert(wh.count(item('minecraft:stick'))==0)
+    ids={first}
+  elseif case.name=='stockkeeper' then
+    local plans,keeper=require('craft_plans'),require('stockkeeper')
+    assert(plans.save('Bricks',plan))
+    assert(keeper.save('Bricks',{item=target,quantity=16,trigger='replacement',
+      source={kind='plan',name='Bricks'}}))
+    assert(keeper.enable('Bricks'))
+    wait(function()
+      local s=assert(keeper.status('Bricks'));local r=s.lastResult
+      assert(not r or r.success or r.status=='skipped',r and r.message)
+      return wh.count(item(target))==16 and not s.busy
+    end)
+    assert(keeper.disable('Bricks'))
+    ids={}
+  elseif case.name=='merged-kit' or case.name=='selected-kit' then
+    local plans,kits=require('craft_plans'),require('craft_kits')
+    local torches=assert(mes.plan('minecraft:torch',16))
+    if case.name=='selected-kit' then
+      for _,entry in ipairs({{plan,'cpu2','furnaceA'},{torches,'cpu1','furnaceB'}}) do
+        for i,s in ipairs(entry[1].stages) do assert(mes.choose(entry[1],i,s.kind=='robot' and entry[2] or entry[3])) end
+      end
+    end
+    assert(plans.save('Bricks',plan))
+    assert(plans.save('Torches',torches))
+    assert(kits.save('Build',{executionMode='merged',accounting=case.name=='selected-kit' and 'refresh' or 'saved',entries={
+      {binding='live',planName='Bricks'},assert(kits.pin('Torches'))}}))
+    local result=kits.run('Build');assert(result.success,result.message)
+    assert(result.completedEntries==2 and #result.entries==1)
+    ids={result.entries[1].runId}
+  elseif ocparts then
     -- The foreground submitter exits; only the rc service owns the running plan.
     local file=assert(io.open('/home/native.plan','w'))
     assert(file:write(require('serialization').serialize(plan,false)));file:close()
@@ -144,22 +191,31 @@ return 0
   else ids={assert(mes.run(plan))} end
   if case.name=='concurrent' then ids[2]=assert(mes.run(assert(mes.plan('minecraft:torch',16)))) end
   for _,id in ipairs(ids) do
-    local result=assert(mes.wait(id))
-    assert(result.status==(case.name=='shortfall' and 'failed' or 'complete'),result.reason or result.error)
     if case.name=='shortfall' then
-      for _,stage in ipairs(result.stages) do
-        if stage.kind=='robot' then assert(not stage.receipt and not stage.craftStarted) end
-      end
+      wait(function()
+        local status=mes.status(id)
+        assert(status.status=='running',status.reason or 'shortage abandoned the order')
+        for _,stage in ipairs(status.stages) do
+          if stage.kind=='robot' then assert(not stage.craftStarted) end
+          if stage.kind=='machine' and stage.done==48 and
+            (stage.detail or ''):find('Waiting for minecraft:clay_ball',1,true) then return true end
+        end
+      end)
+      assert(wh.count(item('minecraft:brick'))==48)
+      local refill=assert(lg.transfer(item('minecraft:clay_ball'),16,'s7_3_S','s0_0_N'))
+      assert(done(refill).state=='done') -- Its normal warehouse receipt wakes the same order.
     end
+    local result=assert(mes.wait(id))
+    assert(result.status=='complete',result.reason or result.error)
   end
-  if case.name~='shortfall' then assert(wh.count(item(target))==case.quantity,'wrong output count') end
+  assert(wh.count(item(target))==case.quantity,'wrong output count')
   if case.name=='ocparts-repeat' then
     -- Same live service and stock: the first order's surplus feeds the next.
     local id=assert(mes.run(assert(mes.plan(target,3))))
     local result=assert(mes.wait(id));assert(result.status=='complete',result.reason or result.error)
     assert(wh.count(item(target))==8,'second order did not add three components')
   end
-  if case.name=='concurrent' then assert(wh.count(item('minecraft:torch'))==16) end
+  if case.name=='concurrent' or case.name=='merged-kit' or case.name=='selected-kit' then assert(wh.count(item('minecraft:torch'))==16) end
   end
 end
 wait(function()
