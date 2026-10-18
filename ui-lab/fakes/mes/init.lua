@@ -142,7 +142,9 @@ function M.plan(item,qty,opts)
   if opts.selectChoice then
     local ok,err=pcall(choose,item,opts);if not ok then return nil,tostring(err) end
   end
-  local p={requestItem=item,requestQuantity=qty,tasks={},missing={}}
+  -- One task in the planner's shape, so craft.plans can save the plan.
+  local p={success=true,craftable=true,requestItem=item,requestQuantity=qty,missing={},inventory_needed={},
+    tasks={{item=item,qty_produced=qty,recipeOutput=1,recipe={"minecraft:diamond"}}}}
   if item=="minecraft:torch" then
     local n=math.ceil(qty/4)
     p.stages={
@@ -179,7 +181,13 @@ function M.choose(plan,i,choice)
   return true
 end
 local busy
-function M.run(plan)
+-- A saved plan planned again; the fake keeps only its item and quantity.
+function M.replan(name)
+  local saved,err=require("craft.plans").load(name);if not saved then return nil,err end
+  local p=M.plan(saved.requestItem,saved.requestQuantity);p.deliver=saved.deliver;return p
+end
+function M.run(plan,opts)
+  opts=opts or {}
   if busy then return nil,"busy" end
   if #plan.missing>0 then return nil,"missing inputs" end
   local id=#runs+1;local r={id=id,item=plan.requestItem,qty=plan.requestQuantity,status="running",stage=1,started=computer.uptime(),stages={}}
@@ -197,7 +205,13 @@ function M.run(plan)
       event.push("mes","stage",id,k,"failed");event.push("mes","done",id,"failed");return end
     event.push("mes","stage",id,k,s.state)
     step=step+1;if step>#states then k=k+1;step=1;r.stage=k end
-    if not r.stages[k] then r.status="complete";r.finished=computer.uptime();busy=nil;event.push("mes","done",id,"complete") else event.timer(1,tick) end
+    if not r.stages[k] then r.status="complete";r.finished=computer.uptime();busy=nil
+      if opts.deliver then
+        local n,d=r.item:match("^(.*):(%d+)$")
+        local job,why=require("logistics.iochest").fetch({name=n or r.item,damage=tonumber(d) or 0},r.qty,opts.deliver)
+        r.delivery={to=opts.deliver,job=job,reason=why}
+      end
+      event.push("mes","done",id,"complete") else event.timer(1,tick) end
   end
   event.timer(1,tick)
   return id
