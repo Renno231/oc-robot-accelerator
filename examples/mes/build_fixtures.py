@@ -8,10 +8,13 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'examples/mes'
-ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control')
+ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control', 'cake')
 ROBOT_LIBRARIES = ('api', 'tnet', 'hosts', 'pubsub', 'craft.executor', 'craft.receipts',
                    'craft.plan', 'craft.resources', 'craft.tool_budget', 'craft.tool_rules',
                    'item_identity', 'craft.robinv')
+CAKE_RECIPE = ('minecraft:cake\t{[1]="minecraft:milk_bucket",[2]="minecraft:milk_bucket",[3]="minecraft:milk_bucket",'
+               '[4]="minecraft:sugar",[5]="minecraft:egg",[6]="minecraft:sugar",'
+               '[7]="minecraft:wheat",[8]="minecraft:wheat",[9]="minecraft:wheat",qty=1}\n')
 OCPARTS_QTY = 64
 OCPARTS_BATCH = 16
 OCPARTS_STOCK = {'minecraft:iron_ingot': 128, 'minecraft:gold_ingot': 32,
@@ -122,6 +125,11 @@ def build_native(target, case, mode='coordinated', seconds=10):
         if chest['position'] == [0, 65, 1]:
             chest['slots'] = [{'slot': 1, 'item': 'minecraft:log' if case == 'torches16' else 'minecraft:clay_ball',
                                'count': 8 if case == 'torches16' else 64}]
+        if chest['position'] == [0, 65, 1] and case == 'cake':
+            # Milk buckets do not stack; crafting hands each one back empty.
+            chest['slots'] = [{'slot': n, 'item': 'minecraft:milk_bucket', 'count': 1} for n in (1, 2, 3)] + [
+                {'slot': 4, 'item': 'minecraft:sugar', 'count': 2}, {'slot': 5, 'item': 'minecraft:egg', 'count': 1},
+                {'slot': 6, 'item': 'minecraft:wheat', 'count': 3}]
         if chest['position'] == [1, 65, 1] and case in ('concurrent-fetch', 'concurrent'):
             chest['slots'] = [{'slot': 1, 'item': 'minecraft:clay_ball' if case == 'concurrent-fetch' else 'minecraft:log',
                                'count': 64 if case == 'concurrent-fetch' else 8}]
@@ -138,12 +146,9 @@ def build_native(target, case, mode='coordinated', seconds=10):
     value['robots'] = [{'position': [8, 65, 0], 'facing': 'south', 'hardware': hardware,
                         'program': {'directory': 'robot-program', 'entry': 'main.lua'},
                         'inventory': [], 'energy': 20000}]
-    for z in (3, 4, 6, 7):
-        drone = copy.deepcopy(value['drones'][0]);drone['position'] = [-2, 65, z]
-        value['drones'].append(drone)
-        value['blocks'] = [b for b in value['blocks'] if b['position'] != [-2, 64, z]]
-        value['blocks'].append({'position': [-2, 64, z], 'block': 'opencomputers:charger',
-                                'properties': {'facing': 'north'}})
+    # Drones have no hitboxes for each other: all six start on, and return to, one charger.
+    for drone in value['drones']: drone['position'] = [-2, 65, 2]
+    for _ in range(4): value['drones'].append(copy.deepcopy(value['drones'][0]))
     value['execution'] = {'mode': mode, 'maxTicks': 72000, 'timeoutSeconds': 3600, 'infiniteEnergy': True}
     value['observations'] = {'everyTicks': 10}
     value['containerEdits'] = ([{'position': [0, 65, 1], 'slot': 1, 'count': 16, 'expectedCount': 64,
@@ -225,12 +230,13 @@ def build_native(target, case, mode='coordinated', seconds=10):
     (program / 'setup.lua').write_text(setup)
     recipes = OCPARTS_RECIPES if ocparts else (SOURCE / 'recipes.tsv').read_text()
     if parts: recipes += (SOURCE / 'robot-parts.tsv').read_text()
+    if case == 'cake': recipes += CAKE_RECIPE
     (program / 'recipes.tsv').write_text(recipes)
     (program / 'ocparts-imports.lua').write_text(OCPARTS_IMPORTS)
     orders = '{' + ','.join("{'%s',%d}" % order for order in ROBOT_PARTS.items()) + '}' if parts else 'nil'
     (program / 'case.lua').write_text("return {name='%s',robots=%d,batch=%d,quantity=%d,seconds=%s,orders=%s}\n" % (
         scenario_case, 2 if case == 'robot-expand' else len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
-        5 if case == 'ocparts-repeat' else OCPARTS_QTY if ocparts else 16, 'nil' if seconds is None else seconds, orders))
+        5 if case == 'ocparts-repeat' else 1 if case == 'cake' else OCPARTS_QTY if ocparts else 16, 'nil' if seconds is None else seconds, orders))
     for robot in value['robots']:
         disk = target / robot['program']['directory']
         shutil.copyfile(SOURCE / 'robot.lua', disk / 'main.lua')
