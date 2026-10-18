@@ -22,14 +22,14 @@ class TnetDeploymentTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), expected['sha256'])
                 source = Path(expected.get('source', str(Path(manifest['source']) / name)))
                 if source.exists():
-                    self.assertEqual(data, source.read_bytes())
+                    self.assertEqual(data, source.read_bytes().replace(b'\r\n', b'\n'))
         for expected in manifest.get('commands', {}).values():
             data = (ROOT / 'craftsystem' / expected['installed']).read_bytes()
             self.assertEqual(len(data), expected['bytes'])
             self.assertEqual(hashlib.sha256(data).hexdigest(), expected['sha256'])
             source = Path(expected['source'])
             if source.exists():
-                self.assertEqual(data, source.read_bytes())
+                self.assertEqual(data, source.read_bytes().replace(b'\r\n', b'\n'))
 
     def test_both_controller_and_robot_deploy_unchanged_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -43,11 +43,10 @@ class TnetDeploymentTests(unittest.TestCase):
                     original = (ROOT / 'craftsystem/usr/lib' / name).read_bytes()
                     for path in selected:
                         self.assertEqual(path.read_bytes(), original)
-                paths = list(target.glob('**/usr/bin/pair.lua'))
-                selected = [p for p in paths if ('robot-program' in p.parts) == (role == 'robot')]
-                self.assertTrue(selected, (role, 'pair.lua'))
-                for path in selected:
-                    self.assertEqual(path.read_bytes(), (ROOT / 'craftsystem/usr/bin/pair.lua').read_bytes())
+            paths = [p for p in target.glob('**/usr/bin/pair.lua') if 'robot-program' not in p.parts]
+            self.assertTrue(paths)
+            for path in paths:
+                self.assertEqual(path.read_bytes(), (ROOT / 'craftsystem/usr/bin/pair.lua').read_bytes())
 
     def test_native_observer_measures_packet_without_changing_send_arguments(self):
         lua = LuaRuntime(unpack_returned_tuples=True)

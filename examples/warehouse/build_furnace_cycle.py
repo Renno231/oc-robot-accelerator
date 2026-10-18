@@ -54,6 +54,7 @@ def build(target=None, seed=128, shortfall=False, ram=1):
     for path in ('usr/lib/logistics/map.lua','usr/lib/logistics/init.lua','usr/lib/logistics/warehouse.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/warehouse/view.lua','usr/lib/logistics/warehouse/ui.lua','usr/lib/logistics/drone/agent.lua'):
         dest=program/path;dest.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/'drone-logistics'/path,dest)
+    (program/'lib').mkdir(exist_ok=True)
     shutil.copyfile(ROOT/'fixtures/qmenu.lua',program/'lib/qmenu.lua')
     shutil.copyfile(ROOT/'drone-logistics/drone/loader.lua',target/'loader.lua')
     shutil.copyfile(ROOT/'examples/warehouse/furnace-cycle.lua',program/'main.lua')
