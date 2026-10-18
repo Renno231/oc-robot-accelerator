@@ -227,7 +227,8 @@ class MesRestartTests(unittest.TestCase):
           reboot()
           wh.observed('stock',{{item=raw,count=100,maxSize=64}})
           function saved()
-            local cbor=require('cbor');local out={};local path='/etc/mes.state'
+            local cbor=require('cbor');local out={}
+            for _,path in ipairs({'/etc/mes.state','/etc/mes.history'}) do
             if dirs[path] then
               for name,bytes in pairs(disk) do if name:sub(1,#path+1)==path..'/' then
                 local key=name:sub(#path+2):gsub('%%(%x%x)',function(h) return string.char(tonumber(h,16)) end)
@@ -237,6 +238,7 @@ class MesRestartTests(unittest.TestCase):
               local bytes=disk[path] or '';local pos=1;local reader={}
               function reader:read(n) local value=bytes:sub(pos,pos+n-1);pos=pos+#value;return value end
               while pos<=#bytes do local row=cbor.decode_file(reader);out[row.k]=row.v end
+            end
             end
             return out
           end
@@ -510,7 +512,8 @@ class MesRestartTests(unittest.TestCase):
                       assert(M.status(id).status=='complete',M.status(id).reason)
                       assert(held('source','mod:raw')==STOCK-1 and FAKE.held==0)
                       assert(held('source',MACHINE and 'mod:metal' or 'mod:crafted')==1)
-                      local movement=M.status(id).stages[1].itemsMoved[1]
+                      assert(not M.status(id).stages[1].itemsMoved,'finished ledgers stay on disk')
+                      local movement=saved()['done_'..id].stages[1].itemsMoved[1]
                       assert(movement.quantity==1 and movement.moved==1 and #movement.jobs==2)
                     ''')
 
@@ -551,6 +554,7 @@ class MesRestartTests(unittest.TestCase):
                   for i=1,30 do local name,value=debug.getupvalue(service.runs,i);if name=='history' then history=value end end
                   assert(history and not history[5]);for _,r in pairs(history) do
                     assert(not r.world and not r.ports and not r.plan and not r.actions and not r.cfg)
+                    for _,st in ipairs(r.stages) do assert(not st.itemsMoved and not st.loadLedger) end
                   end
                   reboot();local after=M.runs();assert(#after==20 and after[1].id==25 and after[20].id==6)
                   assert(M.status(25).status=='complete' and M.status(5)==nil)

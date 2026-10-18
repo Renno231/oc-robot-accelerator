@@ -46,7 +46,7 @@ class MesAcceptanceGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)
             (root/'result.json').write_text(json.dumps(native))
-            ledger=root/'world/opencomputers/controller/etc/mes.state'
+            ledger=root/'world/opencomputers/controller/etc/mes.history'
             ledger.parent.mkdir(parents=True);ledger.touch()
             with patch('run_mes_scenarios.read_store', return_value=store):
                 return verify_case(case, root)
