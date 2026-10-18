@@ -188,7 +188,7 @@ def read_store(path):
 
 
 STORE_PATHS = ('/etc/map.db', '/etc/warehouse.db', '/etc/warehouse.flight',
-               '/etc/logistics.state', '/etc/mes.state')
+               '/etc/logistics.state', '/etc/mes.state', '/etc/mes.history')
 
 
 def enrich(evidence, drive):
