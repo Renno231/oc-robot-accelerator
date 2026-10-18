@@ -119,6 +119,7 @@ else
     end
   else
   local target=case.name=='torches16' and 'minecraft:torch' or
+    (case.name=='cake' and 'minecraft:cake') or
     (case.name=='order-control' and 'minecraft:planks') or
     (ocparts and 'opencomputers:component:6' or 'minecraft:brick_block')
   local plan=assert(mes.plan(target,case.name=='stockkeeper' and 8 or case.quantity))
@@ -216,6 +217,7 @@ return 0
     assert(wh.count(item(target))==8,'second order did not add three components')
   end
   if case.name=='concurrent' or case.name=='merged-kit' or case.name=='selected-kit' then assert(wh.count(item('minecraft:torch'))==16) end
+  if case.name=='cake' then assert(wh.count(item('minecraft:bucket'))==3,'empty buckets not returned') end
   end
 end
 wait(function()

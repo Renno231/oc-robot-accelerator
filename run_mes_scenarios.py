@@ -39,7 +39,7 @@ def verify_case(case, runtime):
             chest = next(c for c in native['containers'] if c['position'] == [10, 64, z])
             assert any(s['item'] == 'minecraft:clay_ball' and s['count'] == 64 for s in chest['slots'])
         return {'physicalCounts': totals}
-    paths = list(runtime.glob('world/opencomputers/*/etc/mes.state'))
+    paths = list(runtime.glob('world/opencomputers/*/etc/mes.history'))
     assert len(paths) == 1, 'missing/ambiguous MES receipt store'
     runs = [v for k, v in read_store(paths[0]).items() if k.startswith('done_')]
     if case == 'order-control':
@@ -105,6 +105,9 @@ def verify_case(case, runtime):
             group = sorted((l for l in loads if l['group'] == name), key=lambda l: l['delivered'])
             assert len(group) == 2 and all(l['items'] == 16 for l in group), 'wrong PCB load split'
             assert group[1]['delivered'] < group[0]['collected'], 'PCB top-up waited for collection'
+    elif case == 'cake':
+        # Every container item crafting hands back reaches storage; the coal is unused furnace fuel.
+        assert totals == {'minecraft:cake': 1, 'minecraft:bucket': 3, 'minecraft:coal': 16}, totals
     else:
         expected = ({'minecraft:torch': 16, 'minecraft:log': 3, 'minecraft:planks': 2, 'minecraft:coal': 14}
                     if case == 'torches16' else {'minecraft:brick_block': 16})

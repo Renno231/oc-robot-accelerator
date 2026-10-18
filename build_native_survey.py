@@ -86,6 +86,12 @@ def build(root, case):
     value['id'] = case
     value.pop('robots', None)
     value['drones'][0]['hardware']['upgrades'].append('geolyzer')
+    # The MES seed shares one charger; survey homes are six separate chargers.
+    for i, drone in enumerate(value['drones']):
+        drone['position'] = [-2, 65, 2 + i]
+        value['blocks'] = [b for b in value['blocks'] if b['position'] != [-2, 64, 2 + i]]
+        value['blocks'].append({'position': [-2, 64, 2 + i], 'block': 'opencomputers:charger',
+                                'properties': {'facing': 'north'}})
     value['world'] = {'region': {'min': [-6, 62, -2], 'max': [14, 71, 12]}, 'blocks': [
         {'min': [-6, 62, -2], 'max': [14, 71, 12], 'block': 'minecraft:air'},
         {'min': [-6, 62, -2], 'max': [14, 63, 12], 'block': 'minecraft:stone'}]}

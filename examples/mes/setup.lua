@@ -22,10 +22,10 @@ for _,v in ipairs({{'A',7},{'B',9}}) do
 end
 map.name('cpu1.buf','8:65:2',2)
 wh.group('cpu1','crafter',{buffer='cpu1.buf'})
+-- Drones have no hitboxes for each other: all six share one charger.
+map.add('-2:65:2',-2,65,2,{charger=true})
 local homes={}
-for z=2,7 do
-  local h='-2:65:'..z;map.add(h,-2,65,z,{charger=true});homes[#homes+1]=h
-end
+for i=1,6 do homes[i]='-2:65:2' end
 local nodes=map.nodes()
 for a,p in pairs(nodes) do for b,q in pairs(nodes) do
   if a<b and math.abs(p.x-q.x)+math.abs(p.y-q.y)+math.abs(p.z-q.z)==1 then map.link(a,b) end
