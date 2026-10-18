@@ -153,6 +153,10 @@ class StationsTests(unittest.TestCase):
             config=function() return {crafters={},machineTypes={}} end} end
           require('event').timer=function() return 1 end
           require('event').cancel=function() end
+          package.preload.process=function()
+            local root={data={handles={}}}
+            return {info=function(level) if not level or level<=1 then return root end end}
+          end
           assert(require('mes.service').start())
           assert(package.loaded["logistics.stations"] and package.loaded["logistics.stats"] and package.loaded["mes.alerts"] and LISTEN.logistics)
           assert(package.loaded["logistics.survey"] and LISTEN.survey_result)
