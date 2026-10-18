@@ -112,7 +112,7 @@ reduce the thinking."
   them without asking. The source of truth for tnet and api is
   `C:/Users/Conner/Documents/GitHub/Renno-Programs/tnet`. Copies here are
   byte-synced from it (`craftsystem/tnet-provenance.json`).
-- **`craftsystem/usr/lib/mes_ui/` and `ui-lab/`**: Claude only, through the
+- **`craftsystem/usr/lib/mes/ui/` and `ui-lab/`**: Claude only, through the
   `mes-ui-coder` agent. No GPT model touches them.
 - **Production fixes from an audit**: the coordinator writes them. Workers
   test, report and fix tests and fixtures.

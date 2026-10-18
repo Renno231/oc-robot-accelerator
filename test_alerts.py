@@ -14,8 +14,8 @@ class AlertTests(unittest.TestCase):
           package.preload.serialization=function() return assert(load(SERIAL))() end
         ''')
         install_store(self.lua)
-        for name in ('mes_alerts','mes_alert_sources'):
-            self.lua.globals()[name.upper()]=Path('craftsystem/usr/lib/'+name+'.lua').read_text()
+        for name in ('alerts','alert_sources'):
+            self.lua.globals()['MES_'+name.upper()]=Path('craftsystem/usr/lib/mes/'+name+'.lua').read_text()
         self.lua.execute('''
           TIME=0;D={};IO={};world={groups={}};FILL=0;SOON=false;EVENTS={};LISTEN={};TIMERS={};TCALLS=0;CANCELS=0
           CFG={fillWarn=.8,fillBad=.95,fullSoonHours=2}
@@ -36,7 +36,7 @@ class AlertTests(unittest.TestCase):
           end
           function timerCount() local n=0;for _ in pairs(TIMERS) do n=n+1 end;return n end
           package.loaded.logistics={drones=function() return D end,job=function() error('unexpected job') end}
-          package.loaded.iochest={list=function() return IO end}
+          package.loaded["logistics.iochest"]={list=function() return IO end}
           local stats={settings=function() local c={};for k,v in pairs(CFG) do c[k]=v end;return c end,
             summary=function() return {fill=FILL} end,
             warnings=function() local w={};if FILL>=CFG.fillWarn then w[#w+1]={kind='fill',fill=FILL} end
@@ -45,14 +45,14 @@ class AlertTests(unittest.TestCase):
             assert(CFG[k] and type(v)=='number' and v>=0 and v<math.huge and (k=='fullSoonHours' or v<=1),'invalid setting')
             CFG[k]=v;event.push('stats')
           end
-          package.loaded.stats=stats
+          package.loaded["logistics.stats"]=stats
           package.loaded.component={transposer={getAllStacks=function() error('unexpected read') end}}
-          package.loaded.warehouse={scan=function() error('unexpected read') end}
-          package.preload.mes_alerts=function() return assert(load(MES_ALERTS))() end
-          package.preload.mes_alert_sources=function() return assert(load(MES_ALERT_SOURCES))() end
+          package.loaded["logistics.warehouse"]={scan=function() error('unexpected read') end}
+          package.preload["mes.alerts"]=function() return assert(load(MES_ALERTS))() end
+          package.preload["mes.alert_sources"]=function() return assert(load(MES_ALERT_SOURCES))() end
           function reload()
-            LISTEN={};TIMERS={};package.loaded.mes_alerts=nil;package.loaded.mes_alert_sources=nil
-            alerts=require('mes_alerts');alerts.start(world)
+            LISTEN={};TIMERS={};package.loaded["mes.alerts"]=nil;package.loaded["mes.alert_sources"]=nil
+            alerts=require('mes.alerts');alerts.start(world)
           end
           function active(kind)
             local r=alerts.list{state='active',kind=kind};return r[1],#r
@@ -154,10 +154,10 @@ class AlertTests(unittest.TestCase):
           assert(#alerts.list()==200 and #alerts.list('active')==200)
           emit('logistics_drone');assert(#alerts.list()==200)
           reload();emit('logistics_drone');assert(#alerts.list()==200)
-          local saved=require('store').open('/etc/mes.alerts','log'):load().state
+          local saved=require('logistics.store').open('/etc/mes.alerts','log'):load().state
           local suppressed=0;for _ in pairs(saved.quiet) do suppressed=suppressed+1 end;assert(suppressed==5)
           for n=1,5 do D[n].state='idle' end;emit('logistics_drone')
-          saved=require('store').open('/etc/mes.alerts','log'):load().state;assert(not next(saved.quiet))
+          saved=require('logistics.store').open('/etc/mes.alerts','log'):load().state;assert(not next(saved.quiet))
           D[206]={name='new',state='lost'};emit('logistics_drone');assert(#alerts.list('active')==201)
           D[206].state='idle';emit('logistics_drone');assert(#alerts.list()==200)
           assert(timerCount()==0)
@@ -169,7 +169,7 @@ class AlertTests(unittest.TestCase):
             emit('mes','done',n,'failed');local r=active('runFailed');assert(r.key==n)
             assert(alerts.dismiss(r.id));assert(#alerts.list()<=200)
           end
-          local saved=require('store').open('/etc/mes.alerts','log'):load().state
+          local saved=require('logistics.store').open('/etc/mes.alerts','log'):load().state
           assert(#saved.rows==200 and not next(saved.quiet) and saved.serial==500)
           local count=0
           for n=1,100 do local name,value=debug.getupvalue(alerts.start,n);if not name then break end
@@ -233,13 +233,13 @@ class AlertTests(unittest.TestCase):
           alerts.list();emit('logistics_drone');assert(TCALLS==1)
           tick(86409);assert(#EVENTS==4 and timerCount()==1)
           tick(86410);assert(lastEvent()[4]=='removed' and timerCount()==1 and TCALLS==2)
-          local saved=require('store').open('/etc/mes.alerts','log'):load().state
+          local saved=require('logistics.store').open('/etc/mes.alerts','log'):load().state
           assert(#saved.rows==1 and saved.rows[1].key=='b')
           TIME=5;reload();assert(timerCount()==1 and TCALLS==3)
           local t=TIMERS[next(TIMERS)];assert(t.at==15)
           tick(14);assert(timerCount()==1);tick(15)
           assert(lastEvent()[4]=='removed' and timerCount()==0)
-          saved=require('store').open('/etc/mes.alerts','log'):load().state;assert(#saved.rows==0)
+          saved=require('logistics.store').open('/etc/mes.alerts','log'):load().state;assert(#saved.rows==0)
           assert(#alerts.list()==0 and timerCount()==0)
           reload();assert(timerCount()==0)
         ''')
@@ -282,10 +282,10 @@ class AlertTests(unittest.TestCase):
 class AlertSignalTests(unittest.TestCase):
     def test_machine_callback_only_on_membership_due_or_quarantine_change(self):
         lua=LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().STATE=Path('craftsystem/usr/lib/mes_state.lua').read_text()
+        lua.globals().STATE=Path('craftsystem/usr/lib/mes/state.lua').read_text()
         lua.execute('''
           package.preload.item_identity=function() return {} end
-          package.preload.mes_timing=function() return {} end
+          package.preload["mes.timing"]=function() return {} end
           local M=assert(load(STATE))();local visited={}
           local function search(f)
             if visited[f] then return end;visited[f]=true

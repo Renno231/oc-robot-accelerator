@@ -23,15 +23,15 @@ class LogisticsFixturesTests(unittest.TestCase):
             with self.subTest(name=name):
                 root = Path('examples/logistics') / name
                 self.assertEqual(loader, (root / 'loader.lua').read_bytes())
-                for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/cbor.lua', 'lib/store.lua', 'bin/logistics.lua'):
+                for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/cbor.lua', 'usr/lib/logistics/store.lua', 'usr/bin/logistics.lua'):
                     self.assertEqual((source / path).read_bytes(), (root / 'program' / path).read_bytes())
-                agent = (root / 'program/drone/agent.lua').read_bytes()
+                agent = (root / 'program/usr/lib/logistics/drone/agent.lua').read_bytes()
                 if name == 'security':
                     agent = agent.split(b'\n', 2)[2]  # Two explicit native adversary fixture lines.
                 elif name == 'fixes':
                     prefix=Path('examples/logistics/fixes-hook.lua').read_bytes()+b'\n'
                     self.assertTrue(agent.startswith(prefix));agent=agent[len(prefix):]
-                self.assertEqual((source / 'drone/agent.lua').read_bytes(), agent)
+                self.assertEqual((source / 'usr/lib/logistics/drone/agent.lua').read_bytes(), agent)
                 self.assertEqual(Path('examples/logistics/testsuite.lua').read_bytes(), (root / 'program/testsuite.lua').read_bytes())
 
     def test_native_scenarios_load_with_empty_pairing_data(self):

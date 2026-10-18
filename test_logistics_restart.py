@@ -16,18 +16,18 @@ class LogisticsRestartTests(unittest.TestCase):
         install_store(lua, preserve_io=True)
         lua.globals().MODE = mode
         lua.globals().ITEM_NAME = item_name
-        lua.globals().LOGISTICS = Path('drone-logistics/lib/logistics.lua').read_text()
-        lua.globals().WAREHOUSE = Path('drone-logistics/lib/warehouse.lua').read_text()
+        lua.globals().LOGISTICS = Path('drone-logistics/usr/lib/logistics/init.lua').read_text()
+        lua.globals().WAREHOUSE = Path('drone-logistics/usr/lib/logistics/warehouse.lua').read_text()
         lua.execute('''
           variant(MODE);TIME=10;LISTEN={};EVENTS={};SENT={};TIMERS={}
           FAKE={cargo={},stock=10,dest=0,working=false}
           item={name=ITEM_NAME,damage=0,label='Stock'}
-          package.loaded.map=map
+          package.loaded["logistics.map"]=map
           map.add('home',0,0,0);map.add('source',2,0,0);map.add('dest',4,0,0)
           map.link('home','source');map.link('source','dest') -- Straight-line fixture graph.
           map.name('stock','source',0);map.name('out','dest',0)
           map.theta=function(a,b) return {a,b} end
-          files['/usr/lib/logistics/agent.lua']='return true'
+          files['/usr/lib/logistics/drone/agent.lua']='return true'
           files['/etc/logistics.drones']=require('serialization').serialize({
             d1={address='remote',token='secret',home='home'}})
           files['/etc/warehouse.cfg']=require('serialization').serialize({members={stock={}},groups={}})
@@ -72,11 +72,11 @@ class LogisticsRestartTests(unittest.TestCase):
             end
           end
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
-          package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
+          package.preload["logistics.warehouse"]=function() return assert(load(WAREHOUSE))() end
           function reload()
             LISTEN={};EVENTS={};SENT={};TIMERS={}
-            package.loaded.logistics=nil;package.loaded.warehouse=nil
-            lg=require('logistics');wh=require('warehouse')
+            package.loaded.logistics=nil;package.loaded["logistics.warehouse"]=nil
+            lg=require('logistics');wh=require('logistics.warehouse')
             assert(#SENT==1 and SENT[1].kind=='status')
           end
           function ready()
@@ -102,7 +102,7 @@ class LogisticsRestartTests(unittest.TestCase):
             FAKE.last={id=FAKE.trip,result={state='idle',steps=rows,held=0}}
             if deliver then report(FAKE.last.id,clone(FAKE.last.result));drain() end
           end
-          local catalogue=require('store').open('/etc/warehouse.db','log');catalogue:load()
+          local catalogue=require('logistics.store').open('/etc/warehouse.db','log');catalogue:load()
           catalogue:put('stock',{items={seed={item=item,count=10,maxSize=64,stacks=1,room=54}},
             slots=27,freeSlots=26,verified=true,time=TIME});catalogue:flush();catalogue:close()
           reload();ready();drain();SENT={}
@@ -160,7 +160,7 @@ class LogisticsRestartTests(unittest.TestCase):
 
     def test_boot_ready_lists_current_inventory(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.execute('''
           local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and 3 or 0 end,
             getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
@@ -192,7 +192,7 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(lg.found('d1'));ready();assert(lg.drones()[1].state=='idle')
                 ''')
                 agent = LuaRuntime(unpack_returned_tuples=True)
-                agent.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+                agent.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
                 agent.globals().OFFSET = offset
                 agent.execute('''
                   local drone={inventorySize=function() return 4 end,count=function() return 0 end,
@@ -267,7 +267,7 @@ class LogisticsRestartTests(unittest.TestCase):
 
     def test_release_cli_prints_listing_and_timeout(self):
         lua=self.start('log')
-        lua.globals().CLI=Path('drone-logistics/bin/logistics.lua').read_text()
+        lua.globals().CLI=Path('drone-logistics/usr/bin/logistics.lua').read_text()
         lua.execute(r'''
           FAKE.held=3;FAKE.cargo={{name=item.name,damage=0,size=3,maxSize=64}}
           ready();EVENTS={};PRINTED={};print=function(s) PRINTED[#PRINTED+1]=s end
@@ -318,20 +318,20 @@ class LogisticsRestartTests(unittest.TestCase):
                   local id=fetch()
                   report(FAKE.trip,{state='blocked',link={a='home',b='source'},to='dest'})
                   report(FAKE.trip,{state='progress',steps={{taken=2,moved=2}},held=2})
-                  local s=require('store').open('/etc/logistics.state');local r=s:load();s:close()
+                  local s=require('logistics.store').open('/etc/logistics.state');local r=s:load();s:close()
                   assert(r['job_'..id].active[FAKE.trip].progress.held==2)
                   assert(r['job_'..id].avoid==nil and r.ids.job==id and r.ids.trip==FAKE.trip)
                   assert(#r['job_'..id].blockedReports==1)
                   finishPhysical(false);report(FAKE.last.id,clone(FAKE.last.result))
                   -- The terminal job is saved, but its warehouse event has not run.
                   reload();assert(wh.count(item)==6 and wh.settled(id));answerStatus();drain()
-                  local f=require('store').open('/etc/warehouse.flight');f:load()
+                  local f=require('logistics.store').open('/etc/warehouse.flight');f:load()
                   f:put('job_999',{});f:flush();f:close();reload()
-                  f=require('store').open('/etc/warehouse.flight');assert(not next(f:load()));f:close()
+                  f=require('logistics.store').open('/etc/warehouse.flight');assert(not next(f:load()));f:close()
                   local first
                   for i=1,34 do local n=lg.scan('home');first=first or n;assert(lg.cancel(n)) end
                   reload();assert(lg.status(first)==nil and #lg.jobs()==32)
-                  s=require('store').open('/etc/logistics.state');r=s:load();s:close()
+                  s=require('logistics.store').open('/etc/logistics.state');r=s:load();s:close()
                   assert(r['job_'..first]==nil)
                   local x=lg.transfer(item,1,'stock','out');local y=lg.scan('home')
                   reload();answerStatus();drain();assert(FAKE.working and FAKE.task.steps[1].take)
@@ -365,7 +365,7 @@ class LogisticsRestartTests(unittest.TestCase):
 class AgentRestartTests(unittest.TestCase):
     def route_fixture(self, blocked=False):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.globals().BLOCKED = blocked
         lua.execute('''
           TIME=0;SENT={};POSITION=0;TARGET=0
@@ -441,7 +441,7 @@ class AgentRestartTests(unittest.TestCase):
 
     def test_last_cleared_by_trip_release_and_empty_status_only_ready(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.execute('''
           SENT={};HELD=0
           local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and HELD or 0 end,

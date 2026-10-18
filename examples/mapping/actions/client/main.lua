@@ -1,9 +1,8 @@
 local fs=require("filesystem")
-assert(fs.copy("/home/program/lib/mapclient.lua","/lib/mapclient.lua"))
-assert(fs.copy("/home/program/bin/mapclient.lua","/bin/mapclient.lua"))
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
 local key="mapping-native-key"
 local f=assert(io.open("/etc/mapclient.cfg","w"));f:write('return {key="'..key..'",position=function() return 1.9,65.7,-0.1 end}');f:close()
-local api=require("mapclient");local client=api.new()
+local api=require("logistics.mapclient");local client=api.new()
 local event=require("event");local computer=require("computer");local component=require("component");local serialization=require("serialization")
 local deadline=computer.uptime()+20
 local ready=false
@@ -38,7 +37,7 @@ if require("case")=="service" then
   local input=assert(io.open("/home/ui-input.txt","w"))
   input:write("here\n\n\n\nadd\nUI\nn\nfaces\ny\nn\nn\nn\nn\nn\nname\nui-storage\n0\nunname\nui-storage\nquit\n");input:close()
   local old=io.input();io.input("/home/ui-input.txt")
-  assert(loadfile("/bin/mapclient.lua"))();io.input(old)
+  assert(loadfile("/usr/bin/mapclient.lua"))();io.input(old)
   assert(call("node",{"UI"}).x==1 and call("node",{"UI"}).faces[0])
   assert(call("storage",{"ui-storage"})==nil)
   print("M1 standalone/paging/wrong-key/GPS/manual/UI passed")

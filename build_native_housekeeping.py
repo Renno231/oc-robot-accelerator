@@ -6,10 +6,10 @@ from examples.mes.build_fixtures import build_native, write_fixture
 
 RUN = r'''
 return assert(loadfile('/home/program/main.lua'))(function(wait)
-local mes,wh,lg,event=require('mes'),require('warehouse'),require('logistics'),require('event')
+local mes,wh,lg,event=require('mes'),require('logistics.warehouse'),require('logistics'),require('event')
 local function count(id) return wh.count({name=id,damage=0}) end
 local plan,why=mes.plan('minecraft:brick_block',4);assert(plan,why)
-local hk=require('housekeeping');hk.set('enabled',false);hk.set('minFill',0);hk.set('idleSeconds',0)
+local hk=require('logistics.housekeeping');hk.set('enabled',false);hk.set('minFill',0);hk.set('idleSeconds',0)
 local result={case='housekeeping',before={coal=count('minecraft:coal'),clay=count('minecraft:clay_ball')},hkJobs={}}
 local runId,first
 event.listen('housekeeping',function()

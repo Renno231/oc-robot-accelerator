@@ -3,12 +3,9 @@ local serialization=require('serialization')
 -- Compile all acceptance/UI-driver code before taking deployment baselines.
 local measure=assert(loadfile('/home/program/deployment-memory.lua'))()
 local config=assert(loadfile('/home/program/cycle-config.lua'))()
-for _,n in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
-fs.makeDirectory('/usr/lib/logistics');fs.makeDirectory('/lib/warehouse')
-assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
-for _,n in ipairs({'view','ui'}) do assert(fs.copy('/home/program/lib/warehouse/'..n..'.lua','/lib/warehouse/'..n..'.lua')) end
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
 assert(fs.copy('/home/program/lib/qmenu.lua','/lib/qmenu.lua'))
-local map=require('map');local lg=require('logistics');local wh=require('warehouse')
+local map=require('logistics.map');local lg=require('logistics');local wh=require('logistics.warehouse')
 local clay={name='minecraft:clay_ball',damage=0};local coal={name='minecraft:coal',damage=0};local brick={name='minecraft:brick',damage=0}
 local function save(path,t) local f=assert(io.open(path,'w'));f:write(serialization.serialize(t,false));f:close() end
 local function wait(fn,seconds)

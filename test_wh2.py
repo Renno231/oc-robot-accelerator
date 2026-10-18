@@ -9,7 +9,7 @@ class WarehouseTakeSlotsTests(unittest.TestCase):
         fixture = test_warehouse_many.WarehouseManyTests()
         fixture.setUp()
         self.lua = fixture.lua
-        agent = Path('drone-logistics/drone/agent.lua').read_text()
+        agent = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         self.lua.globals().TAKE = agent[agent.index('local function match('):agent.index('local function runSteps(')]
         self.lua.execute('''
           physical={};slots=4

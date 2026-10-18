@@ -13,11 +13,11 @@ save('/etc/store.cfg',{variant='log'})
 local distances={};event.listen('modem_message',function(_,_,sender,port,distance,token)
  if port==27103 and token=='lgx_hello' then distances[sender]=distance end
 end)
-local map=require('map');local lg=require('logistics');local wh=require('warehouse')
+local map=require('logistics.map');local lg=require('logistics');local wh=require('logistics.warehouse')
 for i=1,6 do local n='home'..i;map.add(n,-2,65,i+1,{charger=true});if i>1 then map.link('home'..(i-1),n) end end
 map.add('corridor2',0,65,2);map.add('corridor8',0,65,8)
 map.link('home1','corridor2');map.link('corridor2','corridor8');map.save()
-local st=require('stations');local ic=require('iochest')
+local st=require('logistics.stations');local ic=require('logistics.iochest')
 local function wait(fn)
  local deadline=computer.uptime()+180
  repeat if fn() then return end;event.pull(.1) until computer.uptime()>deadline

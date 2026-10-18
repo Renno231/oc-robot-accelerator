@@ -19,14 +19,14 @@ class SurveyTests(unittest.TestCase):
             unserialize=function(s) return assert(load('return '..s))() end} end
         ''')
         install_store(self.lua)
-        self.lua.globals().SOURCE = Path('drone-logistics/lib/survey.lua').read_text()
+        self.lua.globals().SOURCE = Path('drone-logistics/usr/lib/logistics/survey.lua').read_text()
         self.lua.execute('''
           LISTEN={};EVENTS={};JOBS={};REQUESTS={};KNOWN={};ANALYZED={};HOPS={};GRID={};BLOCKS={}
           local nodes={origin={x=0,y=65,z=0},home={x=-1,y=65,z=0}}
-          package.preload.map=function() return {nodes=function() return nodes end,
+          package.preload["logistics.map"]=function() return {nodes=function() return nodes end,
             node=function(n) return nodes[n] end,links=function() return {'home'} end,
             storages=function() return {} end} end
-          package.preload.stations=function() return {
+          package.preload["logistics.stations"]=function() return {
             list=function() return KNOWN end,get=function(n) return KNOWN[n] end,
             add=function(kind,spec) REQUESTS[#REQUESTS+1]={kind=kind,spec=spec};return spec.prefix end} end
           package.preload.logistics=function() return {
@@ -84,7 +84,7 @@ class SurveyTests(unittest.TestCase):
           assert(double and #double.inventories==3 and double.spacing==2 and double.pair==2)
           assert(double.inventories[1].parts[2].x==9)
           assert(choose and choose.role=='?' and #choose.faces==2)
-          local st=require('store').open('/group','log');st:put('g',g);st:flush()
+          local st=require('logistics.store').open('/group','log');st:put('g',g);st:flush()
           assert(#st:load().g==3) -- double parts must not be a cyclic table
         ''')
 
@@ -114,12 +114,12 @@ class SurveyTests(unittest.TestCase):
           assert(not sv.approve(id,{[1]={prefix='stock'}}))
           assert(not sv.approve(id,{[1]={prefix='stock',role='stock'}}))
           -- Previously persisted diagnostics can be discarded without losing the proposal.
-          local store=require('store').open('/etc/survey','log')
+          local store=require('logistics.store').open('/etc/survey','log')
           r.trips={{job=1,command={path={{x=0,y=65,z=0}}}}}
           store:put('sv_'..id,r);store:flush()
           LISTEN={};sv=assert(load(SOURCE))();r=sv.get(id)
           assert(r.state=='proposed' and r.limitation:find('same density'))
-          assert(r.trips==nil and require('store').open('/etc/survey','log'):load()['sv_'..id].trips==nil)
+          assert(r.trips==nil and require('logistics.store').open('/etc/survey','log'):load()['sv_'..id].trips==nil)
           assert(sv.approve(id,{[1]={prefix='stock',role='stock',face='top'}}))
           assert(#REQUESTS==1 and REQUESTS[1].spec.paths[1][1].x==0)
           assert(sv.get(id).state=='approved')

@@ -36,16 +36,16 @@ class OcpartsMesPlanTests(unittest.TestCase):
           local builder=require('recipes.build');local built=builder.build();assert(builder.save(built))
           require('recipes').install(built)
           package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
-          package.preload.craft_tools=function() return {list=function() return {} end} end
+          package.preload["craft.tools"]=function() return {list=function() return {} end} end
           package.preload.event=function() return {push=function() end} end
           -- This integration exercises the real compiler/planner/graph only;
           -- transport installation has its own actual-OpenOS/native gates.
-          package.preload.mes_service=function() return {start=function() return true end,claims=function() return {} end,
+          package.preload["mes.service"]=function() return {start=function() return true end,claims=function() return {} end,
             fuel=function() return {credit=0,admitted=0} end} end
           GROUPS={cpu1={type='crafter',roles={buffer='buf1'}},cpu2={type='crafter',roles={buffer='buf2'}},
             furnaceA={type='furnace',roles={input='ai',output='ao',fuel='af'}},
             furnaceB={type='furnace',roles={input='bi',output='bo',fuel='bf'}}}
-          package.preload.warehouse=function() return {
+          package.preload["logistics.warehouse"]=function() return {
             members=function() return {stock={}} end,
             contents=function(s) return {items=s=='stock' and STOCK or {}} end,
             groups=function(kind) local out={};for n,g in pairs(GROUPS) do

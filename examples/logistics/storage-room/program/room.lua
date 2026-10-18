@@ -1,12 +1,10 @@
 -- Shared native entry for the dense hallway and open pillar layout.
 return function(obstacle)
   local fs=require('filesystem')
-  fs.makeDirectory('/lib/logistics')
-  for _,n in ipairs({'map','logistics'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
-  assert(fs.copy('/home/program/drone/agent.lua','/lib/logistics/agent.lua'))
+  local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
   local event,computer=require('event'),require('computer')
   local serialization=require('serialization')
-  local map=require('map')
+  local map=require('logistics.map')
   require('map-geometry-tests')(map)
   local function name(x,y) return 'N'..x..'_'..y end
   map.add('H',-2,65,2,{charger=true});map.add('H2',-2,65,5,{charger=true});map.link('H','H2')

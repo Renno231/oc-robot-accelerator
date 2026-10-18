@@ -11,14 +11,14 @@ class StationsTests(unittest.TestCase):
         self.lua.execute('oldIO=io.open')
         install_store(self.lua)
         for name in ('map', 'logistics', 'warehouse', 'stations', 'survey', 'iochest', 'stats', 'housekeeping'):
-            self.lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
-        for name in ('mes_alerts', 'mes_alert_sources'):
-            self.lua.globals()[name.upper()] = Path(f'craftsystem/usr/lib/{name}.lua').read_text()
+            self.lua.globals()[name.upper()] = Path(f'drone-logistics/usr/lib/logistics/{"init" if name == "logistics" else name}.lua').read_text()
+        for name in ('alerts', 'alert_sources'):
+            self.lua.globals()['MES_' + name.upper()] = Path(f'craftsystem/usr/lib/mes/{name}.lua').read_text()
         self.lua.execute('''
           local countedIO=io.open
           io.open=function(p,m)
             if p=='/etc/map.cfg' or p=='/etc/warehouse.cfg' or p=='/etc/logistics.drones'
-              or p=='/usr/lib/logistics/agent.lua' then return oldIO(p,m) end
+              or p=='/usr/lib/logistics/drone/agent.lua' then return oldIO(p,m) end
             return countedIO(p,m)
           end
           local ser=require('serialization');local encode=ser.serialize
@@ -34,15 +34,15 @@ class StationsTests(unittest.TestCase):
             push=function(...) EVENTS[#EVENTS+1]={...} end}
           function emit(n,...) for _,f in ipairs(LISTEN[n] or {}) do f(n,...) end end
           function drain() while #EVENTS>0 do local e=table.remove(EVENTS,1);emit(table.unpack(e)) end end
-          package.preload.map=function() return assert(load(MAP))() end
-          map=require('map')
+          package.preload["logistics.map"]=function() return assert(load(MAP))() end
+          map=require('logistics.map')
           local fleet={}
           for i=1,6 do
             local home='home'..i;map.add(home,i-1,65,0)
             FAKES['remote'..i]={token='token'..i,home=home};fleet['d'..i]={address='remote'..i,token='token'..i,home=home}
             if i>1 then map.link('home'..(i-1),home) end
           end
-          map.save();files['/usr/lib/logistics/agent.lua']='return true'
+          map.save();files['/usr/lib/logistics/drone/agent.lua']='return true'
           files['/etc/logistics.drones']=ser.serialize(fleet)
           require('component').modem.send=function(addr,port,token,kind,id,payload)
             local f=FAKES[addr]
@@ -55,16 +55,16 @@ class StationsTests(unittest.TestCase):
             emit('modem_message','local',addr,27103,0,f.token,'report',id,ser.serialize(r))
           end
           package.preload.logistics=function() return assert(load(LOGISTICS))() end
-          package.preload.warehouse=function() return assert(load(WAREHOUSE))() end
-          package.preload.stations=function() return assert(load(STATIONS))() end
-          package.preload.survey=function() return assert(load(SURVEY))() end
-          package.preload.stats=function() return assert(load(STATS))() end
-          package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
-          package.preload.iochest=function() return assert(load(IOCHEST))() end
-          package.preload.mes_alerts=function() return assert(load(MES_ALERTS))() end
-          package.preload.mes_alert_sources=function() return assert(load(MES_ALERT_SOURCES))() end
-          local open=require('store').open;PUTS=0;FLUSHES=0
-          require('store').open=function(p,...)
+          package.preload["logistics.warehouse"]=function() return assert(load(WAREHOUSE))() end
+          package.preload["logistics.stations"]=function() return assert(load(STATIONS))() end
+          package.preload["logistics.survey"]=function() return assert(load(SURVEY))() end
+          package.preload["logistics.stats"]=function() return assert(load(STATS))() end
+          package.preload["logistics.housekeeping"]=function() return assert(load(HOUSEKEEPING))() end
+          package.preload["logistics.iochest"]=function() return assert(load(IOCHEST))() end
+          package.preload["mes.alerts"]=function() return assert(load(MES_ALERTS))() end
+          package.preload["mes.alert_sources"]=function() return assert(load(MES_ALERT_SOURCES))() end
+          local open=require('logistics.store').open;PUTS=0;FLUSHES=0
+          require('logistics.store').open=function(p,...)
             local h=open(p,...)
             if p=='/etc/stations' then
               local put,flush=h.put,h.flush
@@ -75,8 +75,8 @@ class StationsTests(unittest.TestCase):
           end
           function reload()
             LISTEN={};EVENTS={}
-            package.loaded.logistics=nil;package.loaded.warehouse=nil;package.loaded.stations=nil
-            lg=require('logistics');wh=require('warehouse');st=require('stations')
+            package.loaded.logistics=nil;package.loaded["logistics.warehouse"]=nil;package.loaded["logistics.stations"]=nil
+            lg=require('logistics');wh=require('logistics.warehouse');st=require('logistics.stations')
             for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
             drain();assert(#lg.drones()==6)
           end
@@ -144,21 +144,21 @@ class StationsTests(unittest.TestCase):
           assert(st.add('storage',single('boot_chest')));drain()
           assert(st.get('boot_chest').state=='checking')
           LISTEN={};EVENTS={};st=nil
-          package.loaded.stations=nil;package.loaded.logistics=nil;package.loaded.warehouse=nil
-          lg=require('logistics');wh=require('warehouse')
-          assert(package.loaded.stations==nil)
-          package.path='craftsystem/usr/lib/?.lua;'..package.path
-          package.preload.craft_client=function() return {install=function() return {} end,tick=function() end,nextDue=function() end} end
-          package.preload.mes_config=function() return {installRobots=function() end,
+          package.loaded["logistics.stations"]=nil;package.loaded.logistics=nil;package.loaded["logistics.warehouse"]=nil
+          lg=require('logistics');wh=require('logistics.warehouse')
+          assert(package.loaded["logistics.stations"]==nil)
+          package.path='craftsystem/usr/lib/?.lua;craftsystem/usr/lib/?/init.lua;'..package.path
+          package.preload["craft.client"]=function() return {install=function() return {} end,tick=function() end,nextDue=function() end} end
+          package.preload["mes.config"]=function() return {installRobots=function() end,
             config=function() return {crafters={},machineTypes={}} end} end
           require('event').timer=function() return 1 end
           require('event').cancel=function() end
-          assert(require('mes_service').start())
-          assert(package.loaded.stations and package.loaded.stats and package.loaded.mes_alerts and LISTEN.logistics)
-          assert(package.loaded.survey and LISTEN.survey_result)
+          assert(require('mes.service').start())
+          assert(package.loaded["logistics.stations"] and package.loaded["logistics.stats"] and package.loaded["mes.alerts"] and LISTEN.logistics)
+          assert(package.loaded["logistics.survey"] and LISTEN.survey_result)
           for addr,f in pairs(FAKES) do if not f.task then report(addr,0,{state='ready',freeMemory=32000}) end end
           finishAll()
-          st=package.loaded.stations
+          st=package.loaded["logistics.stations"]
           assert(st.get('boot_chest').state=='ready' and wh.members().boot_chest)
         ''')
 
@@ -278,7 +278,7 @@ class StationsTests(unittest.TestCase):
           reload();assert(st.get('chest').jobs[1]==id);finishAll();assert(st.get('chest').state=='ready')
           assert(st.add('storage',single('evicted',9,2)))
           -- Recorded queued job is deliberately evicted from the same canonical store.
-          local job=st.get('evicted').jobs[1];local h=require('store').open('/etc/logistics.state','log');h:load()
+          local job=st.get('evicted').jobs[1];local h=require('logistics.store').open('/etc/logistics.state','log');h:load()
           h:delete('job_'..job);h:flush();reload();finishAll()
           assert(st.get('evicted').state=='ready' and st.get('evicted').jobs[1]==nil)
         ''')
@@ -304,7 +304,7 @@ class StationsTests(unittest.TestCase):
                   assert(st.get('b').jobs[1]==id,'shared edge dispatched twice')
                   if RESTART=='active' then drain();reload()
                   elseif RESTART=='missing' then
-                    local h=require('store').open('/etc/logistics.state','log');h:load()
+                    local h=require('logistics.store').open('/etc/logistics.state','log');h:load()
                     h:delete('job_'..id);h:flush();reload()
                   end
                   assert(st.get('a').jobs[1]==st.get('b').jobs[1])
@@ -419,7 +419,7 @@ class StationsTests(unittest.TestCase):
         ''')
 
     def test_mapd_immediate_station_operations(self):
-        self.lua.globals().MAPD = Path('drone-logistics/bin/mapd.lua').read_text()
+        self.lua.globals().MAPD = Path('drone-logistics/usr/bin/mapd.lua').read_text()
         self.lua.execute('''
           local ser=require('serialization');disk['/etc/mapd.cfg']=ser.serialize({key='key'})
           local modem=require('component').modem;local send=modem.send;local replies={}
@@ -455,7 +455,7 @@ class StationsTests(unittest.TestCase):
           assert(finishOne());assert(finishOne());assert(st.get('row').phase=='read')
           -- Restore a checking record which owns reads of both access faces.
           local r=st.get('row');local ids=wh.scan('row2');r.jobs[#r.jobs+1]=ids[1]
-          local h=require('store').open('/etc/stations','log');h:load();h:put('st_row',r);h:flush()
+          local h=require('logistics.store').open('/etc/stations','log');h:load();h:put('st_row',r);h:flush()
           reload();finishAll();assert(st.get('row').state=='failed')
           assert(st.get('row').reason:find('inventory size mismatch',1,true))
           local before=PUTS;wh.scan('row2');finishAll();assert(PUTS==before)
@@ -469,7 +469,7 @@ class StationsTests(unittest.TestCase):
           assert(st.remove('source',{items='move'}));local id=st.get('source').jobs[1]
           table.remove(LISTEN.logistics) -- Warehouse settles, station misses completion.
           finishAll();assert(INV['h5_65_2:0'].count==0 and INV['h1_65_2:0'].count==2)
-          local h=require('store').open('/etc/logistics.state','log');h:load();h:delete('job_'..id);h:flush()
+          local h=require('logistics.store').open('/etc/logistics.state','log');h:load();h:delete('job_'..id);h:flush()
           reload();assert(not st.get('source') and not map.node('h5_65_2'))
           assert(wh.count({name='mod:seed',damage=0})==2)
         ''')

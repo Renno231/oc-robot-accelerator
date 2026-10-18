@@ -1,4 +1,4 @@
-local map=require('map');local wh=require('warehouse');local lg=require('logistics')
+local map=require('logistics.map');local wh=require('logistics.warehouse');local lg=require('logistics')
 local function node(x,y,z,faces,charger)
   local name=x..':'..y..':'..z
   if not map.node(name) then map.add(name,x,y,z,{faces=faces,charger=charger}) end

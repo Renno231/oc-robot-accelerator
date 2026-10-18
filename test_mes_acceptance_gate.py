@@ -148,7 +148,7 @@ class MesAcceptanceGateTests(unittest.TestCase):
                     for source in (ROOT/'drone-logistics/lib').glob('*.lua'):
                         self.assertEqual(source.read_bytes(), (program/'usr/lib'/source.name).read_bytes())
                     for source in (ROOT/'craftsystem/usr').rglob('*'):
-                        if source.is_file() and 'mes_ui' not in source.parts and source.name != 'mesui.lua':
+                        if source.is_file() and '/mes/ui/' not in source.as_posix() and source.name != 'mesui.lua':
                             self.assertEqual(source.read_bytes(), (program/'usr'/source.relative_to(ROOT/'craftsystem/usr')).read_bytes())
                     main = (program/'main.lua').read_text()
                     self.assertIn('mes.registerRobot(', main)

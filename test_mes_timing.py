@@ -7,7 +7,7 @@ from lupa.lua53 import LuaRuntime
 class TimingTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
-        source = Path('craftsystem/usr/lib/mes_timing.lua').read_text()
+        source = Path('craftsystem/usr/lib/mes/timing.lua').read_text()
         self.lua.execute('T=(function()\n' + source + '\nend)()')
         self.lua.execute('''
           SIGNALS={};package.preload.event=function() return {push=function(...) SIGNALS[#SIGNALS+1]={...} end} end

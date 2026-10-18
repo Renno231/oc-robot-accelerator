@@ -1,7 +1,6 @@
-local fs=require('filesystem');fs.makeDirectory('/usr/lib/logistics')
-for _,name in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua')) end
-assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
-local map=require('map');local event=require('event');local computer=require('computer')
+local fs=require('filesystem')
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
+local map=require('logistics.map');local event=require('event');local computer=require('computer')
 map.add('H',0,65,0,{charger=true});map.add('A',0,65,2,{faces={[0]=true}})
 map.add('M',3,65,2);map.add('B',6,65,2,{faces={[0]=true}})
 map.link('H','A');map.link('A','M');map.link('M','B');map.name('a','A',0);map.name('b','B',0);map.save()
@@ -12,7 +11,7 @@ local function wait(predicate)
 end
 wait(function() return #lg.pending()==1 end);assert(lg.register(lg.pending()[1],'d','H'))
 wait(function() return lg.drones()[1].state=='idle' end)
-local wh=require('warehouse');local complete={}
+local wh=require('logistics.warehouse');local complete={}
 event.listen('logistics',function(_,id) complete[id]=true end)
 local function done(id) assert(id);wait(function() return complete[id] end);return assert(lg.status(id)) end
 local function scan(list) for _,id in ipairs(wh.scan(list)) do assert(done(id).state=='done') end end

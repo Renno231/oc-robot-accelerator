@@ -23,7 +23,7 @@ end)
 -- Invoke rc in this boot process, not a subprocess that closes store handles.
 local rc=assert(loadfile('/bin/rc.lua'))
 assert(rc('mes','enable')~=1);assert(rc('mes','start')~=1)
-local mes,lg,wh=require('mes'),require('logistics'),require('warehouse')
+local mes,lg,wh=require('mes'),require('logistics'),require('logistics.warehouse')
 local case=assert(loadfile('/home/program/case.lua'))()
 local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand'
 local setup=assert(loadfile('/home/program/setup.lua'))()
@@ -89,7 +89,7 @@ else
       assert(wh.count(item(order[1]))==order[2],'wrong parts count: '..order[1])
     end
     if case.name=='robot-expand' then
-      local map=require('map')
+      local map=require('logistics.map')
       map.add('11:65:2',11,65,2,{faces={[3]=true}})
       map.add('12:65:2',12,65,2,{faces={[2]=true}})
       map.link('10:65:2','11:65:2');map.link('11:65:2','12:65:2')
@@ -147,7 +147,7 @@ else
     assert(wh.count(item('minecraft:stick'))==0)
     ids={first}
   elseif case.name=='stockkeeper' then
-    local plans,keeper=require('craft_plans'),require('stockkeeper')
+    local plans,keeper=require('craft.plans'),require('craft.stockkeeper')
     assert(plans.save('Bricks',plan))
     assert(keeper.save('Bricks',{item=target,quantity=16,trigger='replacement',
       source={kind='plan',name='Bricks'}}))
@@ -160,7 +160,7 @@ else
     assert(keeper.disable('Bricks'))
     ids={}
   elseif case.name=='merged-kit' or case.name=='selected-kit' then
-    local plans,kits=require('craft_plans'),require('craft_kits')
+    local plans,kits=require('craft.plans'),require('craft.kits')
     local torches=assert(mes.plan('minecraft:torch',16))
     if case.name=='selected-kit' then
       for _,entry in ipairs({{plan,'cpu2','furnaceA'},{torches,'cpu1','furnaceB'}}) do

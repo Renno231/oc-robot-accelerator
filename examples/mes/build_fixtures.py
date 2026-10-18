@@ -9,9 +9,9 @@ import shutil
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'examples/mes'
 ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control')
-ROBOT_LIBRARIES = ('api', 'tnet', 'hosts', 'pubsub', 'craft_executor', 'craft_receipts',
-                   'craft_plan', 'craft_resources', 'craft_tool_budget', 'craft_tool_rules',
-                   'item_identity', 'robinv')
+ROBOT_LIBRARIES = ('api', 'tnet', 'hosts', 'pubsub', 'craft.executor', 'craft.receipts',
+                   'craft.plan', 'craft.resources', 'craft.tool_budget', 'craft.tool_rules',
+                   'item_identity', 'craft.robinv')
 OCPARTS_QTY = 64
 OCPARTS_BATCH = 16
 OCPARTS_STOCK = {'minecraft:iron_ingot': 128, 'minecraft:gold_ingot': 32,
@@ -202,21 +202,19 @@ def build_native(target, case, mode='coordinated', seconds=10):
 
     program = target / 'program'
     shutil.copytree(ROOT / 'craftsystem/usr', program / 'usr',
-                    ignore=shutil.ignore_patterns('mes_ui', 'mesui.lua'))
+                    ignore=lambda folder, names: [n for n in names if n == 'mesui.lua' or (n == 'ui' and Path(folder).name == 'mes')])
     for disk in [program] + [target / r['program']['directory'] for r in value['robots']]:
         if disk != program:
             (disk / 'usr/bin').mkdir(parents=True)
             (disk / 'usr/lib').mkdir()
             shutil.copyfile(ROOT / 'craftsystem/usr/bin/cproc.lua', disk / 'usr/bin/cproc.lua')
             for name in ROBOT_LIBRARIES:
-                shutil.copyfile(ROOT / 'craftsystem/usr/lib' / (name + '.lua'), disk / 'usr/lib' / (name + '.lua'))
+                relative = name.replace('.', '/') + '.lua'
+                (disk / 'usr/lib' / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / 'craftsystem/usr/lib' / relative, disk / 'usr/lib' / relative)
         shutil.copyfile(SOURCE / 'install.lua', disk / 'install.lua')
     shutil.copytree(ROOT / 'craftsystem/etc', program / 'etc')
-    for folder in ('lib', 'bin'):
-        shutil.copytree(ROOT / 'drone-logistics' / folder, program / 'usr' / folder, dirs_exist_ok=True)
-    (program / 'usr/lib/logistics').mkdir()
-    for name in ('agent', 'sensor', 'survey'):
-        shutil.copyfile(ROOT / 'drone-logistics/drone' / (name + '.lua'), program / 'usr/lib/logistics' / (name + '.lua'))
+    shutil.copytree(ROOT / 'drone-logistics/usr', program / 'usr', dirs_exist_ok=True)
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', target / 'loader.lua')
     shutil.copyfile(SOURCE / 'native.lua', program / 'main.lua')
     setup = (SOURCE / 'setup.lua').read_text()

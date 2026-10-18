@@ -26,7 +26,7 @@ else
     record={id=id,case=restartCase};save('/home/r4-run.lua',record)
   end)
 end
-local mes,lg,wh=require('mes'),require('logistics'),require('warehouse')
+local mes,lg,wh=require('mes'),require('logistics'),require('logistics.warehouse')
 local function wait(predicate)
   while not predicate() do event.pull() end
 end
@@ -37,7 +37,7 @@ local function restart(reason)
 end
 local cycleTarget,recoveryStarted,recoveryFinished,carriedHome
 local function lostAlert(state)
-  for _,row in ipairs(require('mes_alerts').list()) do
+  for _,row in ipairs(require('mes.alerts').list()) do
     if row.kind=='droneLost' and row.key==cycleTarget and row.state==state then return row end
   end
 end
@@ -173,7 +173,7 @@ def build(root, case):
         entry = fixture / 'robot-program/main.lua'
         entry.write_text(ROBOT_INJECTION + entry.read_text())
     if case == 'drone-trip':
-        entry = fixture / 'program/usr/lib/logistics/agent.lua'
+        entry = fixture / 'program/usr/lib/logistics/drone/agent.lua'
         text = entry.read_text();marker = 'local function encode(v)'
         assert marker in text
         entry.write_text(text.replace(marker, DRONE_INJECTION + '\n' + marker, 1))

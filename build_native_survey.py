@@ -13,7 +13,7 @@ local eventFailure
 event.onError=function(reason) eventFailure=tostring(reason) end
 save('/etc/store.cfg',{variant='log'})
 local fixture=assert(loadfile('/home/program/survey-case.lua'))()
-local map=require('map');local lg=require('logistics');local wh=require('warehouse')
+local map=require('logistics.map');local lg=require('logistics');local wh=require('logistics.warehouse')
 local distances={}
 event.listen('modem_message',function(_,_,sender,port,distance,token)
   if port==27103 and token=='lgx_hello' then distances[sender]=distance end
@@ -22,7 +22,7 @@ for i=1,6 do local n='home'..i;map.add(n,-2,65,i+1,{charger=true})
   if i>1 then map.link('home'..(i-1),n) end
 end
 map.add('corridor',0,65,8);map.link('home6','corridor');map.save()
-local st=require('stations')
+local st=require('logistics.stations')
 local function wait(fn)
   local deadline=computer.uptime()+1200
   repeat assert(not eventFailure,eventFailure);if fn() then return end;event.pull(.1) until computer.uptime()>deadline
@@ -35,7 +35,7 @@ wait(function() for _,d in ipairs(lg.drones()) do if d.state~='idle' then return
 local carrier
 for _,d in ipairs(lg.drones()) do if d.survey then assert(not carrier);carrier=d end end
 assert(carrier and carrier.cargoSlots==4)
-local sv=require('survey')
+local sv=require('logistics.survey')
 local id=assert(sv.request(fixture.area))
 wait(function() local r=sv.list()[id];assert(r.state~='failed',r.reason);return r.state=='proposed' end)
 local r=sv.get(id);local choices={};local wall,double,choose,machine,torch

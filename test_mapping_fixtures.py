@@ -15,7 +15,7 @@ class MappingFixturesTests(unittest.TestCase):
                 self.assertEqual('second-program',spec.normalized['secondComputer']['program']['directory'])
                 self.assertEqual('baseline',spec.normalized['execution']['mode'])
                 for program in ('program','client'):
-                    for path in ('lib/map.lua','lib/cbor.lua','lib/store.lua','lib/mapclient.lua','bin/mapd.lua','bin/mapclient.lua'):
+                    for path in ('usr/lib/logistics/map.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/mapclient.lua','usr/bin/mapd.lua','usr/bin/mapclient.lua'):
                         self.assertEqual((source/path).read_bytes(),(root/program/path).read_bytes())
                 with tempfile.TemporaryDirectory() as t:
                     destination=Path(t)/'inputs';hashes=runner_scenario.freeze(spec,destination)
@@ -23,11 +23,11 @@ class MappingFixturesTests(unittest.TestCase):
                     self.assertEqual((root/'client/main.lua').read_bytes(),(destination/'second-program/main.lua').read_bytes())
                 if case=='service':
                     self.assertEqual([],spec.normalized['drones'])
-                    self.assertFalse((root/'program/lib/logistics.lua').exists())
+                    self.assertFalse((root/'program/usr/lib/logistics/init.lua').exists())
                 else:
                     self.assertEqual((source/'drone/loader.lua').read_bytes(),(root/'loader.lua').read_bytes())
                     self.assertLessEqual((root/'loader.lua').stat().st_size,4096)
-                    for path in ('lib/logistics.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua'):
+                    for path in ('usr/lib/logistics/init.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/drone/agent.lua'):
                         self.assertEqual((source/path).read_bytes(),(root/'program'/path).read_bytes())
 
 

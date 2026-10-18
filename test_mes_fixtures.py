@@ -35,12 +35,12 @@ class MesFixtureTests(unittest.TestCase):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute('''
           FILTERS={};local nodes={}
-          package.preload.map=function() return {
+          package.preload["logistics.map"]=function() return {
             node=function(n) return nodes[n] end,
             add=function(n,x,y,z) nodes[n]={x=x,y=y,z=z} end,
             name=function() end,group=function() end,link=function() end,
             nodes=function() return nodes end,save=function() end} end
-          package.preload.warehouse=function() return {
+          package.preload["logistics.warehouse"]=function() return {
             add=function(n,opts) FILTERS[n]=opts end,group=function() end} end
           package.preload.logistics=function() return {} end
         ''')
@@ -112,12 +112,12 @@ class MesFixtureTests(unittest.TestCase):
           assert(db.registerProcessingRecipe('minecraft:coal:1','furnace',{recipe={'minecraft:log'},qty=1}))
           assert(db.registerProcessingRecipe('minecraft:brick','furnace',{recipe={'minecraft:clay_ball'},qty=1}))
           package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
-          package.preload.craft_tools=function() return {list=function() return {} end} end
+          package.preload["craft.tools"]=function() return {list=function() return {} end} end
           function plan(id,stacks)
-            local p=require('craftingv4_4').calculateCraftingPlan(id,16,
+            local p=require('craft.demand').calculateCraftingPlan(id,16,
               {getAllStacks=function() return {getAll=function() return stacks end} end},0,true)
             for i=1,100 do if not p.yield_data then assert(p.craftable,p.error);return p end
-              require('craftingv4_4').resumeCalculation(p) end
+              require('craft.demand').resumeCalculation(p) end
             error('planner did not terminate')
           end
           TORCH=plan('minecraft:torch',{{name='minecraft:log',damage=0,size=8,maxSize=64},

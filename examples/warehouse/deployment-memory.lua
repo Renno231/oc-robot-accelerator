@@ -26,7 +26,7 @@ return function(save)
   local oldGpu=rawget(component,'gpu');local oldTtyGpu=tty.window.gpu;local proxy=component.proxy
   component.proxy=function(address) if address==gpu.address then return gpu end;return proxy(address) end
   component.gpu=gpu;tty.bind(gpu)
-  local ui=require('warehouse.ui');require('qmenu');settle();result.afterLoad=computer.freeMemory()
+  local ui=require('logistics.warehouse.ui');require('qmenu');settle();result.afterLoad=computer.freeMemory()
   local script={{kind='items',action='detail'},{kind='item',action='back'},
     {kind='items',action='tab'},{kind='storages',action='detail'},{kind='storage',action='back'},
     {kind='storages',action='tab'},{kind='machines',action='detail'},{kind='machine',action='back'},
@@ -51,7 +51,7 @@ return function(save)
   assert(index==#script+1,'not all screens rendered');settle()
   result.withUI={steady=steadyOpen,minimum=minimum,afterClose=computer.freeMemory()}
   local fs=require('filesystem');result.codeBytes={}
-  for _,path in ipairs({'/lib/warehouse/view.lua','/lib/warehouse/ui.lua','/lib/qmenu.lua','/lib/term.lua','/lib/tty.lua','/lib/core/term.lua','/lib/core/cursor.lua','/lib/core/full_cursor.lua','/lib/core/full_tty.lua','/lib/keyboard.lua'}) do
+  for _,path in ipairs({'/usr/lib/logistics/warehouse/view.lua','/usr/lib/logistics/warehouse/ui.lua','/lib/qmenu.lua','/lib/term.lua','/lib/tty.lua','/lib/core/term.lua','/lib/core/cursor.lua','/lib/core/full_cursor.lua','/lib/core/full_tty.lua','/lib/keyboard.lua'}) do
     if fs.exists(path) then result.codeBytes[path]=fs.size(path) end
   end
   component.gpu=oldGpu;component.proxy=proxy;tty.window.gpu=oldTtyGpu

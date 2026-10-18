@@ -248,8 +248,8 @@ defer GC longer, so minimum free does not simply rise by exactly one megabyte.
 
 ### Where the UI memory goes
 
-Deployed source sizes: view **{sizes['/lib/warehouse/view.lua']:,}**, UI
-**{sizes['/lib/warehouse/ui.lua']:,}**, unmodified qmenu
+Deployed source sizes: view **{sizes['/usr/lib/logistics/warehouse/view.lua']:,}**, UI
+**{sizes['/usr/lib/logistics/warehouse/ui.lua']:,}**, unmodified qmenu
 **{sizes['/lib/qmenu.lua']:,}** bytes (combined **39,122**). OpenOS term is
 **{sizes['/lib/term.lua']:,}**, tty **{sizes['/lib/tty.lua']:,}**, cursor
 **{sizes['/lib/core/cursor.lua']:,}**, full_cursor
@@ -292,7 +292,7 @@ Recommended controller RAM for this deployment: **two ram6 sticks (2 MB)**.
 All new cycles use `C:/or/drone-install-T10`, freshly built from this source.
 Only generated acceptance programs, measurement/comparison helpers and the
 fixture-scoped native 20-item player-action seam changed. Canonical
-`drone-logistics/lib/*`, loader and agent are unchanged and byte-identical in
+`drone-logistics/usr/lib/logistics/*`, loader and agent are unchanged and byte-identical in
 generated deployments; qmenu remains unmodified. The controller test drives
 processing; opaque machine groups do not automate smelting.
 

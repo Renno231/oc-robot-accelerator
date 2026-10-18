@@ -30,7 +30,7 @@ class LogisticsManyTests(unittest.TestCase):
 
     def test_transfer_rejects_unreachable_delivery_before_dispatch(self):
         self.lua.execute('''
-          local map=require('map')
+          local map=require('logistics.map')
           local theta=map.theta
           map.theta=function(a,b,...) if a=='source' and b=='dest' then return nil end;return theta(a,b,...) end
           local id=lg.transfer({name='mod:a'},4,'source','dest')
@@ -40,7 +40,7 @@ class LogisticsManyTests(unittest.TestCase):
         ''')
 
     def test_agent_waiting_take_stops_at_minimum_or_waits_for_it(self):
-        source = Path('drone-logistics/drone/agent.lua').read_text()
+        source = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         function = source[source.index('local function waitingTake('):source.index('local function runSteps(')]
         self.lua.execute('''
           STOCK=1;PULLS=0;CLOCK=0
@@ -129,7 +129,7 @@ class LogisticsManyTests(unittest.TestCase):
         ''')
 
     def test_agent_delivers_cargo_it_already_holds(self):
-        source = Path('drone-logistics/drone/agent.lua').read_text()
+        source = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         function = source[source.index('local function runSteps('):source.index('if not x or drone.getOffset()>=.02 then')]
         self.lua.execute('''
           slots=2;CARGO={{name='mod:a',damage=0,size=3,maxSize=64}};PUT={};REPORTS={}
@@ -150,7 +150,7 @@ class LogisticsManyTests(unittest.TestCase):
         '''), ('stock', 3, 3, 0, 0))
 
     def test_charging_interruption_returns_cargo_or_blocks_with_it_held(self):
-        source = Path('drone-logistics/drone/agent.lua').read_text()
+        source = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         function = source[source.index('local function runSteps('):source.index('if not x or drone.getOffset()>=.02 then')]
         self.lua.execute('''
           HELD=0;slots=4;VISITS={}
@@ -200,7 +200,7 @@ class LogisticsManyTests(unittest.TestCase):
           require('component').modem.send=function(address,port,token,kind,id,payload)
             SENT[#SENT+1]={kind=kind,id=id,payload=payload}
           end
-          local m=require('map');m.node=function(name) return {x=0,y=0,z=0,charger=true,faces={[0]=true}} end
+          local m=require('logistics.map');m.node=function(name) return {x=0,y=0,z=0,charger=true,faces={[0]=true}} end
           m.theta=function(a,b) return {a,b} end
           files['/etc/logistics.drones']=require('serialization').serialize({
             d1={address='remote',token='secret',home='home'}})

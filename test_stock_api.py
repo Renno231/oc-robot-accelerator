@@ -116,7 +116,7 @@ class LibraryApiTests(unittest.TestCase):
     def load(self, library, variable):
         if library in ('map', 'warehouse', 'logistics') and not self.lua.globals().STORE_SOURCE:
             install_store(self.lua, preserve_io=True)
-        self.lua.globals().SOURCE = Path(f'drone-logistics/lib/{library}.lua').read_text()
+        self.lua.globals().SOURCE = Path(f'drone-logistics/usr/lib/logistics/{"init" if library == "logistics" else library}.lua').read_text()
         self.lua.execute(f'{variable}=assert(load(SOURCE))()')
 
     def test_map_shared_indexes_every_edit_and_load(self):
@@ -144,8 +144,8 @@ class LibraryApiTests(unittest.TestCase):
 
     def load_logistics(self):
         self.lua.execute('''
-          files['/usr/lib/logistics/agent.lua']='return true'
-          package.preload.map=function() return {
+          files['/usr/lib/logistics/drone/agent.lua']='return true'
+          package.preload["logistics.map"]=function() return {
             buildClear=function() end,
             storage=function(s) return {node=s,side=0} end,
             node=function(s) return {x=0,y=0,z=0,faces={[0]=true}} end,
@@ -157,7 +157,7 @@ class LibraryApiTests(unittest.TestCase):
     def test_warehouse_real_map_edits_invalidate_stock_cache(self):
         self.load('map', 'map')
         self.lua.execute('''
-          package.loaded.map=map
+          package.loaded["logistics.map"]=map
           package.preload.computer=function() return {uptime=function() return 0 end} end
           jobs={}
           package.preload.logistics=function() return {

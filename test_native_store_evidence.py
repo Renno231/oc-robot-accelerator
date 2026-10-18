@@ -17,7 +17,7 @@ class NativeStoreEvidenceTest(unittest.TestCase):
 
     def setUp(self):
         self.lua = LuaRuntime(encoding=None)
-        self.lua.execute(b'cbor=assert(load(...))()', Path('drone-logistics/lib/cbor.lua').read_bytes())
+        self.lua.execute(b'cbor=assert(load(...))()', Path('drone-logistics/usr/lib/cbor.lua').read_bytes())
 
     def encode(self, expression):
         return self.lua.eval(('cbor.encode(' + expression + ')').encode('utf-8'))

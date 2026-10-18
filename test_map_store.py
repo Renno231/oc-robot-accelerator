@@ -13,9 +13,9 @@ class MapStoreTests(unittest.TestCase):
         fixture.setUp()
         self.lua = fixture.lua
         install_store(self.lua)
-        self.lua.globals().MAP_SOURCE = Path('drone-logistics/lib/map.lua').read_text()
+        self.lua.globals().MAP_SOURCE = Path('drone-logistics/usr/lib/logistics/map.lua').read_text()
         self.lua.execute('''
-          package.preload.map=function() return assert(load(MAP_SOURCE))() end
+          package.preload["logistics.map"]=function() return assert(load(MAP_SOURCE))() end
           writes={};errors='';whole=0
           io.stderr={write=function(_,s) errors=errors..s end}
           local ser=require('serialization');local serialize=ser.serialize
@@ -23,8 +23,8 @@ class MapStoreTests(unittest.TestCase):
             if type(t)=='table' and t.nodes and t.links then whole=whole+1 end
             return serialize(t,...)
           end
-          local open=require('store').open
-          require('store').open=function(path,...)
+          local open=require('logistics.store').open
+          require('logistics.store').open=function(path,...)
             local h=open(path,...)
             if path=='/etc/map.db' then
               local put,delete,flush=h.put,h.delete,h.flush
@@ -54,7 +54,7 @@ class MapStoreTests(unittest.TestCase):
 
     def test_every_mutator_exact_affected_records_and_unchanged_fs(self):
         self.lua.execute('''
-          map=require('map');writes={}
+          map=require('logistics.map');writes={}
           map.add('a',0,0,0);expect('put:n:a')
           map.add('b',1,0,0,{faces={[0]=true}});expect('put:n:b')
           map.add('c',2,0,0);expect('put:n:c')
@@ -89,13 +89,13 @@ class MapStoreTests(unittest.TestCase):
             assert(disk['/etc/map.db'] and #disk['/etc/map.db']>0)
             assert(writes[#writes][1]=='flush');return rename(a,b)
           end
-          map=require('map')
+          map=require('logistics.map')
           expect('put:n:a','put:n:b','put:l:a|b','put:s:stock','flush:')
           assert(equal(map.nodes(),legacy.nodes) and equal(map.storages(),legacy.storages))
           assert(map.links('a')[1]=='b' and not disk['/etc/map.cfg'] and disk['/etc/map.cfg.bak']==text)
           local saved=map.nodes();map.save();expect('flush:')
           disk['/etc/map.cfg']='invalid old source must not override DB'
-          package.loaded.map=nil;map=require('map');expect()
+          package.loaded["logistics.map"]=nil;map=require('logistics.map');expect()
           assert(equal(saved,map.nodes()) and equal(map.storages(),legacy.storages))
           assert(map.route('a','b')[2]=='b' and renames==1 and errors=='')
           assert(disk['/etc/map.cfg']=='invalid old source must not override DB')
@@ -108,7 +108,7 @@ class MapStoreTests(unittest.TestCase):
                 self.lua.globals().TEXT = text
                 self.lua.execute('''
                   disk['/etc/map.cfg']=TEXT
-                  local ok,m=pcall(require,'map');assert(ok)
+                  local ok,m=pcall(require,'logistics.map');assert(ok)
                   assert(m.loadError and #errors>0 and errors:find('map:',1,true))
                   assert(not disk['/etc/map.db'] and disk['/etc/map.cfg']==TEXT and renames==0)
                   local loaded,reason=m.load();assert(not loaded and reason==m.loadError)
@@ -117,11 +117,11 @@ class MapStoreTests(unittest.TestCase):
 
     def test_restart_after_all_kinds_of_edits_preserves_full_graph(self):
         self.lua.execute('''
-          map=require('map');map.add('a',0,0,0);map.add('b',1,0,0);map.add('c',2,0,0)
+          map=require('logistics.map');map.add('a',0,0,0);map.add('b',1,0,0);map.add('c',2,0,0)
           map.link('a','b');map.link('c','b');map.name('stock','a',0);map.name('old','c',1)
           map.unname('old');map.unlink('b','c');map.remove('c');map.add('b',3,0,0,{charger=true})
           map.save();local n,s=map.nodes(),map.storages()
-          package.loaded.map=nil;map=require('map')
+          package.loaded["logistics.map"]=nil;map=require('logistics.map')
           assert(equal(n,map.nodes()) and equal(s,map.storages()))
           assert(#map.links('a')==1 and map.links('a')[1]=='b' and #map.links('b')==1)
           assert(#map.names()==2 and map.node('b').charger and map.route('a','b')[2]=='b')
@@ -137,8 +137,8 @@ class MapStoreTests(unittest.TestCase):
             assert(not (type(t)=='table' and t.nodes and t.links),'whole map serialize')
             return encode(t,...)
           end
-          local open=require('store').open;local phases=0;local mapFlushes=0
-          require('store').open=function(path,...)
+          local open=require('logistics.store').open;local phases=0;local mapFlushes=0
+          require('logistics.store').open=function(path,...)
             local h=open(path,...);return h
           end
           local save=map.save
@@ -153,7 +153,7 @@ class MapStoreTests(unittest.TestCase):
           assert(mapFlushes==FLUSHES-before and mapFlushes==16)
           assert(not files['/etc/map.cfg'])
           map.save();local nodes=map.nodes();local source=MAP
-          package.loaded.map=nil;local fresh=assert(load(source))()
+          package.loaded["logistics.map"]=nil;local fresh=assert(load(source))()
           local function eq(a,b)
             if type(a)~='table' then return a==b end
             if type(b)~='table' then return false end

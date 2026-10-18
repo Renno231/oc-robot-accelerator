@@ -53,13 +53,13 @@ def build():
     value['expect']['containers'] = [{'position': list(p), 'slots': [{'slot': 27 if p[0] in (1, 2, 3, 4) else 1,
                                        'item': 'minecraft:iron_ingot', 'count': n}]} for p, n in expected.items()]
     (target / 'scenario.json').write_text(json.dumps(value, indent=2) + '\n')
-    for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'lib/cbor.lua', 'lib/store.lua', 'drone/agent.lua', 'bin/warehouse.lua'):
+    for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/logistics/warehouse.lua', 'usr/lib/cbor.lua', 'usr/lib/logistics/store.lua', 'usr/lib/logistics/drone/agent.lua', 'usr/bin/warehouse.lua'):
         destination = program / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'drone-logistics' / path, destination)
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', target / 'loader.lua')
     shutil.copyfile(ROOT / 'examples/warehouse/room.lua', program / 'main.lua')
-    for path in ('lib/warehouse/view.lua', 'lib/warehouse/ui.lua'):
+    for path in ('usr/lib/logistics/warehouse/view.lua', 'usr/lib/logistics/warehouse/ui.lua'):
         destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/'drone-logistics'/path,destination)
     shutil.copyfile(ROOT/'fixtures/qmenu.lua',program/'lib/qmenu.lua')
@@ -97,7 +97,7 @@ def build_slots():
         {'position': [6, 64, 2], 'slots': [{'slot': 27, 'item': 'minecraft:ender_pearl', 'count': 16}]},
         {'position': [6, 64, 6], 'slots': [{'slot': 1, 'item': 'minecraft:iron_ingot', 'count': 1}]}]
     (target / 'scenario.json').write_text(json.dumps(value, indent=2) + '\n')
-    for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/warehouse.lua', 'lib/cbor.lua', 'lib/store.lua', 'drone/agent.lua', 'bin/warehouse.lua'):
+    for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/logistics/warehouse.lua', 'usr/lib/cbor.lua', 'usr/lib/logistics/store.lua', 'usr/lib/logistics/drone/agent.lua', 'usr/bin/warehouse.lua'):
         destination = program / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'drone-logistics' / path, destination)
@@ -116,7 +116,7 @@ def build_nbt():
         {'position':[0,64,2],'slots':[{'slot':i,'count':0} for i in range(1,6)]},
         {'position':[6,64,2],'slots':[{'slot':i,'item':'minecraft:iron_ingot','count':16} for i in range(1,6)]}]
     (target/'scenario.json').write_text(json.dumps(value,indent=2)+'\n')
-    for path in ('lib/map.lua','lib/logistics.lua','lib/warehouse.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua','bin/warehouse.lua'):
+    for path in ('usr/lib/logistics/map.lua','usr/lib/logistics/init.lua','usr/lib/logistics/warehouse.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/drone/agent.lua','usr/bin/warehouse.lua'):
         destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/'drone-logistics'/path,destination)
     shutil.copyfile(ROOT/'drone-logistics/drone/loader.lua',target/'loader.lua')
