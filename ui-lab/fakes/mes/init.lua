@@ -142,7 +142,7 @@ function M.plan(item,qty,opts)
   if opts.selectChoice then
     local ok,err=pcall(choose,item,opts);if not ok then return nil,tostring(err) end
   end
-  local p={item=item,qty=qty,tasks={},missing={}}
+  local p={requestItem=item,requestQuantity=qty,tasks={},missing={}}
   if item=="minecraft:torch" then
     local n=math.ceil(qty/4)
     p.stages={
@@ -182,11 +182,11 @@ local busy
 function M.run(plan)
   if busy then return nil,"busy" end
   if #plan.missing>0 then return nil,"missing inputs" end
-  local id=#runs+1;local r={id=id,item=plan.item,qty=plan.qty,status="running",stage=1,started=computer.uptime(),stages={}}
+  local id=#runs+1;local r={id=id,item=plan.requestItem,qty=plan.requestQuantity,status="running",stage=1,started=computer.uptime(),stages={}}
   for k,s in ipairs(plan.stages) do r.stages[k]={kind=s.kind,state="waiting",done=0,total=s.outputs[1].qty,detail="",crafter=s.crafter or (s.kind=="robot" and "cpu1") or nil,groups=s.kind=="machine" and (s.groups=="any" and {"furnaceA","furnaceB"} or s.groups) or nil} end
   runs[id]=r;busy=id
   local seq={"fetching","crafting","storing","done"};local k,step=1,1
-  local fail=plan.item=="minecraft:brick_block" and plan.qty>24
+  local fail=plan.requestItem=="minecraft:brick_block" and plan.requestQuantity>24
   local tick
   function tick()
     local s=r.stages[k];if not s then return end
