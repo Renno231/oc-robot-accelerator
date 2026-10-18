@@ -35,34 +35,34 @@ end end
 local labTimers={}
 for _,a in ipairs(args) do
   if a=="sensor" then local function fire() require("logistics").labAnnounceSensor() end;labTimers[#labTimers+1]=event.timer(6,fire) end
-  if a=="deposit" then local function fire() require("iochest").labDeposit() end;labTimers[#labTimers+1]=event.timer(6,fire) end
+  if a=="deposit" then local function fire() require("logistics.iochest").labDeposit() end;labTimers[#labTimers+1]=event.timer(6,fire) end
   if a=="sensorlist" then require("logistics").labSensorList() end
   -- `norobots`: mes().robots() is empty (no robot paired).
   if a=="norobots" then require("mes").labNoRobots=true end
   -- `whchange`: 10 s in, 640 cobblestone arrive (a warehouse "changed").
-  if a=="whchange" then local function fire() require("warehouse").labChange() end;labTimers[#labTimers+1]=event.timer(10,fire) end
+  if a=="whchange" then local function fire() require("logistics.warehouse").labChange() end;labTimers[#labTimers+1]=event.timer(10,fire) end
   -- `stats76` (default), `stats96`, `statsempty`, `statsunread`: the stats scenario.
-  if a:match("^stats%w+$") then require("stats").labScenario(a:sub(6)) end
-  -- `timing`: machines in every learned-timing case (fakes/mes.lua).
+  if a:match("^stats%w+$") then require("logistics.stats").labScenario(a:sub(6)) end
+  -- `timing`: machines in every learned-timing case (fakes/mes/init.lua).
   if a=="timing" then require("mes").labTiming() end
   -- `learn` (with `timing`): 10 s in, pressA learns a lower bound and
   -- signals ('mes','timing','pressA') as mes_timing.persist does.
   if a=="learn" then local function fire() require("mes").labLearn() end;labTimers[#labTimers+1]=event.timer(10,fire) end
-  -- `surveys`: one survey in each state (fakes/survey.lua); drone1 is the
+  -- `surveys`: one survey in each state (fakes/logistics/survey.lua); drone1 is the
   -- survey drone; the surveying one is proposed 45 s in. `nosurveydrone`
   -- (after it): no drone has a geolyzer.
-  if a=="surveys" then require("survey").labScenario() end
-  if a=="nosurveydrone" then require("survey").labNoDrone() end
-  -- `alerts3`: three active alerts of different kinds at start (fakes/mes_alerts.lua).
-  if a=="alerts3" then require("mes_alerts").labThree() end
+  if a=="surveys" then require("logistics.survey").labScenario() end
+  if a=="nosurveydrone" then require("logistics.survey").labNoDrone() end
+  -- `alerts3`: three active alerts of different kinds at start (fakes/mes/alerts.lua).
+  if a=="alerts3" then require("mes.alerts").labThree() end
   -- `alertshist`: failed runs (item, old id-only), a stuck machine named
   -- with a colon, a dismissed-then-cleared alert, one expiring 20 s in.
-  if a=="alertshist" then require("mes_alerts").labHistory() end
+  if a=="alertshist" then require("mes.alerts").labHistory() end
   -- `alertcycle`: one-shot timers, 10 s apart from 15 s: drone3 held too
   -- long is raised; drone5 lost clears; furnaceA load 3 stuck is dismissed
   -- (as from another screen); a run making stone bricks fails.
   if a=="alertcycle" then
-    local al=require("mes_alerts")
+    local al=require("mes.alerts")
     local function held() al.labRaise("droneHeld","drone3","Cargo held: drone3") end
     local function found() al.labClear("droneLost","drone5") end
     local function elsewhere() al.labDismiss("machineStuck","furnaceA:3") end
@@ -72,7 +72,7 @@ for _,a in ipairs(args) do
   -- `boot6`: drone6 (booting) has a geolyzer and reports ready 10 s in
   -- (logistics_drone drone6 idle).
   if a=="boot6" then require("lab_data").drones[6].survey=true;local function fire() require("logistics").labReady("drone6") end;labTimers[#labTimers+1]=event.timer(10,fire) end
-  -- `traffic`: 20 drones working, 20 logistics events a second (fakes/logistics.lua).
+  -- `traffic`: 20 drones working, 20 logistics events a second (fakes/logistics/init.lua).
   if a=="traffic" then labTimers[#labTimers+1]=require("logistics").labTraffic() end
 end
 if args[2]=="mem" then
@@ -87,7 +87,7 @@ if args[2]=="mem" then
   end
   timer=event.timer(1,function() computer.pushSignal("mes","tick") end,math.huge)
 end
-require("mes_ui").run(opts)
+require("mes.ui").run(opts)
 if timer then event.cancel(timer) end
 if announce then event.cancel(announce) end
 for _,t in ipairs(labTimers) do event.cancel(t) end
@@ -107,17 +107,22 @@ if not (disk / "init.lua").exists():
                 out = disk / name[len(prefix):]
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(jar.read(name))
-shutil.rmtree(lib / "mes_ui", ignore_errors=True)
-shutil.copytree(root / "craftsystem" / "usr" / "lib" / "mes_ui", lib / "mes_ui")
 shutil.copy(root / "fixtures" / "qmenu.lua", disk / "lib" / "qmenu.lua")
 # The crafting system's own libraries run headless (management screens,
-# plans, kits, tools, stockkeeper): the real ones, except the MES library
-# itself, which the fakes below replace with the T11 contract fake.
-for f in (root / "craftsystem" / "usr" / "lib").glob("*.lua"):
-    if f.name != "mes.lua":
-        shutil.copy(f, lib / f.name)
-for f in (lab / "fakes").glob("*.lua"):
-    shutil.copy(f, lib / f.name)
+# plans, kits, tools, stockkeeper): the real ones, including the production
+# UI under mes/ui, except the MES library itself (mes/init.lua), which the
+# fakes below replace with the T11 contract fake. The fakes mirror the module
+# paths they stand in for.
+src = root / "craftsystem" / "usr" / "lib"
+for package in ("craft", "mes", "logistics"):
+    shutil.rmtree(lib / package, ignore_errors=True)
+for f in [*src.glob("*.lua"), *(src / "craft").rglob("*.lua"), *(src / "mes").rglob("*.lua")]:
+    if f != src / "mes" / "init.lua":
+        (lib / f.relative_to(src)).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(f, lib / f.relative_to(src))
+for f in (lab / "fakes").rglob("*.lua"):
+    (lib / f.relative_to(lab / "fakes")).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(f, lib / f.relative_to(lab / "fakes"))
 (disk / "usr" / "bin").mkdir(parents=True, exist_ok=True)
 (disk / "usr" / "bin" / "mesui.lua").write_text(LAUNCHER, newline="\n")
 print("synced to", disk)

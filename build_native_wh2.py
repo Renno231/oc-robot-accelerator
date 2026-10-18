@@ -15,7 +15,7 @@ def build(root, baseline=False):
         program = program.replace("ic.fetch(coal,256,'out1')", "ic.fetch(coal,128,'out1')")
         program = program.replace("wh.count(coal)==0 and count('out1')==256", "wh.count(coal)==128 and count('out1')==128")
         program = program.replace("assert(ic.importNow('in2'))", """result.partialExport={count=wh.count(coal),catalogue=wh.contents('stock'),
- stats=require('stats').summary(),alerts=require('mes_alerts').list(),job=lg.status(recoveryJob)}
+ stats=require('logistics.stats').summary(),alerts=require('mes.alerts').list(),job=lg.status(recoveryJob)}
 assert(result.partialExport.count==128 and result.partialExport.catalogue.freeSlots==2)
 assert(result.partialExport.stats.usedSlots==25 and result.partialExport.stats.fill<.93)
 assert(ic.importNow('in2'))""")
@@ -32,7 +32,7 @@ assert(ic.importNow('in2'))""")
         value['id'] = 'io-flow-wh2-partial'
         path.write_text(json.dumps(value, indent=2) + '\n')
     else:
-        agent = path.parent / 'program/drone/agent.lua'
+        agent = path.parent / 'program/usr/lib/logistics/drone/agent.lua'
         agent.write_bytes(subprocess.check_output(['git', 'show', '1f666d0:drone-logistics/drone/agent.lua'],
                                                  creationflags=NO_WINDOW))
     entry.write_text(program)

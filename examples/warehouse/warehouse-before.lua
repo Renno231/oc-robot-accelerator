@@ -1,4 +1,4 @@
-local map=require("map")
+local map=require("logistics.map")
 local logistics=require("logistics")
 local event=require("event")
 local serialization=require("serialization")

@@ -2,11 +2,8 @@ local fs=require('filesystem')
 local serialization=require('serialization')
 local computer=require('computer')
 local event=require('event')
-fs.makeDirectory('/usr/lib/logistics')
-for _,n in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..n..'.lua','/lib/'..n..'.lua')) end
-assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
-assert(fs.copy('/home/program/bin/warehouse.lua','/bin/warehouse.lua'))
-local map=require('map')
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
+local map=require('logistics.map')
 local iron={name='minecraft:iron_ingot',damage=0}
 local gold={name='minecraft:gold_ingot',damage=0}
 local function load(path) local f=assert(io.open(path,'r'));local t=assert(serialization.unserialize(f:read('*a')));f:close();return t end
@@ -20,7 +17,7 @@ end
 local restart=io.open('/home/warehouse-reboot','r')
 if restart then
   restart:close();assert(map.load())
-  local wh=require('warehouse');local expected=load('/home/warehouse-expected')
+  local wh=require('logistics.warehouse');local expected=load('/home/warehouse-expected')
   assert(wh.count(iron)==expected.count,'catalogue lost on native controller reboot')
   assert(equal(wh.members(),expected.members),'members lost')
   assert(equal(wh.groups(),expected.groups),'groups lost')
@@ -66,7 +63,7 @@ event.listen=function(signal,handler)
     performance.maxCpuSeconds=math.max(performance.maxCpuSeconds,elapsed)
   end)
 end
-local wh=require('warehouse')
+local wh=require('logistics.warehouse')
 event.listen=listen
 pcall(collectgarbage,'collect')
 local afterLibrary=computer.freeMemory()
@@ -176,8 +173,8 @@ local none,why=wh.store(iron,1,outsider);assert(not none and why:find('requested
 none,why=wh.fetch(iron,1000,external);assert(not none and why:find('available 252',1,true),'nonmembers used as fetch sources');results.noStock=why
 assert(not wh.members()[outsider] and not wh.members()[external])
 -- Same API from the CLI; no private controller/menu implementation.
-assert(loadfile('/bin/warehouse.lua'))('count',iron.name,'0')
-assert(loadfile('/bin/warehouse.lua'))('groups','furnace')
+assert(loadfile('/usr/bin/warehouse.lua'))('count',iron.name,'0')
+assert(loadfile('/usr/bin/warehouse.lua'))('groups','furnace')
 local catalogue={};for member in pairs(wh.members()) do catalogue[member]=wh.contents(member) end
 local snapshot={count=wh.count(iron),members=wh.members(),groups=wh.groups(),catalogue=catalogue}
 save('/home/warehouse-expected',snapshot)

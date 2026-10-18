@@ -1,15 +1,12 @@
 -- Native acceptance entry, copied with the canonical libraries into each program tree.
 return function(case)
   local fs=require("filesystem")
-  fs.makeDirectory("/usr/lib/logistics")
-  for _,name in ipairs({"cbor","store","map","logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
-  assert(fs.copy("/home/program/drone/agent.lua","/usr/lib/logistics/agent.lua"))
-  assert(fs.copy("/home/program/bin/logistics.lua","/bin/logistics.lua"))
+  local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
   local file=assert(io.open("/etc/logistics.cfg","w"))
   file:write("{reserve="..(case=="power" and 4990 or 1000)..",retries=2}");file:close()
   local event=require("event")
   local computer=require("computer")
-  local map=require("map")
+  local map=require("logistics.map")
   local serialization=require("serialization")
   local component=require("component")
   local function check(ok,message) assert(ok,message or "acceptance assertion") end
@@ -103,7 +100,7 @@ return function(case)
   if case=="pair" then
     local d=logistics.drones()[1]
     check(d.boots==1 and d.chunks>=2 and d.freeMemory>0,"boot/download metrics")
-    check(require("shell").execute("/bin/logistics.lua drones"),"native CLI failed")
+    check(require("shell").execute("/usr/bin/logistics.lua drones"),"native CLI failed")
     local queued=logistics.transfer({name="minecraft:iron_ingot"},1,{node="A",side=0},{node="B",side=0})
     check(logistics.cancel(queued));check(logistics.status(queued).reason=="cancelled")
     local oldest,last
@@ -203,7 +200,7 @@ return function(case)
     os.sleep(1);check(logistics.drones()[1].state=="lost","lost accepted trip")
     component.modem.send(d1.address,27103,token,"fixture_home")
     untilTrue(function() return placed end,15,"player relocation missing")
-    check(require("shell").execute("/bin/logistics.lua found d1"),"found CLI failed")
+    check(require("shell").execute("/usr/bin/logistics.lua found d1"),"found CLI failed")
     untilTrue(function() return logistics.drones()[1].state=="held" end,10,"found ready missing")
     local cargo=assert(logistics.release("d1"));check(cargo[1].size==64 and logistics.drones()[1].state=="held")
     component.modem.send(d1.address,27103,token,"fixture_empty")

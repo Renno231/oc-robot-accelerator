@@ -7,7 +7,7 @@ from lupa.lua53 import LuaRuntime
 class DroneSurveyTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
-        self.lua.globals().SOURCE = Path('drone-logistics/drone/survey.lua').read_text()
+        self.lua.globals().SOURCE = Path('drone-logistics/usr/lib/logistics/drone/survey.lua').read_text()
         self.lua.execute('''
           P={x=0,y=65,z=0};ENERGY=5000;CALLS={};MOVES={};BLOCKS={};BLOCKED=false
           computer={energy=function() return ENERGY end}
@@ -57,8 +57,8 @@ class DroneSurveyTests(unittest.TestCase):
     def test_survey_firmware_fits_boot_download(self):
         # logistics.lua sends the survey wrapper + agent in at most 16 x 2048-byte chunks.
         code=(b'local surveyStep=(function()\n'
-              + Path('drone-logistics/drone/survey.lua').read_bytes() + b'\nend)()\n'
-              + Path('drone-logistics/drone/agent.lua').read_bytes())
+              + Path('drone-logistics/usr/lib/logistics/drone/survey.lua').read_bytes() + b'\nend)()\n'
+              + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_bytes())
         self.assertLessEqual(len(code),16*2048)
 
 

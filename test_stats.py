@@ -16,7 +16,7 @@ class StatsTests(unittest.TestCase):
             unserialize=function(s) DECODES=(DECODES or 0)+1;local n,d,l=s:match('^(.-)|(%d+)|(.*)$');return {n,tonumber(d),l~='' and l or nil} end} end
         ''')
         install_store(self.lua)
-        self.lua.globals().STATS = Path('drone-logistics/lib/stats.lua').read_text()
+        self.lua.globals().STATS = Path('drone-logistics/usr/lib/logistics/stats.lua').read_text()
         self.lua.execute('''
           TIME=0;LISTEN={};TIMERS={};ROWS={};RESERVED=0;READS=0;JOBS=0;PUTS=0;SIGNALS={};TCALLS=0;ENTRIES=0;DECODES=0;VERSION=0
           package.loaded.computer={uptime=function() return TIME end}
@@ -44,10 +44,10 @@ class StatsTests(unittest.TestCase):
           function wh.available(i) return wh.count(i)-RESERVED end
           wh.scan=function() READS=READS+1;error('unexpected read') end
           wh.fetch=function() JOBS=JOBS+1;error('unexpected job') end
-          package.loaded.warehouse=wh
+          package.loaded["logistics.warehouse"]=wh
           package.loaded.logistics={job=wh.fetch};package.loaded.component={transposer={getAllStacks=wh.scan}}
-          local open=require('store').open
-          require('store').open=function(p,v)
+          local open=require('logistics.store').open
+          require('logistics.store').open=function(p,v)
             assert(p=='/etc/stats' and v=='log');local s=open(p,v);local put=s.put
             s.put=function(...) PUTS=PUTS+1;return put(...) end;return s
           end
@@ -124,7 +124,7 @@ class StatsTests(unittest.TestCase):
           local i=stats.item{name='mod:seed'};assert(i.perHour1==64)
           closeHour();assert(stats.item{name='mod:seed'}.perHour1==0)
           for n=1,25 do closeHour() end
-          local s=require('store').open('/etc/stats','log');local h=s:load().hours
+          local s=require('logistics.store').open('/etc/stats','log');local h=s:load().hours
           assert(#h==24 and h.serial==27)
           for _,b in ipairs(h) do assert(not next(b.i)) end
           assert(stats.item{name='mod:seed'}.perHour6==0 and READS==0 and JOBS==0)
@@ -250,22 +250,22 @@ class WarehouseStatsIntegrationTests(unittest.TestCase):
           require('event').timer=function() return 1 end;require('event').cancel=function() end
           stats=assert(load(STATS))();local r=stats.summary().perStorage[1]
           assert(r.age==0 and r.beforeRestart==false)
-          local data=require('store').open('/etc/warehouse.db','log'):load()
+          local data=require('logistics.store').open('/etc/warehouse.db','log'):load()
           assert(data.shared.beforeRestart==nil)
-          package.loaded.warehouse=nil;wh=require('warehouse');rows=wh.entries()
+          package.loaded["logistics.warehouse"]=nil;wh=require('logistics.warehouse');rows=wh.entries()
           for _,v in ipairs(rows.shared) do assert(v.entry.beforeRestart==true) end
           stats=assert(load(STATS))();r=stats.summary().perStorage[1]
           assert(r.age==nil and r.beforeRestart==true)
           wh.scan();finishAll();rows=wh.entries()
           for _,v in ipairs(rows.shared) do assert(v.entry.beforeRestart==false) end
           r=stats.summary().perStorage[1];assert(r.age==0 and r.beforeRestart==false)
-          data=require('store').open('/etc/warehouse.db','log'):load()
+          data=require('logistics.store').open('/etc/warehouse.db','log'):load()
           assert(data.shared.beforeRestart==nil)
         ''')
 
     def test_accessor_stock_identity_group_exclusion_copy_and_zero_trips(self):
         f = test_stations.StationsTests();f.setUp();lua=f.lua
-        lua.globals().STATS=Path('drone-logistics/lib/stats.lua').read_text()
+        lua.globals().STATS=Path('drone-logistics/usr/lib/logistics/stats.lua').read_text()
         lua.execute('''
           for n=1,9 do local s='s'..n;map.name(s,'home'..math.ceil(n/5),(n-1)%5);wh.add(s,{inventory=n==9 and 's8' or s}) end
           wh.group('machine','test',{buffer='s7'})

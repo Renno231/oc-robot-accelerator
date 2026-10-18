@@ -3,8 +3,8 @@
 local measure=assert(loadfile('/home/program/deployment-memory-base.lua'))()
 return function(save)
   local preexisting={keyboard=package.loaded.keyboard~=nil,tty=package.loaded.tty~=nil,term=package.loaded.term~=nil}
-  local computer=require('computer');local wh=require('warehouse');local lg=require('logistics');local map=require('map')
-  local view=require('warehouse.view');local qmenu=require('qmenu')
+  local computer=require('computer');local wh=require('logistics.warehouse');local lg=require('logistics');local map=require('logistics.map')
+  local view=require('logistics.warehouse.view');local qmenu=require('qmenu')
   local phases={};local restores={}
   local function wrap(object,name,label)
     local original=object[name];local metric={calls=0,allocated=0,net=0,gcReturns=0,max=0};phases[label]=metric

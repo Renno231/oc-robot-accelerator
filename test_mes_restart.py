@@ -38,7 +38,7 @@ class MesRestartTests(unittest.TestCase):
             return process.addHandle(h)
           end
           local unrelated=assert(io.open('/home/command-output','w'))
-          local persist=require('mes_persist');local p=persist.open()
+          local persist=require('mes.persist');local p=persist.open()
           for n=1,60 do persist.plan(p,{id=1,plan={marker=n},opts={}}) end
           assert(renames>0,'fixture did not exercise log compaction')
           assert(#child.data.handles==1 and child.data.handles[1]==unrelated,'MES retained command-owned files')
@@ -52,26 +52,26 @@ class MesRestartTests(unittest.TestCase):
     def start(self, mode='log'):
         lua = test_logistics_restart.LogisticsRestartTests().start(mode)
         lib = (Path(__file__).parent / 'craftsystem/usr/lib').as_posix()
-        lua.execute(f'package.path="{lib}/?.lua;"..package.path')
+        lua.execute(f'package.path="{lib}/?.lua;{lib}/?/init.lua;"..package.path')
         for name in ('stats', 'housekeeping', 'survey'):
-            lua.globals()[name.upper()] = Path(f'drone-logistics/lib/{name}.lua').read_text()
-        for name in ('mes_alerts','mes_alert_sources'):
-            lua.globals()[name.upper()] = Path('craftsystem/usr/lib/'+name+'.lua').read_text()
+            lua.globals()[name.upper()] = Path(f'drone-logistics/usr/lib/logistics/{name}.lua').read_text()
+        for name in ('alerts','alert_sources'):
+            lua.globals()['MES_'+name.upper()] = Path('craftsystem/usr/lib/mes/'+name+'.lua').read_text()
         lua.execute(r'''
           package.preload.process=function()
             local root={data={handles={}}}
             return {info=function(level) if not level or level<=1 then return root end end}
           end
           TIME=10;BOOT=0;TIMERS={};PHYSICAL={};INV={source={['mod:raw']=100},input={},output={},buffer={}}
-          package.preload.stations=function() return {} end
-          package.preload.survey=function() return assert(load(SURVEY))() end
-          package.preload.stats=function() return assert(load(STATS))() end
-          package.preload.housekeeping=function() return assert(load(HOUSEKEEPING))() end
-          package.preload.iochest=function() return {list=function() return {} end} end
-          package.preload.mes_alerts=function() return assert(load(MES_ALERTS))() end
-          package.preload.mes_alert_sources=function() return assert(load(MES_ALERT_SOURCES))() end
+          package.preload["logistics.stations"]=function() return {} end
+          package.preload["logistics.survey"]=function() return assert(load(SURVEY))() end
+          package.preload["logistics.stats"]=function() return assert(load(STATS))() end
+          package.preload["logistics.housekeeping"]=function() return assert(load(HOUSEKEEPING))() end
+          package.preload["logistics.iochest"]=function() return {list=function() return {} end} end
+          package.preload["mes.alerts"]=function() return assert(load(MES_ALERTS))() end
+          package.preload["mes.alert_sources"]=function() return assert(load(MES_ALERT_SOURCES))() end
           local serialization=require('serialization');local serialize=serialization.serialize
-          COUNTS={};local store=require('store');local open=store.open;local cbor=require('cbor')
+          COUNTS={};local store=require('logistics.store');local open=store.open;local cbor=require('cbor')
           store.open=function(path,...)
             local s=open(path,...);local current={};local load,put,delete,flush=s.load,s.put,s.delete,s.flush
             local function count(field)
@@ -109,10 +109,10 @@ class MesRestartTests(unittest.TestCase):
             kiln={type='furnace',roles={input='input_face',output='output_face'}},
             cpu={type='crafter',roles={buffer='buffer_face'}}}}
           files['/etc/warehouse.cfg']=require('serialization').serialize(config)
-          package.preload.mes_config=function() return {installRobots=function() end,config=function() return CFG end} end
+          package.preload["mes.config"]=function() return {installRobots=function() end,config=function() return CFG end} end
           package.preload.recipes=function() return {getAll=function() return {} end} end
           package.preload.oredict=function() return {get=function() end,getByItemName=function() end} end
-          package.preload.craft_tools=function() return {list=function() return {} end} end
+          package.preload["craft.tools"]=function() return {list=function() return {} end} end
           local computer=require('computer');computer.uptime=function() return TIME-BOOT end
           local event=require('event')
           event.timer=function(period,fn,times)
@@ -172,7 +172,7 @@ class MesRestartTests(unittest.TestCase):
               unknown=r.status=='NOT_FOUND' or nil,receipt={jobId=r.id,status=r.status,
                 buffer=r.status=='COMPLETE' and clone(INV.buffer) or nil}}) end
           end
-          package.preload.craft_client=function() return {
+          package.preload["craft.client"]=function() return {
             install=function(cb) sink=cb;sink(nil,'robot_transport',{address='robot',state='ready'});return {{address='robot'}} end,
             tick=function() end,
             nextDue=function() end,
@@ -197,14 +197,14 @@ class MesRestartTests(unittest.TestCase):
             -- cproc's startup dump returns the unfinished craft's inventory.
             ROBOT.status='NOT_FOUND';receipt(ROBOT.token)
           end
-          local catalogue=require('store').open('/etc/warehouse.db','log');catalogue:load()
+          local catalogue=require('logistics.store').open('/etc/warehouse.db','log');catalogue:load()
           catalogue:put('stock',{items={raw={item=raw,count=100,maxSize=64,stacks=2,room=28}},
             slots=27,freeSlots=25,verified=true,time=TIME});catalogue:flush();catalogue:close()
           function reboot()
             BOOT=TIME;TIMERS={};LISTEN={};EVENTS={}
-            for _,name in ipairs({'mes','mes_service','mes_state','mes_persist','warehouse','logistics','stats','survey','housekeeping','mes_alerts','mes_alert_sources'}) do package.loaded[name]=nil end
-            lg=require('logistics');wh=require('warehouse');M=require('mes');assert(M.start{config=CFG})
-            answerStatus();drain();require('mes_service').pump()
+            for _,name in ipairs({'mes','mes.service','mes.state','mes.persist','logistics.warehouse','logistics','logistics.stats','logistics.survey','logistics.housekeeping','mes.alerts','mes.alert_sources'}) do package.loaded[name]=nil end
+            lg=require('logistics');wh=require('logistics.warehouse');M=require('mes');assert(M.start{config=CFG})
+            answerStatus();drain();require('mes.service').pump()
           end
           function step()
             TIME=TIME+0.1
@@ -212,7 +212,7 @@ class MesRestartTests(unittest.TestCase):
             if FAKE.working then finishPhysical(true) else drain() end
             for i=1,#TIMERS do local t=TIMERS[i];if not t.cancelled and TIME>=t.at then
               t.times=t.times-1;t.cancelled=t.times==0;t.at=TIME+t.period;t.fn()
-            end end;drain();require('mes_service').pump()
+            end end;drain();require('mes.service').pump()
           end
           function untilFact(fn)
             for i=1,2000 do if fn() then return end;step() end
@@ -260,7 +260,7 @@ class MesRestartTests(unittest.TestCase):
                     lua.globals().MACHINE = machine
                     lua.execute('''
                       INV.source['mod:raw']=0
-                      wh.observed('stock',{});drain();require('mes_service').pump()
+                      wh.observed('stock',{});drain();require('mes.service').pump()
                       local id=submit(MACHINE)
                       untilFact(function() return (M.status(id).stages[1].detail or ''):find('Waiting for mod:raw',1,true) end)
                       assert(M.status(id).status=='running')
@@ -353,9 +353,9 @@ class MesRestartTests(unittest.TestCase):
                             local after=saved()
                             assert(after.grp_kiln.outputRetried)
                             if PHASE=='idle' then
-                              local state=require('mes_state');local nextDue=state.nextDue;local due
+                              local state=require('mes.state');local nextDue=state.nextDue;local due
                               state.nextDue=function(w) due=nextDue(w);return due end
-                              require('mes_service').pump();state.nextDue=nextDue
+                              require('mes.service').pump();state.nextDue=nextDue
                               assert(math.abs(due-remaining)<0.001)
                             end
                           end
@@ -500,7 +500,7 @@ class MesRestartTests(unittest.TestCase):
                         cargo={{item={name='mod:raw',damage=0},count=1}}})
                       emit('modem_message','local','remote',27103,0,'secret','boot')
                       FAKE.working=false;report(0,{state='lost',cargo=FAKE.cargo});drain()
-                      require('mes_service').pump()
+                      require('mes.service').pump()
                       local r=M.status(id);assert(r.status=='running')
                       local detail=r.stages[1].detail
                       assert(detail:find(STOCK==1 and 'press Found' or 'Retrying',1,true),detail)
@@ -523,7 +523,7 @@ class MesRestartTests(unittest.TestCase):
               cargo={{item={name='mod:raw',damage=0},count=1}}})
             emit('modem_message','local','remote',27103,0,'secret','boot')
             FAKE.working=false;report(0,{state='lost',cargo=FAKE.cargo});drain()
-            require('mes_service').pump()
+            require('mes.service').pump()
           end
           local id=submit(true,1);untilFact(function() return FAKE.working end);lose()
           assert(M.status(id).status=='running')
@@ -547,7 +547,7 @@ class MesRestartTests(unittest.TestCase):
                   for i=1,25 do local id=submit(true);untilFact(function() return M.status(id).status~='running' end) end
                   local before=M.runs();assert(#before==20 and before[1].id==25 and before[20].id==6)
                   local db=saved();assert(#db.ids.done==20 and not db.done_5 and not db.plan_25)
-                  local service=require('mes_service');local history
+                  local service=require('mes.service');local history
                   for i=1,30 do local name,value=debug.getupvalue(service.runs,i);if name=='history' then history=value end end
                   assert(history and not history[5]);for _,r in pairs(history) do
                     assert(not r.world and not r.ports and not r.plan and not r.actions and not r.cfg)
@@ -625,7 +625,7 @@ class MesRestartTests(unittest.TestCase):
           wh.add('stock',{filter=filters});wh.add('fuel_face',{})
           wh.group('kiln','furnace',{input='input_face',output='output_face',fuel='fuel_face'})
           local scans=assert(wh.scan('stock'));untilFact(function() return wh.settled(scans[1]) end);COUNTS={}
-          local service=require('mes_service');local pump=service.pump
+          local service=require('mes.service');local pump=service.pump
           service.pump=function(...)
             local before=(COUNTS['/etc/mes.state'] or {}).flushes or 0;pump(...)
             assert(((COUNTS['/etc/mes.state'] or {}).flushes or 0)-before<=1,'more than one save per pump')

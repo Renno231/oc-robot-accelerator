@@ -22,11 +22,11 @@ def summary(root):
         if p.exists():
             lua.globals().disk['/etc/' + name] = p.read_bytes()
     for name in ('warehouse', 'stats'):
-        lua.globals()[name.upper()] = Path('drone-logistics/lib/' + name + '.lua').read_text()
+        lua.globals()[name.upper()] = Path('drone-logistics/usr/lib/logistics/' + name + '.lua').read_text()
     lua.execute('''
       local ser=require('serialization')
       local cfg=assert(ser.unserialize(disk['/etc/map.cfg']))
-      package.loaded.map={storage=function(n) return cfg.storages[n] end,
+      package.loaded["logistics.map"]={storage=function(n) return cfg.storages[n] end,
         storages=function() return cfg.storages end,node=function(n) return cfg.nodes[n] end,
         revision=function() return 0 end}
       READS,JOBS=0,0
@@ -34,10 +34,10 @@ def summary(root):
         job=function() JOBS=JOBS+1;error('unexpected native job') end}
       package.loaded.component={transposer={getAllStacks=function() READS=READS+1;error('unexpected read') end}}
       package.loaded.event={listen=function() end,push=function() end,timer=function() end}
-      local db=require('store').open('/etc/warehouse.db','log'):load()
+      local db=require('logistics.store').open('/etc/warehouse.db','log'):load()
       TIME=0;for _,v in pairs(db) do TIME=math.max(TIME,v.time or 0) end
       package.loaded.computer={uptime=function() return TIME end}
-      package.loaded.warehouse=assert(load(WAREHOUSE))()
+      package.loaded["logistics.warehouse"]=assert(load(WAREHOUSE))()
       stats=assert(load(STATS))();resetCalls();RESULT=stats.summary()
       assert(READS==0 and JOBS==0 and not calls.read and not calls.write)
     ''')

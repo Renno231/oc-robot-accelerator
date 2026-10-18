@@ -7,11 +7,11 @@ for case in sorted((ROOT / 'examples/logistics').iterdir()):
     if not case.is_dir() or not (case / 'scenario.json').exists():
         continue
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', case / 'loader.lua')
-    for path in ('lib/map.lua', 'lib/logistics.lua', 'lib/cbor.lua', 'lib/store.lua', 'bin/logistics.lua', 'drone/agent.lua'):
+    for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/cbor.lua', 'usr/lib/logistics/store.lua', 'usr/bin/logistics.lua', 'usr/lib/logistics/drone/agent.lua'):
         target = case / 'program' / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'drone-logistics' / path, target)
-    agent = case / 'program/drone/agent.lua'
+    agent = case / 'program/usr/lib/logistics/drone/agent.lua'
     if case.name == 'security':
         prefix = '-- Native adversarial fixture: wrong-token report from the registered drone card.\n' + \
                  'do local m,t,c,n,p=...;m.send(c,p,"WRONG!","report",0,"{state=\'ready\',energy=0,cargoSlots=0}") end\n'

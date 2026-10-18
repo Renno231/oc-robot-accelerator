@@ -8,10 +8,10 @@ import test_warehouse_many as fixtures
 class RankingTests(unittest.TestCase):
     def setUp(self):
         fixture=fixtures.WarehouseManyTests();fixture.setUp();self.lua=fixture.lua
-        self.lua.globals().MAP=Path('drone-logistics/lib/map.lua').read_text()
+        self.lua.globals().MAP=Path('drone-logistics/usr/lib/logistics/map.lua').read_text()
         self.lua.execute('''
           realmap=assert(load(MAP))()
-          local stub=require('map');for k,v in pairs(realmap) do stub[k]=v end
+          local stub=require('logistics.map');for k,v in pairs(realmap) do stub[k]=v end
           realmap.add('stockNode',0,0,0);realmap.add('bufferNode',10,0,0)
           realmap.add('otherNode',20,0,0);realmap.add('lostNode',10,0,10)
           realmap.name('stock','stockNode',0);realmap.name('alias','stockNode',1)

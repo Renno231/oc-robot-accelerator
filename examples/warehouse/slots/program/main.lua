@@ -1,12 +1,10 @@
 local fs=require('filesystem')
-fs.makeDirectory('/usr/lib/logistics')
-for _,name in ipairs({'cbor','store','map','logistics','warehouse'}) do assert(fs.copy('/home/program/lib/'..name..'.lua','/lib/'..name..'.lua')) end
-assert(fs.copy('/home/program/drone/agent.lua','/usr/lib/logistics/agent.lua'))
-local map=require('map');local event=require('event');local computer=require('computer')
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
+local map=require('logistics.map');local event=require('event');local computer=require('computer')
 local restarting=io.open('/home/warehouse-journal-reboot','r')
 if restarting then
   restarting:close();assert(map.load())
-  local wh=require('warehouse')
+  local wh=require('logistics.warehouse')
   assert(wh.stackSize({name='minecraft:iron_ingot',damage=0})==64 and wh.stackSize({name='minecraft:ender_pearl',damage=0})==16,'learned stack sizes lost on reboot')
   assert(wh.count({name='minecraft:iron_ingot',damage=0})==1 and wh.count({name='minecraft:ender_pearl',damage=0})==16,'incomplete compaction lost data on reboot')
   local members=wh.members();assert(not members.a and members.b.filter[1].name=='minecraft:ender_pearl' and members.c)
@@ -23,7 +21,7 @@ local function wait(predicate)
 end
 wait(function() return #lg.pending()==1 end);assert(lg.register(lg.pending()[1],'d','H'))
 wait(function() return lg.drones()[1].state=='idle' end)
-local wh=require('warehouse');local complete={}
+local wh=require('logistics.warehouse');local complete={}
 event.listen('logistics',function(_,id) complete[id]=true end)
 local function done(id) assert(id);wait(function() return complete[id] end);return assert(lg.status(id)) end
 local function scan(storages) for _,id in ipairs(wh.scan(storages)) do assert(done(id).state=='done') end end

@@ -8,7 +8,7 @@ import test_logistics_restart as restart
 class SensorTests(unittest.TestCase):
     def start(self, sides=1):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().SOURCE = Path('drone-logistics/drone/sensor.lua').read_text()
+        lua.globals().SOURCE = Path('drone-logistics/usr/lib/logistics/drone/sensor.lua').read_text()
         lua.globals().SIDES = sides
         lua.execute('''
           TIME=0;N=4;SENT={}
@@ -51,7 +51,7 @@ class SensorTests(unittest.TestCase):
                 self.start(sides).execute("assert(packet().state=='setup' and packet().reason)")
 
     def test_firmware_byte_budget(self):
-        self.assertLessEqual(Path('drone-logistics/drone/sensor.lua').stat().st_size, 1800)
+        self.assertLessEqual(Path('drone-logistics/usr/lib/logistics/drone/sensor.lua').stat().st_size, 1800)
         self.assertLessEqual(Path('drone-logistics/drone/loader.lua').stat().st_size, 2035)
 
 
@@ -59,7 +59,7 @@ class SensorTransportTests(unittest.TestCase):
     def test_legacy_hello_sensor_pair_download_and_scheduler_exclusion(self):
         lua = restart.LogisticsRestartTests().start('log')
         lua.execute('''
-          files['/usr/lib/logistics/sensor.lua']='return true'
+          files['/usr/lib/logistics/drone/sensor.lua']='return true'
           emit('modem_message','local','old',27103,0,'lgx_hello')
           emit('modem_message','local','sensoraddr',27103,0,'lgx_hello','sensor')
           assert(#lg.pending()==1 and lg.pending()[1]=='old')

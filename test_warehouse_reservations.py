@@ -18,7 +18,7 @@ class ReservationTests(unittest.TestCase):
           package.preload.event=function() return {
             push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end} end
           storages={stock={node='stock',side=0},alias={node='stock',side=1},buffer={node='buffer',side=0}}
-          package.preload.map=function() return {
+          package.preload["logistics.map"]=function() return {
             storage=function(s) return storages[s] end,
             storages=function() return storages end,place=function(s) return storages[s] and storages[s].node or s end,
             distances=function() return setmetatable({},{__index=function() return 1 end}) end} end
@@ -54,7 +54,7 @@ class ReservationTests(unittest.TestCase):
           os.rename=function() return true end
         ''')
         install_store(self.lua, preserve_io=True)
-        self.lua.globals().SOURCE = Path('drone-logistics/lib/warehouse.lua').read_text()
+        self.lua.globals().SOURCE = Path('drone-logistics/usr/lib/logistics/warehouse.lua').read_text()
         self.lua.execute('''wh=assert(load(SOURCE))();item={name='minecraft:clay_ball',damage=0}
           function scan(storage,n,size)
             local id=require('logistics').job({{read=storage}});jobs[id]={state='done',steps={{read=storages[storage],size=size or 27,

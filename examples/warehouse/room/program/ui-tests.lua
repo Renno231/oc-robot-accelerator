@@ -3,11 +3,9 @@
 return function(done,wait)
 local fs=require('filesystem');local computer=require('computer');local event=require('event')
 local component=require('component');local unicode=require('unicode');local keys=require('keyboard').keys
-local tty=require('tty');local wh=require('warehouse');local lg=require('logistics');local map=require('map')
-fs.makeDirectory('/lib/warehouse')
-for _,name in ipairs({'view','ui'}) do assert(fs.copy('/home/program/lib/warehouse/'..name..'.lua','/lib/warehouse/'..name..'.lua')) end
+local tty=require('tty');local wh=require('logistics.warehouse');local lg=require('logistics');local map=require('logistics.map')
 assert(fs.copy('/home/program/lib/qmenu.lua','/lib/qmenu.lua'))
-local freeBeforeUI=computer.freeMemory();local view=require('warehouse.view')
+local freeBeforeUI=computer.freeMemory();local view=require('logistics.warehouse.view')
 local iron={name='minecraft:iron_ingot',damage=0}
 local function snapshot()
   local state={members=wh.members(),groups=wh.groups(),storages=map.storages(),contents={},jobs=lg.jobs(),drones=lg.drones(),now=computer.uptime()}
@@ -89,7 +87,7 @@ end
 local proxy=component.proxy;component.proxy=function(address) if address==gpu.address then return gpu end;return proxy(address) end
 local oldGpu=rawget(component,'gpu');component.gpu=gpu
 local oldTtyGpu=tty.window.gpu;tty.bind(gpu);tty.setViewport(47,14,1,1,3,2)
-local ui=require('warehouse.ui');require('qmenu')
+local ui=require('logistics.warehouse.ui');require('qmenu')
 local freeAfterLibrary=computer.freeMemory();local minimumFree=freeAfterLibrary
 local result={sessions=0,renders=0,view=true,live=false,restored=true,monochrome=false}
 local function key(k,char) computer.pushSignal('key_down','warehouse-test-keyboard',char or 0,k,'test') end
@@ -169,7 +167,7 @@ session({{key=keys.right},{row='storage:furnace-output',kind='storages',check=fu
   {row='filter',kind='storage'},{row='typed',kind='filter'},{row='input',kind='input'},{row='input',kind='input'},
   {key=keys.q,check=function() assert(wh.members()['furnace-output'].filter[1].name==iron.name) end},
   {row='priority',kind='storage'},{row='input',kind='input'},
-  {key=keys.q,check=function() assert(wh.members()['furnace-output'].priority==17);assert(loadfile('/bin/warehouse.lua'))('members') end},{key=keys.q}}, {iron.name,'0','17'})
+  {key=keys.q,check=function() assert(wh.members()['furnace-output'].priority==17);assert(loadfile('/usr/bin/warehouse.lua'))('members') end},{key=keys.q}}, {iron.name,'0','17'})
 wh.remove('furnace-output')
 -- Session 4: a furnace with input/fuel/output roles, delete with confirm.
 session({{key=keys.right},{key=keys.right},{row='new',kind='machines'},{row='input',kind='input'},

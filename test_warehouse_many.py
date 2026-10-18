@@ -321,7 +321,7 @@ class WarehouseManyTests(unittest.TestCase):
             end
             return serialize(t,...)
           end
-          local map=require('map');local storages={stock={node='stock',side=0},buffer={node='buffer',side=0},
+          local map=require('logistics.map');local storages={stock={node='stock',side=0},buffer={node='buffer',side=0},
             top={node='top',side=0},side={node='side',side=4}}
           map.storage=function(s) return storages[s] end
           map.storages=function() return storages end

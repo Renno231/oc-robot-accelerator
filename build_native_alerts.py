@@ -11,7 +11,7 @@ assert(loadfile('/home/program/install.lua'))()
 local aevent=require('event')
 ALERT_EVENTS={}
 function alertState(kind,state)
- for _,r in ipairs(require('mes_alerts').list()) do if r.kind==kind and r.state==state then return r end end
+ for _,r in ipairs(require('mes.alerts').list()) do if r.kind==kind and r.state==state then return r end end
 end
 function alertEvent(kind,state,id)
  for _,r in ipairs(ALERT_EVENTS) do if r.kind==kind and r.state==state and r.id==id then return true end end
@@ -42,7 +42,7 @@ wait(function() return idle('in2') and count('in2')==0 and wh.count(coal)==104 a
 assert(alertState('stockFull','cleared'))
 result.steps.alertRecovery={stock=wh.count(coal),record=record('in2'),export=record('out1')}
 ''')
-        program=PREFIX+"require('mes_alerts').start({groups={}})\n"+program
+        program=PREFIX+"require('mes.alerts').start({groups={}})\n"+program
         value=json.loads(path.read_text())
         for container in value['expect']['containers']:
             if container['position']==[6,64,8]:
@@ -59,7 +59,7 @@ result.steps.alertRecovery={stock=wh.count(coal),record=record('in2'),export=rec
         program=PREFIX+"assert(loadfile('/home/program/main.lua'))()\n"+'''
 while not alertState('runFailed','active') do require('event').pull() end
 local failed=assert(alertState('runFailed','active'))
-assert(require('mes_alerts').dismiss(failed.id));assert(alertState('runFailed','dismissed'))
+assert(require('mes.alerts').dismiss(failed.id));assert(alertState('runFailed','dismissed'))
 while not alertEvent('runFailed','dismissed',failed.id) do
  require('event').pull()
 end

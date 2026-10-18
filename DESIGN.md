@@ -214,17 +214,17 @@ from below (side 1) slot 1 = output, slot 2 = fuel.
 ### Layout, API and protocol
 
 Files (OpenOS paths in parentheses):
-- `drone-logistics/lib/map.lua` (`/lib/map.lua`): mapping, standalone.
-- `drone-logistics/lib/logistics.lua` (`/lib/logistics.lua`): logistics library.
+- `drone-logistics/usr/lib/logistics/map.lua` (`/usr/lib/logistics/map.lua`): mapping, standalone.
+- `drone-logistics/usr/lib/logistics/init.lua` (`/usr/lib/logistics/init.lua`): logistics library.
 - `drone-logistics/drone/loader.lua`: universal drone EEPROM (≤ 4,096 bytes).
-- `drone-logistics/drone/agent.lua` (`/lib/logistics/agent.lua`): drone
+- `drone-logistics/usr/lib/logistics/drone/agent.lua` (`/usr/lib/logistics/drone/agent.lua`): drone
   program, sent by the controller at every drone boot, run from RAM.
-- `drone-logistics/bin/logistics.lua` (`/bin/logistics.lua`): CLI.
-- `drone-logistics/bin/mapd.lua` (`/bin/mapd.lua`): map service, controller.
-- `drone-logistics/lib/mapclient.lua`, `drone-logistics/bin/mapclient.lua`:
+- `drone-logistics/usr/bin/logistics.lua` (`/usr/bin/logistics.lua`): CLI.
+- `drone-logistics/usr/bin/mapd.lua` (`/usr/bin/mapd.lua`): map service, controller.
+- `drone-logistics/usr/lib/logistics/mapclient.lua`, `drone-logistics/usr/bin/mapclient.lua`:
   tablet map editor.
 
-Mapping (`require("map")`, one shared instance, file `/etc/map.cfg`):
+Mapping (`require("logistics.map")`, one shared instance, file `/etc/map.cfg`):
 - `map.add(name, x, y, z, {faces = {[side] = true, ...}, charger = bool})`,
   `map.remove(name)`, `map.node(name)`, `map.nodes()`. Each node records its
   creation time (kept when the node is re-added) for newest-first listing.
@@ -308,7 +308,7 @@ reply):
 
 ### Warehouse (decided 2026-10-07)
 
-An optional OpenOS library on the logistics computer: `require("warehouse")`.
+An optional OpenOS library on the logistics computer: `require("logistics.warehouse")`.
 It uses mapping and logistics and adds nothing to them, except that
 `logistics.status` exposes each job's item and endpoints so any program can
 see what a job moved where.
@@ -396,7 +396,7 @@ simplification of anything here is a proof of concept only and needs the user's 
 **Layers.** Map: where things are. Logistics: moving items. Warehouse: what is stored where,
 reservations, machine and crafter groups. The user's `recipes` library: recipe storage and recipe
 import. MES (`craftsystem/usr/lib/mes.lua`, CLI `usr/bin/mes.lua`): turns requests into work over
-those layers; it reads recipes and never writes them. UI (`mes_ui`): over all of them.
+those layers; it reads recipes and never writes them. UI (`mes.ui`): over all of them.
 
 **Requests and plans.** A request is one or more goal items (plans can be merged, e.g. a batch of
 OpenComputers parts). The user's planner produces a dependency graph; the MES executes the graph,
@@ -464,12 +464,12 @@ grows into, as a second mode of the same libraries chosen by the controller's co
 Growing up loses nothing: saved plans, kits, tool rules, stockkeeper rules and recipes carry over
 unchanged.
 
-- Stock source: `craft_plans.inventory` reads the warehouse catalogue on an MES controller, so
+- Stock source: `craft.plans.inventory` reads the warehouse catalogue on an MES controller, so
   planning in `craft.lua`, `stockkeeper` checks and `count` see warehouse stock.
-- Execution: `craft_plans.run` / `craft_kits.run` either run directly on one robot (today) or
+- Execution: `craft.plans.run` / `craft.kits.run` either run directly on one robot (today) or
   submit an MES request; `stockkeeper`, `craftplan`, `craftkit` and `craft.lua` use the MES through
   them without rewrites.
-- UIs: `mes_ui` is the controller UI and opens the user's `craft_management_ui` for plans, kits,
+- UIs: `mes.ui` is the controller UI and opens the user's `craft.management_ui` for plans, kits,
   tools and stockkeeper rather than duplicating them. `craftsystem/usr/bin/inv.lua` stays the single-storage browser;
   on an MES controller the Stock tab covers it.
 - `cproc` is unchanged; on an MES station it serves its buffer side and receives inputs by drone.

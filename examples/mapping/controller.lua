@@ -1,21 +1,17 @@
 local fs=require("filesystem")
-for _,name in ipairs({"map","mapclient"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
-for _,name in ipairs({"mapd","mapclient"}) do assert(fs.copy("/home/program/bin/"..name..".lua","/bin/"..name..".lua")) end
+local function install(a,b) fs.makeDirectory(b);for n in fs.list(a) do local s,d=fs.concat(a,n),fs.concat(b,n);if fs.isDirectory(s) then install(s,d) else assert(fs.copy(s,d)) end end end;install('/home/program/usr','/usr')
 local key="mapping-native-key"
 local f=assert(io.open("/etc/mapd.cfg","w"));f:write('{key="'..key..'"}');f:close()
 local case=require("case")
 local event=require("event");local computer=require("computer");local component=require("component")
-local map=require("map")
+local map=require("logistics.map")
 if case=="actions" then
-  fs.makeDirectory("/usr/lib/logistics")
-  for _,name in ipairs({"cbor","store","logistics"}) do assert(fs.copy("/home/program/lib/"..name..".lua","/lib/"..name..".lua")) end
-  assert(fs.copy("/home/program/drone/agent.lua","/usr/lib/logistics/agent.lua"))
   map.add("H",0,65,0,{charger=true});map.add("A",0,65,2);map.add("B",6,65,4);map.add("C",6,65,2);map.link("H","A");map.save()
   local logistics=require("logistics");local deadline=computer.uptime()+15
   while #logistics.pending()==0 and computer.uptime()<deadline do event.pull(0.1) end
   assert(logistics.register(assert(logistics.pending()[1]),"d1","H"))
 else assert(package.loaded.logistics==nil,"standalone map loaded logistics") end
-assert(loadfile("/bin/mapd.lua"))();assert(package.loaded.mapd.port==27104)
+assert(loadfile("/usr/bin/mapd.lua"))();assert(package.loaded.mapd.port==27104)
 local done=false
 event.listen("modem_message",function(_,_,_,port,_,tag,receivedKey)
   if port==27104 and tag=="mapping_done" and receivedKey==key then done=true end

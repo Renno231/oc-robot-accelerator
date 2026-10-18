@@ -9,7 +9,7 @@ class HousekeepingTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         install_store(self.lua)
-        self.lua.globals().HK = Path('drone-logistics/lib/housekeeping.lua').read_text()
+        self.lua.globals().HK = Path('drone-logistics/usr/lib/logistics/housekeeping.lua').read_text()
         self.lua.execute('''
           local serial={};local seq=0
           local function clone(v) if type(v)~='table' then return v end;local t={};for k,x in pairs(v) do t[k]=clone(x) end;return t end
@@ -35,10 +35,10 @@ class HousekeepingTests(unittest.TestCase):
             status=function(id) return JOBS[id] end,plan=function() return {} end,
             cancel=function(id) JOBS[id].state='failed';return true end}
           package.loaded.logistics=lg
-          package.loaded.mes_service={runs=function() return RUNS end}
-          package.loaded.stats={settings=function() return {fillWarn=.8} end,summary=function()
+          package.loaded["mes.service"]={runs=function() return RUNS end}
+          package.loaded["logistics.stats"]={settings=function() return {fillWarn=.8} end,summary=function()
             local t={};for _,fs in pairs(ROWS) do t[#t+1]={name=fs[1].storage,fill=1-fs[1].entry.freeSlots/fs[1].entry.slots} end;return {perStorage=t} end}
-          package.loaded.warehouse={entries=function() return clone(ROWS) end,inflight=function() return {} end,
+          package.loaded["logistics.warehouse"]={entries=function() return clone(ROWS) end,inflight=function() return {} end,
             settled=function() return SETTLED end,stackSize=function() return 64 end,
             collect=function(from,rs,opts) assert(opts.oneTour);COLLECTS[#COLLECTS+1]={from=from,rs=clone(rs)}
               local id=#COLLECTS;JOBS[id]={state='queued',moved=0,trips=0};return {id} end}
@@ -100,7 +100,7 @@ class HousekeepingTests(unittest.TestCase):
     def test_delay_setting_rearms_and_default_seed_is_independent(self):
         self.lua.execute('''boot();hk.set('idleSeconds',10);advance(10)
           assert(timers()==0 and hk.status().reason=='no worthwhile move')
-          package.loaded.stats.settings=function() return {fillWarn=.1} end
+          package.loaded["logistics.stats"].settings=function() return {fillWarn=.1} end
           boot();assert(hk.settings().minFill==.8)
         ''')
 

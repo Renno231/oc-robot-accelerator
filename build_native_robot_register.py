@@ -11,7 +11,7 @@ from supervisor import NO_WINDOW
 
 RUN = r'''
 return assert(loadfile('/home/program/main.lua'))(function(wait)
-  local mes,wh,lg=require('mes'),require('warehouse'),require('logistics')
+  local mes,wh,lg=require('mes'),require('logistics.warehouse'),require('logistics')
   local ids={}
   for i=1,2 do
     local plan=assert(mes.plan('minecraft:brick_block',8))

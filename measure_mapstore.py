@@ -57,7 +57,7 @@ def measure(builder, serializer, before):
         for name in ('map', 'stations', 'store', 'cbor'):
             source = (subprocess.check_output(['git', 'show', f'496478c:drone-logistics/lib/{name}.lua'],
                                               creationflags=NO_WINDOW)
-                      if before and name in ('map', 'stations') else Path(f'drone-logistics/lib/{name}.lua').read_bytes())
+                      if before and name in ('map', 'stations') else Path('drone-logistics/usr/lib/cbor.lua' if name == 'cbor' else f'drone-logistics/usr/lib/logistics/{name}.lua').read_bytes())
             g[(name.upper() + '_SOURCE').encode()] = source
         lua.execute('''
           function checkArg(n,v,t) assert(type(v)==t,'argument '..n..' requires '..t) end
@@ -93,13 +93,13 @@ def measure(builder, serializer, before):
               end
               return ids
             end}
-          package.preload.warehouse=function() return wh end
+          package.preload["logistics.warehouse"]=function() return wh end
           function complete()
             for _,id in ipairs(pending) do for _,f in ipairs(callbacks.logistics or {}) do f('logistics',id) end end
             pending={}
           end
           function trace() end
-          map=require('map')
+          map=require('logistics.map')
           function sample() peak=math.max(peak,collectgarbage('count')) end
           collectgarbage('collect');peak=collectgarbage('count');debug.sethook(sample,'',100)
         ''')
@@ -107,7 +107,7 @@ def measure(builder, serializer, before):
         graph = program[program.index('local function node('):program.index("save('/etc/mes.cfg'")]
         lua.execute(graph)
         lua.execute('''
-          graphPeak=peak;st=require('stations')
+          graphPeak=peak;st=require('logistics.stations')
           collectgarbage('collect');commissionStart=collectgarbage('count');peak=commissionStart
         ''')
         commission = program[program.index('local stationNames={}'):program.index('wait(function() for _,n in ipairs(stationNames)')]

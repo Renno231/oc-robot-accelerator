@@ -29,11 +29,11 @@ for case in ('service','actions'):
     for target in ('program','client'):
         program=directory/target;program.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/'examples/mapping'/('controller.lua' if target=='program' else 'client.lua'),program/'main.lua')
-        for path in ('lib/map.lua','lib/mapclient.lua','bin/mapd.lua','bin/mapclient.lua'):
+        for path in ('usr/lib/logistics/map.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/mapclient.lua','usr/bin/mapd.lua','usr/bin/mapclient.lua'):
             destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(ROOT/'drone-logistics'/path,destination)
         if case=='actions' and target=='program':
-            for path in ('lib/logistics.lua','lib/cbor.lua','lib/store.lua','drone/agent.lua'):
+            for path in ('usr/lib/logistics/init.lua','usr/lib/cbor.lua','usr/lib/logistics/store.lua','usr/lib/logistics/drone/agent.lua'):
                 destination=program/path;destination.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(ROOT/'drone-logistics'/path,destination)
         (program/'case.lua').write_text('return "'+case+'"\n')

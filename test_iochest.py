@@ -6,10 +6,10 @@ import test_stations as stations
 class IOChestTests(unittest.TestCase):
     def setUp(self):
         f = stations.StationsTests(); f.setUp(); self.lua = f.lua
-        self.lua.globals().IOCHEST = Path('drone-logistics/lib/iochest.lua').read_text()
+        self.lua.globals().IOCHEST = Path('drone-logistics/usr/lib/logistics/iochest.lua').read_text()
         self.lua.execute('''
           IO_SAVES=0;IO_FLUSHES=0;IO_EVENTS=0
-          local store=require('store');local open=store.open
+          local store=require('logistics.store');local open=store.open
           store.open=function(path,...)
             local disk=open(path,...)
             if path=='/etc/io' then
@@ -20,7 +20,7 @@ class IOChestTests(unittest.TestCase):
             return disk
           end
           require('event').listen('io',function() IO_EVENTS=IO_EVENTS+1 end)
-          ic=require('iochest');item={name='mod:seed',damage=0}
+          ic=require('logistics.iochest');item={name='mod:seed',damage=0}
           function chest(n,role,x,count,size)
             local key='h'..x..'_65_2:0';INV[key]={count=count or 0,size=size or 27}
             local spec=single(n,x,2);spec.role=role;assert(st.add('storage',spec));finishAll()
@@ -48,7 +48,7 @@ class IOChestTests(unittest.TestCase):
           end
           function count(n) local r=record(n);local v=r.listing['mod:seed:0'];return v and v.count or 0 end
           function bootSensor(n,token)
-            disk['/usr/lib/logistics/sensor.lua']='return true'
+            disk['/usr/lib/logistics/drone/sensor.lua']='return true'
             token=token or require('serialization').unserialize(files['/etc/logistics.drones'])[n].token
             emit('modem_message','local',n,27103,0,token,'boot');drain()
           end
@@ -126,7 +126,7 @@ class IOChestTests(unittest.TestCase):
         self.lua.execute('''
           chest('stock','stock',5,0);local input=chest('in1','import',10,64)
           assert(sensor('s1','in1',1,64));drain();local n=jobs()
-          package.loaded.iochest=nil;reload();ic=require('iochest')
+          package.loaded["logistics.iochest"]=nil;reload();ic=require('logistics.iochest')
           local bytes=disk['/etc/io'];sensor('s1',nil,1,64)
           assert(jobs()==n and disk['/etc/io']==bytes)
           finishAll();assert(input.count==0 and count('in1')==0)
@@ -138,7 +138,7 @@ class IOChestTests(unittest.TestCase):
           bootSensor('s1','wrong-token');assert(record('out1').seq==5)
           bootSensor('s1');sensor('s1',nil,1,0)
           assert(record('out1').seq==1 and count('out1')==0)
-          package.loaded.iochest=nil;reload();ic=require('iochest')
+          package.loaded["logistics.iochest"]=nil;reload();ic=require('logistics.iochest')
           sensor('s1',nil,1,32);assert(count('out1')==0)
           sensor('s1',nil,2,16);assert(count('out1')==16)
         ''')

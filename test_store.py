@@ -6,12 +6,12 @@ from lupa.lua53 import LuaRuntime
 
 
 def install_store(lua, preserve_io=False):
-    lua.globals().CBOR_SOURCE = Path('drone-logistics/lib/cbor.lua').read_text()
-    lua.globals().STORE_SOURCE = Path('drone-logistics/lib/store.lua').read_text()
+    lua.globals().CBOR_SOURCE = Path('drone-logistics/usr/lib/cbor.lua').read_text()
+    lua.globals().STORE_SOURCE = Path('drone-logistics/usr/lib/logistics/store.lua').read_text()
     lua.globals().PRESERVE_IO = preserve_io
     lua.execute('''
       package.preload.cbor=function() return assert(load(CBOR_SOURCE))() end
-      package.preload.store=function() return assert(load(STORE_SOURCE))() end
+      package.preload["logistics.store"]=function() return assert(load(STORE_SOURCE))() end
       disk={};dirs={};calls={};renames=0;readWholeLog=false
       local function count(k) calls[k]=(calls[k] or 0)+1 end
       function resetCalls() calls={} end
@@ -77,7 +77,7 @@ class StoreTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.lua.globals().MODE = mode
                 self.lua.execute('''
-                  variant(MODE);local store=require('store');local path='/state_'..MODE..'.log'
+                  variant(MODE);local store=require('logistics.store');local path='/state_'..MODE..'.log'
                   local s=store.open(path);assert(not next(s:load()))
                   s:put('a',{value=7});s:put('false',false);s:put('number',3.25)
                   s:put('gone','bye');s:delete('gone');s:flush();s:close()
@@ -90,7 +90,7 @@ class StoreTests(unittest.TestCase):
 
     def test_compaction_with_mutations_and_deletion(self):
         self.lua.execute('''
-          local store=require('store');local s=store.open('/compact.log');s:load()
+          local store=require('logistics.store');local s=store.open('/compact.log');s:load()
           for i=1,6 do s:put('k'..i,i) end
           for i=1,11 do s:put('k1',100+i) end
           assert(disk['/compact.log.new']~=nil)
@@ -104,7 +104,7 @@ class StoreTests(unittest.TestCase):
 
     def test_staging_is_discarded_on_restart(self):
         self.lua.execute('''
-          local store=require('store');local s=store.open('/restart.log');s:load()
+          local store=require('logistics.store');local s=store.open('/restart.log');s:load()
           for i=1,8 do s:put('k'..i,i) end
           for i=1,9 do s:put('k1',i+20) end
           assert(disk['/restart.log.new']~=nil and renames==0)
@@ -115,7 +115,7 @@ class StoreTests(unittest.TestCase):
 
     def test_files_escape_keys_and_replace_without_a_journal(self):
         self.lua.execute('''
-          variant('files');local store=require('store');local s=store.open('/files')
+          variant('files');local store=require('logistics.store');local s=store.open('/files')
           s:load();s:put('a:/ b','first')
           assert(disk['/files/a%3A%2F%20b']~=nil)
           for i=1,100 do s:put('a:/ b',i) end
@@ -127,7 +127,7 @@ class StoreTests(unittest.TestCase):
     def test_decode_error_names_path_and_offset(self):
         self.lua.execute('''
           local c=require('cbor');disk['/broken.log']=c.encode({k='ok',v=1})..'\\161'
-          local s=require('store').open('/broken.log')
+          local s=require('logistics.store').open('/broken.log')
           local ok,err=pcall(s.load,s)
           assert(not ok and err:find('/broken.log at byte '..#c.encode({k='ok',v=1}),1,true))
           s:close()
@@ -138,7 +138,7 @@ class StoreTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.lua.globals().MODE = mode
                 self.lua.execute('''
-                  variant(MODE);local s=require('store').open('/calls_'..MODE..'.log');s:load()
+                  variant(MODE);local s=require('logistics.store').open('/calls_'..MODE..'.log');s:load()
                   resetCalls();for i=1,100 do s:put('k'..i,i) end
                   if MODE=='log' then assert(not calls.write);s:flush()
                     assert(calls.write==1 and not calls.open and not calls.close)
