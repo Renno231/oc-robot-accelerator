@@ -234,7 +234,8 @@ public final class RobotSpike {
         if (!Item.REGISTRY.containsKey(itemId) || Item.REGISTRY.getObject(itemId) == Items.AIR)
             throw new IllegalArgumentException("Tool mod/item is not installed: " + tool.item);
         initialTool = new ItemStack(Item.REGISTRY.getObject(itemId), 1, tool.metadata);
-        initialTool.setTagCompound(JsonToNBT.getTagFromJson(tool.nbt));
+        net.minecraft.nbt.NBTTagCompound toolTag = JsonToNBT.getTagFromJson(tool.nbt);
+        if (!toolTag.getKeySet().isEmpty()) initialTool.setTagCompound(toolTag);
         robot.setInventorySlotContents(0, initialTool.copy());
         robot.mainInventory().setInventorySlotContents(0, new ItemStack(Blocks.COBBLESTONE, 16));
         stateField = robot.machine().getClass().getDeclaredField("state");
