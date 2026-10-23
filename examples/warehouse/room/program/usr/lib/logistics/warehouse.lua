@@ -12,15 +12,18 @@ end
 local cfg=read("/etc/warehouse.cfg",{members={},groups={}})
 local db_store=require("logistics.store").open("/etc/warehouse.db","log")
 local db=db_store:load()
+-- Jobs whose final ledger is in the catalogue, saved with the counts they
+-- changed, so a restart counts only the finished jobs this set lacks. A job
+-- that changed no count may be counted again; that changes nothing. nil until
+-- a catalogue first records it.
+local settledJobs=db.settled;db.settled=nil
 local observed={}
 -- Reservations belong to warehouse-submitted jobs, not the logistics router.
 -- Inventory aliases share a key, so two faces cannot reserve the same stock.
+-- They are kept in memory only; after a restart they are rebuilt from the jobs
+-- logistics still has under way (see the end of this file).
 local inFlight={}
 local pendingCatalogue={}
-local flight_store=require("logistics.store").open("/etc/warehouse.flight")
-for key,r in pairs(flight_store:load()) do
-  local id=tonumber(key:sub(5));inFlight[id]=r;pendingCatalogue[id]=true
-end
 -- Volatile, exact-sided observations. Physical identities are ONLY for
 -- invalidation; they never authorize reuse of another face's slot indices.
 local roleCache,pendingReads,pendingMutations,mutationCounts={},{},{},{}
@@ -287,7 +290,6 @@ local function submit(steps,opts,reservations)
   local s=id and logistics.status(id)
   if id and s and s.state~='done' and s.state~='failed' and s.state~='partial' then
     inFlight[id]=reservations;pendingCatalogue[id]=true
-    flight_store:put("job_"..id,reservations);flight_store:flush()
   end
   return id,err
 end
@@ -495,6 +497,22 @@ local function deliverHeld(name)
   end
   if #steps>0 then submit(steps,{drone=name,cargo=true,drones=1,retries=0},planned) end
 end
+-- After a restart the catalogue may not match chests a job touched while this
+-- computer was down: they are read again when the job ends, or at once if
+-- logistics no longer knows the job.
+local recheck={}
+local function rescan(reservations)
+  local list,seen={},{}
+  for _,r in ipairs(reservations or {}) do
+    if r.storage and not seen[r.storage] and map.storage(r.storage) then seen[r.storage]=true;list[#list+1]=r.storage end
+  end
+  if #list>0 then pcall(M.scan,list) end
+end
+local function settle(id)
+  local kept={[id]=true}
+  for _,j in ipairs(logistics.jobs(true)) do if settledJobs[j.id] then kept[j.id]=true end end
+  settledJobs=kept;db_store:put("settled",kept)
+end
 local function finished(_,id)
   local s=logistics.status(id);if not s then return end
   syncMapRevision()
@@ -503,6 +521,14 @@ local function finished(_,id)
   for _,e in ipairs(reads or {}) do invalidateRead(e) end
   pendingReads[id]=nil
   endpointStorages=map.storages()
+  -- Logistics rebuilt this job from a drone's report after a restart. Its chests
+  -- changed outside the catalogue's view, so they are read again.
+  if s.rebuilt then
+    local storages={}
+    for _,step in ipairs(s.steps or {}) do storages[#storages+1]={storage=at(step.take or step.put or step.read)} end
+    -- Saved now: counting it again would send a drone to read the chests again.
+    endpointStorages=nil;settle(id);db_store:flush();rescan(storages);event.push('warehouse','settled',id);return
+  end
   local touched={};local observed=false
   learn(s.item,s.maxSize)
   if s.steps then
@@ -554,8 +580,9 @@ local function finished(_,id)
   -- Release only after the final ledger has been incorporated in the catalogue.
   inFlight[id]=nil
   pendingCatalogue[id]=nil
+  settle(id)
   if observed or next(touched) then db_store:flush() end
-  flight_store:delete("job_"..id);flight_store:flush()
+  if recheck[id] then rescan(recheck[id]);recheck[id]=nil end
   local learned=limitsDirty;saveLimits()
   if observed or next(touched) or learned then changed(id)
   else event.push('warehouse','settled',id) end
@@ -929,12 +956,36 @@ function M.collect(from,requests,opts)
   if not ok then return nil,jobs,{} end
   return submitPacked(jobs)
 end
-for id in pairs(inFlight) do
-  local s=logistics.status(id)
-  if not s then
-    inFlight[id]=nil;pendingCatalogue[id]=nil;flight_store:delete("job_"..id);flight_store:flush()
-  elseif s.state=="done" or s.state=="failed" or s.state=="partial" then finished("logistics",id) end
+-- Jobs under way when this computer stopped: each counted take or put at a
+-- warehouse inventory is reserved again, and those inventories are read again
+-- when the job ends. Jobs logistics lost come back rebuilt from the drones.
+local storages=map.storages()
+local unsettled,first={},settledJobs==nil
+settledJobs=settledJobs or {}
+for _,j in ipairs(logistics.jobs(true)) do
+  if j.state=="done" or j.state=="failed" or j.state=="partial" then
+    -- A catalogue from before the settled record has already counted these.
+    if first then settledJobs[j.id]=true elseif not settledJobs[j.id] then unsettled[#unsettled+1]=j.id end
+  else
+    local reservations={}
+    for _,step in ipairs(logistics.status(j.id).steps or {}) do
+      local e=step.take or step.put
+      for name,v in pairs(e and step.count and storages or {}) do
+        if v.node==e.node and v.side==e.side and cfg.members[name] then
+          reservations[#reservations+1]={key=inventory(name),storage=name,item=item(step.item),count=step.count,
+            direction=step.take and 'take' or 'put',maximum=step.put and limit(step.item) or nil}
+          break
+        end
+      end
+    end
+    inFlight[j.id]=reservations;pendingCatalogue[j.id]=true;recheck[j.id]=reservations
+  end
 end
+-- Reservations were kept in this file before they were rebuilt from logistics.
+if require("filesystem").exists("/etc/warehouse.flight") then require("filesystem").remove("/etc/warehouse.flight") end
+if first then db_store:put("settled",settledJobs);db_store:flush() end
+-- Jobs that finished after the catalogue was last saved.
+for _,id in ipairs(unsettled) do finished("logistics",id) end
 -- Restore all mutations before capturing read provenance.
 local reads={}
 for id in pairs(inFlight) do

@@ -34,7 +34,7 @@ local nextJob,nextTrip=0,0
 local state_store=require("logistics.store").open("/etc/logistics.state")
 local function saveIds() state_store:put("ids",{job=nextJob,trip=nextTrip}) end
 local function save(job)
-  local record={};for k,v in pairs(job) do if k~="avoid" then record[k]=v end end
+  local record={};for k,v in pairs(job) do if k~="avoid" and k~="retried" then record[k]=v end end
   state_store:put("job_"..job.id,record);saveIds();state_store:flush()
 end
 local clockOK,clock=pcall(require,"computer")
@@ -236,7 +236,7 @@ local function scheduleJob(job)
             if n==0 then error("step counts unmet") end
             return nil
           end
-          return {steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,
+          return {job=job.id,expected=job.opts.expectedItems,steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,
             linger=job.opts.linger and uptime() and LINGER or nil,routes={take=points({d.node or d.home})}}
         end
       end)
@@ -257,6 +257,42 @@ end
 local function schedule()
   local ordered={};for i,id in ipairs(queue) do ordered[i]=id end
   for _,id in ipairs(ordered) do scheduleJob(jobs[id]) end
+end
+-- A finished trip of a job this computer has no record of (its state was lost or
+-- rolled back): the drone's report carries the trip as planned, so the job is
+-- rebuilt from it. Jobs older than every retained one were dropped from history,
+-- not lost. While drones answer the boot status request a rebuilt job stays open,
+-- so one split across several drones adds up all their trips.
+local answering
+local function closeRebuilt(job) finish(job,job.blocked and (job.moved>0 and "partial" or "failed") or "done") end
+local function answered()
+  answering=nil
+  for _,job in pairs(jobs) do if job.rebuilt and not job.finished then closeRebuilt(job) end end
+end
+local function adopt(d,trip,result)
+  local id,account=result.job,result.task
+  if d.trip or type(id)~="number" or type(account)~="table" or type(account.steps)~="table" then return end
+  if result.state~="idle" and result.state~="held" then return end
+  local job=jobs[id]
+  if job then
+    if not job.rebuilt or job.finished or job.rebuiltTrips[trip] then return end
+  else
+    local oldest=math.huge;for known in pairs(jobs) do oldest=math.min(oldest,known) end
+    if id<oldest and next(jobs) then return end
+    job={id=id,state="active",requested=0,moved=0,remaining=0,steps={},held={},active={},trips=0,shortfalls=0,opts={expectedItems=account.expected},rebuilt=true,rebuiltTrips={},queuedAt=uptime()}
+    jobs[id]=job
+  end
+  for i,s in ipairs(account.steps) do
+    local step=job.steps[i]
+    if not step then
+      step=serialization.unserialize(serialization.serialize(s));step.moved=0;step.count=nil
+      step.requested=s.count or (s.all and "all" or "rest");job.steps[i]=step
+    end
+    if s.count then step.count=(step.count or 0)+s.count;step.requested=step.count;if step.take then job.requested=job.requested+s.count end end
+  end
+  job.active[trip]={drone=d.name};job.rebuiltTrips[trip]=true
+  nextJob=math.max(nextJob,id);nextTrip=math.max(nextTrip,trip)
+  d.trip=trip;d.job=id
 end
 local function receive(_,_,sender,received,_,token,kind,id,payload)
   if received~=port then return end
@@ -302,10 +338,14 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     if d.survey then
       local f=assert(io.open('/usr/lib/logistics/drone/survey.lua'));code='local surveyStep=(function()\n'..f:read('*a')..'\nend)()\n'..code;f:close()
     end
+    -- The controller's wake message, if one is set: the agent sends it when the
+    -- controller stops answering, the loader keeps it and sends it on boot.
+    local wake=modem.getWakeMessage() or ""
+    code="local WAKE="..string.format("%q",wake).."\n"..code
     local count=math.ceil(#code/2048);assert(count<=16,'agent download bound')
     for i=1,count do send(d,"code",i,count,code:sub((i-1)*2048+1,i*2048)) end
-    if d.lost then send(d,"start") else
-      local p=assert(map.node(d.home),"missing drone home");send(d,"start",p.x,p.y,p.z)
+    if d.lost then send(d,"start",nil,nil,nil,wake) else
+      local p=assert(map.node(d.home),"missing drone home");send(d,"start",p.x,p.y,p.z,wake)
     end
   elseif kind=="cargo" and id==d.release and type(payload)=="string" and #payload<7000 then
     local listing=serialization.unserialize(payload)
@@ -325,6 +365,12 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     d.energy=result.energy;d.position=result.position
     if type(result.survey)=='boolean' then d.survey=result.survey end
     if result.cargoSlots then d.cargoSlots=result.cargoSlots end
+    if id~=0 then adopt(d,id,result)
+    elseif answering then
+      -- A drone answers status with its kept trips, then ready (or lost).
+      answering[d.name]=nil
+      if not next(answering) then answered() end
+    end
     if id==0 and result.state=="lost" and d.lost then
       d.cargo=result.cargo
       local job=jobs[d.lostJob]
@@ -351,11 +397,14 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     elseif d.trip==id and d.job then
       if result.state=="charging" then state(d,"charging");return end
       local job=jobs[d.job];local assigned=job and job.active[id];if not assigned then return end
-      if result.state=="progress" then assigned.progress=result;save(job);return end
+      -- Kept in memory only: after a restart the drone's own report replaces it.
+      if result.state=="progress" then assigned.progress=result;return end
       if result.state=="blocked" then
         local link=result.link
         if type(link)~="table" or not map.node(link.a) or not map.node(link.b) or not map.node(result.to) then return end
-        job.avoid=job.avoid or {};job.avoid[link.a..":"..link.b]=true
+        job.avoid=job.avoid or {}
+        local before=serialization.unserialize(serialization.serialize(job.avoid))
+        job.avoid[link.a..":"..link.b]=true
         local affected={link}
         if type(result.offset)=="number" then
           local a,b=map.node(link.a),map.node(link.b)
@@ -393,6 +442,14 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           job.test="blocked";save(job);send(d,"navigation",id,serialization.serialize({reason=job.reason},false));return
         end
         local alternative=planned(link.a,result.to,job.avoid)
+        -- A player or mob in the way moves on. With no way around, fly the
+        -- same way again a few times before the job fails.
+        local key=link.a..":"..link.b
+        job.retried=job.retried or {}
+        if not alternative and (job.retried[key] or 0)<retries then
+          job.retried[key]=(job.retried[key] or 0)+1;job.avoid=before
+          alternative=planned(link.a,result.to,job.avoid)
+        end
         save(job);send(d,"navigation",id,serialization.serialize({route=alternative and points(alternative),reason=job.reason},false))
         return
       end
@@ -428,7 +485,10 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         end end
         job.remaining=math.max(0,job.requested-job.moved)
         for _,held in ipairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=held.item,count=held.count} end
-        state(d,(result.held or 0)>0 and "held" or "idle");d.held=(result.held or 0)>0 and result.cargo or nil;d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
+        -- A drone that delivered everything reports before flying home: it
+        -- returns, and is idle again when it says ready there.
+        state(d,result.homing and "returning" or (result.held or 0)>0 and "held" or "idle");d.held=(result.held or 0)>0 and result.cargo or nil
+        d.node=not result.away and not result.homing and d.home or nil;d.trip=nil;d.job=nil
         if result.lingering and map.node(result.lingering) and uptime() then d.node=result.lingering;d.lingerUntil=uptime()+LINGER-LINGER_MARGIN end
         local advanced=false;for _,r in pairs(result.steps or {}) do if (r.moved or 0)>0 then advanced=true end end
         if not complete and not advanced and not result.reason then result.reason="step counts unmet" end
@@ -436,7 +496,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
           job.shortfalls=job.shortfalls+1
           if result.refused or result.state=="held" or job.shortfalls>(job.opts.retries or retries) then job.blocked=true;job.reason=result.reason end
         end
-        if complete and not job.blocked and not next(job.active) then finish(job,"done") else save(job);wakeScheduler() end
+        if job.rebuilt then if answering then save(job) else closeRebuilt(job) end
+        elseif complete and not job.blocked and not next(job.active) then finish(job,"done") else save(job);wakeScheduler() end
         return
       end
     end
@@ -519,7 +580,7 @@ function M.transfer(item,count,from,to,opts)
 end
 function M.status(id)
   local job=jobs[id];if not job then return nil end
-  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","emptied","knownTaken","steps","blockedReports","scan","test","item","from","to","refused","queuedAt","dispatchedAt","finishedAt","tripTimings"}) do out[key]=job[key] end
+  local out={};for _,key in ipairs({"state","requested","moved","remaining","reason","held","trips","shortfalls","maxSize","taken","returned","overflow","emptied","knownTaken","steps","blockedReports","scan","test","item","from","to","refused","queuedAt","dispatchedAt","finishedAt","tripTimings","rebuilt"}) do out[key]=job[key] end
   out.perItem=perItems(job)
   if out.perItem then
     out.requested=0;for _,r in ipairs(out.perItem) do out.requested=out.requested+r.requested end
@@ -648,7 +709,8 @@ if records.ids then nextJob,nextTrip=records.ids.job,records.ids.trip end
 for key,job in pairs(records) do
   if key~="ids" then
     jobs[job.id]=job;job.avoid={}
-    local list=job.finished and finished or queue;list[#list+1]=job.id
+    -- An unfinished rebuilt job is closed once drones have answered, never scheduled.
+    if job.finished then finished[#finished+1]=job.id elseif not job.rebuilt then queue[#queue+1]=job.id end
     if not job.finished then
       for trip,a in pairs(job.active) do
         local d=fleet[a.drone];d.trip=trip;d.job=job.id;d.state="working"
@@ -659,5 +721,8 @@ for key,job in pairs(records) do
   end
 end
 table.sort(finished);table.sort(queue)
-for _,d in pairs(addresses) do send(d,"status") end
+answering={}
+for _,d in pairs(addresses) do send(d,"status");if d.kind~="sensor" then answering[d.name]=true end end
+-- Drones away on a trip answer only when it ends; rebuilt jobs wait at most this long.
+event.timer(20,function() if answering then answered() end end)
 return M
