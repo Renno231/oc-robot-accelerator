@@ -18,6 +18,7 @@ end
 local function report(id,data)
   data.energy=computer.energy();data.position={x=x,y=y,z=z};data.cargoSlots=slots
   local payload=encode(data)
+  if #payload>=7000 and data.task then data.task=nil;payload=encode(data) end
   if #payload>=7000 then
     for _,step in ipairs(data.steps or {}) do step.listing=nil end
     data.reason="inventory listing exceeds result packet bound";data.state="held";data.refused=true
@@ -27,7 +28,20 @@ local function report(id,data)
   modem.send(controller,port,token,"report",id,payload)
   return payload
 end
-local last
+-- Reports of the last two trips, newest first, resent when the controller asks.
+local done={}
+-- The trip as the controller planned it, kept with its report so a controller
+-- that lost the job can rebuild it from this drone's account.
+local function account(task)
+  if not task.steps then return nil end
+  local steps={}
+  for i,s in ipairs(task.steps) do steps[i]={take=s.take,put=s.put,read=s.read,go=s.go,item=s.item,count=s.count,all=s.all,rest=s.rest,expectedIndex=s.expectedIndex} end
+  return {steps=steps,expected=task.expected}
+end
+local function final(id,task,result)
+  result.job=task.job;result.task=account(task)
+  table.insert(done,1,{id,report(id,result)});done[3]=nil
+end
 local activeTrip,history,currentPoint,rerouted,testingCandidate
 local function askRoute(from,to,blocked)
   local function sendRequest()
@@ -37,6 +51,8 @@ local function askRoute(from,to,blocked)
   sendRequest()
   while true do
     local e={computer.pullSignal(60)}
+    -- No answer: wake the controller in case it stopped. Once started, it asks for status.
+    if not e[1] and WAKE~="" then modem.send(controller,port,WAKE) end
     if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token then
       if e[7]=="status" then sendRequest()
       elseif e[7]=="navigation" and e[8]==activeTrip then
@@ -278,6 +294,9 @@ local function runSteps(task,id,result)
   if task.linger and not result.reason and result.held==0 and computer.energy()>=task.reserve then
     result.lingering=currentPoint.name;return
   end
+  -- Delivered in full: the trip ends here, so the job closes while the drone
+  -- flies home; it says ready when it lands.
+  if not result.reason and result.held==0 then result.homing=true;final(id,task,result) end
   goTo(task.home)
   if computer.energy()<task.reserve then
     report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
@@ -309,11 +328,10 @@ while true do
   if lingerUntil and computer.uptime()>=lingerUntil then returnHome() end
   local e={computer.pullSignal(lingerUntil and math.max(0,lingerUntil-computer.uptime()) or nil)}
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="release" then
-    last=nil
+    done={}
     local listing=cargoListing()
     modem.send(controller,port,token,"cargo",e[8],encode(listing))
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="trip" then
-    last=nil
     local task=decode(e[9]);local id=e[8]
     if task and (cargoCount()==0 or task.cargo and task.steps) then
       -- A trip taken while lingering continues the path from home.
@@ -351,11 +369,13 @@ while true do
         if not returned then result.reason=result.reason.."; home retrace: "..tostring(why);result.away=true end
         result.held=cargoCount()
       end
-      last={id,report(id,result)}
+      if not result.homing then final(id,task,result)
+      elseif not result.away then ready()
+      else report(0,{state="ready",notAtHome=true,offset=drone.getOffset(),cargo=cargoListing()}) end
       if result.lingering then lingerUntil=computer.uptime()+task.linger else history=nil end
     end
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="status" then
-    if last then modem.send(controller,port,token,"report",last[1],last[2]) end
+    for i=#done,1,-1 do modem.send(controller,port,token,"report",done[i][1],done[i][2]) end
     -- Away from home, ready waits until the drone is back there.
     if not lingerUntil then ready() end
   end

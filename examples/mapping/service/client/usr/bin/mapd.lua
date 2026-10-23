@@ -13,7 +13,7 @@ local edits={add=true,remove=true,link=true,unlink=true,name=true,unname=true,sa
 local reads={node=true,storage=true}
 local pending={}
 local stations={station_add="add",station_retry="retry",station_remove="remove",stations="list",station="get"}
-local chest={io_list="list",io_import_now="importNow",io_mark_emptied="markEmptied",io_attach="attach",io_fetch="fetch",io_fetch_many="fetchMany"}
+local chest={io_list="list",io_import_now="importNow",io_attach="attach",io_fetch="fetch",io_fetch_many="fetchMany"}
 local function reply(address,id,phase,ok,value)
   local data=serialization.serialize({value=value},false)
   if #data>bound then ok=false;data=serialization.serialize({value="reply entry exceeds packet bound"},false) end

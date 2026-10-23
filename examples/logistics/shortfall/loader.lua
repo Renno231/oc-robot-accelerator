@@ -3,7 +3,7 @@ local modem=component.proxy(component.list("modem")())
 local ee=component.proxy(component.list("eeprom")())
 local port=27103
 modem.open(port)
-local token,controller,name=ee.getData():match("^([^|]+)|([^|]+)|([^|]+)$")
+local token,controller,name,wake=ee.getData():match("^([^|]+)|([^|]+)|([^|]+)|?([^|]*)$")
 if not token then
   while true do
     modem.broadcast(port,"lgx_hello",component.list("drone")() and "drone" or component.list("transposer")() and "sensor")
@@ -22,13 +22,16 @@ if not token then
 end
 modem.setWakeMessage(token,true)
 local parts,total={},nil
-modem.send(controller,port,token,"boot",component.list("geolyzer")()~=nil)
+-- The controller's wake key, kept from its last start message, powers it on if it stopped.
+local function boot()
+  if wake~="" then modem.send(controller,port,wake) end
+  modem.send(controller,port,token,"boot",component.list("geolyzer")()~=nil)
+end
+boot()
 local retry=computer.uptime()+5
 while true do
   local e={computer.pullSignal(1)}
-  if computer.uptime()>=retry then
-    modem.send(controller,port,token,"boot",component.list("geolyzer")()~=nil);retry=computer.uptime()+5
-  end
+  if computer.uptime()>=retry then boot();retry=computer.uptime()+5 end
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token then
     if e[7]=="code" then
       local i,n,s=e[8],e[9],e[10]
@@ -36,6 +39,11 @@ while true do
         total=n;parts[i]=s
       end
     elseif e[7]=="start" and total then
+      local w=e[11]
+      if type(w)=="string" and w~=wake and not w:find("|",1,true) then
+        local record=token.."|"..controller.."|"..name.."|"..w
+        if #record<=ee.getDataSize() then ee.setData(record);wake=w end
+      end
       local complete=true
       for i=1,total do if not parts[i] then complete=false end end
       if complete then
