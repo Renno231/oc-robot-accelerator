@@ -7,6 +7,9 @@ import test_stock_api
 from test_store import install_store
 
 
+# Logistics sends the agent with the controller's wake message first; none is set here.
+AGENT_PREFIX = 'local WAKE=""\n'
+
 class LogisticsRestartTests(unittest.TestCase):
     def start(self, mode, item_name='mod:stock'):
         fixture = test_stock_api.LibraryApiTests()
@@ -160,7 +163,7 @@ class LogisticsRestartTests(unittest.TestCase):
 
     def test_boot_ready_lists_current_inventory(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.execute('''
           local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and 3 or 0 end,
             getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
@@ -215,7 +218,7 @@ class LogisticsRestartTests(unittest.TestCase):
 
     def test_agent_lingers_then_continues_or_retraces_home(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.execute('''
           local T,WAITS,REPORTS,NAV=0,{},{},nil
           local drone={inventorySize=function() return 4 end,count=function() return 0 end,
@@ -268,7 +271,7 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(lg.found('d1'));ready();assert(lg.drones()[1].state=='idle')
                 ''')
                 agent = LuaRuntime(unpack_returned_tuples=True)
-                agent.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+                agent.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
                 agent.globals().OFFSET = offset
                 agent.execute('''
                   local drone={inventorySize=function() return 4 end,count=function() return 0 end,
@@ -395,7 +398,8 @@ class LogisticsRestartTests(unittest.TestCase):
                   report(FAKE.trip,{state='blocked',link={a='home',b='source'},to='dest'})
                   report(FAKE.trip,{state='progress',steps={{taken=2,moved=2}},held=2})
                   local s=require('logistics.store').open('/etc/logistics.state');local r=s:load();s:close()
-                  assert(r['job_'..id].active[FAKE.trip].progress.held==2)
+                  -- Drone steps are not saved; after a restart the drone resends its reports.
+                  assert(r['job_'..id].active[FAKE.trip] and r['job_'..id].active[FAKE.trip].progress==nil)
                   assert(r['job_'..id].avoid==nil and r.ids.job==id and r.ids.trip==FAKE.trip)
                   assert(#r['job_'..id].blockedReports==1)
                   finishPhysical(false);report(FAKE.last.id,clone(FAKE.last.result))
@@ -441,7 +445,7 @@ class LogisticsRestartTests(unittest.TestCase):
 class AgentRestartTests(unittest.TestCase):
     def route_fixture(self, blocked=False):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.globals().BLOCKED = blocked
         lua.execute('''
           TIME=0;SENT={};POSITION=0;TARGET=0
@@ -467,6 +471,8 @@ class AgentRestartTests(unittest.TestCase):
             resume('modem_message','local','controller',27103,0,'token',kind,id,payload)
           end
           function decoded(n) return assert(load('return '..SENT[n].payload))() end
+          -- A drone ends a trip with its report, then says it is ready (id 0).
+          function lastFor(id) for n=#SENT,1,-1 do if SENT[n].id==id then return decoded(n) end end end
           ROUTE="{route={{name='home',x=0,y=0,z=0},{name='dest',x=1,y=0,z=0}}}"
           command('trip',11,"{reserve=1000,home='dest',steps={{go='dest'}},routes={take={{name='home',x=0,y=0,z=0}}}}")
           assert(#SENT==1 and SENT[1].kind=='navigate' and SENT[1].id==11)
@@ -480,7 +486,7 @@ class AgentRestartTests(unittest.TestCase):
           command('status');assert(#SENT==1 and SENT[1].kind=='navigate' and SENT[1].payload==original)
           command('navigation',99,ROUTE);assert(#SENT==0)
           command('navigation',11,ROUTE)
-          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle' and POSITION==1)
+          assert(lastFor(11).state=='idle' and POSITION==1)
         ''')
 
     def test_blocked_reroute_waits_past_ten_seconds_and_resends_on_status(self):
@@ -494,7 +500,7 @@ class AgentRestartTests(unittest.TestCase):
           TIME=30;resume();assert(#SENT==0)
           command('status');assert(#SENT==1 and SENT[1].kind=='report' and SENT[1].payload==original)
           BLOCKED=false;command('navigation',11,ROUTE)
-          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle' and POSITION==1)
+          assert(lastFor(11).state=='idle' and POSITION==1)
         ''')
 
     def test_arrival_during_yield_is_not_misreported_as_a_stall(self):
@@ -504,7 +510,7 @@ class AgentRestartTests(unittest.TestCase):
           -- The last .09 block settles during the yield, after the stall time.
           TIME=4.1;POSITION=TARGET;resume()
           assert(TARGET==1,'an arrived drone must not undo its movement')
-          assert(SENT[#SENT].id==11 and decoded(#SENT).state=='idle')
+          assert(lastFor(11).state=='idle')
         ''')
 
     def test_unknown_trip_route_response_fails_loudly(self):
@@ -515,9 +521,9 @@ class AgentRestartTests(unittest.TestCase):
           assert(result.state=='held' and result.reason:find('unknown trip 11',1,true))
         ''')
 
-    def test_last_cleared_by_trip_release_and_empty_status_only_ready(self):
+    def test_reports_kept_until_release_and_empty_status_only_ready(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
         lua.execute('''
           SENT={};HELD=0
           local drone={inventorySize=function() return 4 end,count=function(i) return i==1 and HELD or 0 end,
@@ -546,8 +552,10 @@ class AgentRestartTests(unittest.TestCase):
           local payload=SENT[1].payload
           command('status');assert(#SENT==2 and SENT[1].id==11 and SENT[1].payload==payload and SENT[2].id==0)
           command('trip',12,'invalid');assert(#SENT==0)
-          command('status');assert(#SENT==1 and SENT[1].id==0)
+          -- The last two trip reports stay until a release; a trip that never ran does not replace them.
+          command('status');assert(#SENT==2 and SENT[1].id==11 and SENT[2].id==0)
           command('trip',13,trip);assert(SENT[1].id==13)
+          command('status');assert(#SENT==3 and SENT[1].id==11 and SENT[2].id==13 and SENT[3].id==0)
           command('release',14);assert(#SENT==1 and SENT[1].kind=='cargo')
           command('status');assert(#SENT==1 and SENT[1].id==0)
           HELD=3;command('status');local ready=decoded(1)

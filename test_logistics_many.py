@@ -137,6 +137,7 @@ class LogisticsManyTests(unittest.TestCase):
           function match(a,b) return a and b and a.name==b.name end
           function goTo() end
           function report(id,r) REPORTS[#REPORTS+1]=r end
+          function final(id,task,r) report(id,r) end -- the agent's trip report, without its history
           function cargoCount() local n=0;for _,c in pairs(CARGO) do n=n+c.size end;return n end
           function put(endpoint,item,n) CARGO[1].size=CARGO[1].size-n;PUT[#PUT+1]={endpoint.node,n};return n end
           computer={energy=function() return 100 end}
@@ -196,7 +197,7 @@ class LogisticsManyTests(unittest.TestCase):
           require('serialization').serialize=function(t) local key=fingerprint(t);serial[key]=clone(t);return key end
 
           package.loaded.computer={uptime=function() return TIME end}
-          package.loaded.event={push=function() end,listen=function(name,fn) LISTEN[name]=fn end}
+          package.loaded.event={push=function() end,listen=function(name,fn) LISTEN[name]=fn end,timer=function() return 1 end,cancel=function() end}
           require('component').modem.send=function(address,port,token,kind,id,payload)
             SENT[#SENT+1]={kind=kind,id=id,payload=payload}
           end

@@ -52,7 +52,8 @@ class SensorTests(unittest.TestCase):
 
     def test_firmware_byte_budget(self):
         self.assertLessEqual(Path('drone-logistics/usr/lib/logistics/drone/sensor.lua').stat().st_size, 1800)
-        self.assertLessEqual(Path('drone-logistics/drone/loader.lua').stat().st_size, 2035)
+        # An EEPROM holds 4096 bytes; the loader grew to keep and send the controller's wake message.
+        self.assertLessEqual(Path('drone-logistics/drone/loader.lua').stat().st_size, 2400)
 
 
 class SensorTransportTests(unittest.TestCase):

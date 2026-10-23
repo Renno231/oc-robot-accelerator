@@ -17,7 +17,7 @@ class TimingTests(unittest.TestCase):
           function load(n,at)
             w.now=at or w.now
             local l={ops=n,request={perOp=1,run={},outputs={brick=1}},
-              bundle={action={submittedAt=w.now}},remaining={brick=n}}
+              bundle={action={submittedAt=w.now}},remaining={brick=n},fuelShort=FUEL_SHORT}
             g.loads[#g.loads+1]=l
             local duration=T.load(w,g,l);l.duration=duration;l.due=w.now+duration
             return l,duration
@@ -50,7 +50,7 @@ class TimingTests(unittest.TestCase):
 
     def test_timing_signal_matches_persisted_changes(self):
         self.lua.execute('''
-          puts=0;p={db={},known={},store={put=function() puts=puts+1 end}}
+          puts=0;p={db={},known={},put=function() puts=puts+1 end}
           T.seconds(w,g);T.persist(p,w);assert(puts==0 and #SIGNALS==0)
           w.timing.a.hi=10;T.persist(p,w);assert(puts==1 and #SIGNALS==1)
           assert(SIGNALS[1][1]=='mes' and SIGNALS[1][2]=='timing' and SIGNALS[1][3]=='a')
@@ -82,6 +82,7 @@ class TimingTests(unittest.TestCase):
           g.mt.seconds=30;l=load(16);receipt(l,16,480,482);clear()
           local original=w.timing.a.hi
           w.timing.a.sinceFree=5;w.timing.a.sinceProbe=5
+          g.mt.seconds=nil -- a configured time inside the range is not probed
           q,d=load(16,500);assert(q.probe and d<original*16)
           receipt(q,16,500+d,502+d)
           assert(w.timing.a.hi<original)
@@ -97,9 +98,9 @@ class TimingTests(unittest.TestCase):
 
     def test_fuel_and_capacity_excluded(self):
         self.lua.execute('''
-          g.mt.fuel={per=8};g.fuel.credit=0;l=load(16)
+          FUEL_SHORT=true;l=load(16);FUEL_SHORT=nil
           receipt(l,0,100,102);assert(w.timing.a.samples==0 and g.timingExcluded.fuel==1)
-          clear();g.fuel.credit=100;l=load(64)
+          clear();l=load(64)
           receipt(l,64,640,642,{{take={},taken=64,maxSize=64}})
           assert(w.timing.a.samples==0 and g.timingExcluded.capacity==1)
         ''')
@@ -125,7 +126,7 @@ class TimingTests(unittest.TestCase):
 
     def test_restart_threshold(self):
         self.lua.execute('''
-          puts=0;p={db={},known={},store={put=function(_,key,value) puts=puts+1 end}}
+          puts=0;p={db={},known={},put=function(key,value) puts=puts+1 end}
           T.seconds(w,g);w.timing.a.lo=9;w.timing.a.hi=11
           T.persist(p,w);assert(puts==1)
           w.timing.a.hi=10.8;T.persist(p,w);assert(puts==1)
@@ -153,6 +154,7 @@ class TimingTests(unittest.TestCase):
 
     def test_one_probe_then_tight_range_stops(self):
         self.lua.execute('''
+          g.mt.seconds=nil -- a configured time inside the range is not probed
           T.seconds(w,g);w.timing.a.lo=5;w.timing.a.hi=20
           local probes=0
           for i=1,5 do clear();local l=load(16,i*400);if l.probe then probes=probes+1 end end

@@ -62,7 +62,7 @@ class MesFixtureTests(unittest.TestCase):
         lua.execute('''
           checkArg=function(_,v,t) assert(type(v)==t) end
           os.sleep=function() end
-          package.preload.computer=function() return {freeMemory=function() return 65536 end,uptime=function() return 0 end} end
+          package.preload.computer=function() return {freeMemory=function() return 65536 end,totalMemory=function() return 1048576 end,uptime=function() return 0 end} end
           package.preload.unicode=function() return {len=string.len,sub=string.sub} end
           package.delay=function(b) package.loaded.buffer=b;assert(load(FULL_BUFFER_SOURCE))() end
           package.preload.buffer=function() return assert(load(BUFFER_SOURCE))() end
@@ -72,18 +72,18 @@ class MesFixtureTests(unittest.TestCase):
             return {mode={w=true,b=true},write=function(_,data) bytes=bytes..data;return true end,
               close=function() end}
           end
-          local archive=assert(require('liblz16').open('fixture.dblz','wb'))
+          local archive=assert(require('lz4_frame').open('fixture.dblz','wb'))
           assert(archive:write(SOURCE_TEXT)==archive)
-          assert(select('#',archive:close())==0)
+          assert(archive:close()~=false) -- OpenOS close returns nothing; not a failure
           assert(archive.closed)
-          local reader=require('liblz16').buffer({mode={r=true},read=function(_,n)
+          local reader=require('lz4_frame').buffer({mode={r=true},read=function(_,n)
             if bytes=='' then return nil end
             local chunk=bytes:sub(1,n);bytes=bytes:sub(n+1);return chunk
           end,close=function() end})
           assert(reader:read('*a')==SOURCE_TEXT)
           bytes=''
-          local empty=assert(require('liblz16').open('/usr/lib/oredict/oredict.dblz','wb'))
-          empty:close();assert(bytes=='lz16')
+          local empty=assert(require('lz4_frame').open('/usr/lib/oredict/oredict.dblz','wb'))
+          empty:close();assert(bytes=='\\4\\34\\77\\24\\96\\64\\130\\0\\0\\0\\0') -- frame header, end mark
           io.open=function(path,mode)
             assert(path=='/usr/lib/oredict/oredict.dblz' and mode==nil)
             return {mode={r=true,b=true},read=function(_,n)

@@ -16,7 +16,8 @@ class ReservationTests(unittest.TestCase):
             unserialize=function(s) return serial[s] end} end
           package.preload.computer=function() return {uptime=function() return 0 end} end
           package.preload.event=function() return {
-            push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end} end
+            push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end,
+            timer=function() return 1 end} end
           storages={stock={node='stock',side=0},alias={node='stock',side=1},buffer={node='buffer',side=0}}
           package.preload["logistics.map"]=function() return {
             storage=function(s) return storages[s] end,
@@ -27,6 +28,7 @@ class ReservationTests(unittest.TestCase):
             onMutation=function(_,fn) mutationHook=fn end,
             onRead=function(_,fn) readHook=fn end,
             plan=function() return {{x=0,y=0,z=0},{x=1,y=0,z=0}} end,
+            jobs=function() return {} end,
             status=function(id) return jobs[id] end,
             job=function(steps,opts)
               local id=#jobs+1;local mutations,reads={},{}

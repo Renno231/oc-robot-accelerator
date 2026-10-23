@@ -108,9 +108,9 @@ class LibraryApiTests(unittest.TestCase):
             return {read=function() return files[path] end,
               write=function(_,s) files[path]=s end,close=function() end}
           end
-          package.preload.event=function() return {push=function() end,listen=function() end} end
+          package.preload.event=function() return {push=function() end,listen=function() end,timer=function() return 1 end} end
           package.preload.component=function() return {modem={
-            isWireless=function() return true end,open=function() end}} end
+            isWireless=function() return true end,open=function() end,getWakeMessage=function() end}} end
         ''')
 
     def load(self, library, variable):
@@ -138,7 +138,7 @@ class LibraryApiTests(unittest.TestCase):
           names=map.names();map.link('a','z');assert(map.names()~=names)
           names=map.names();map.unlink('a','z');assert(map.names()~=names)
           map.save();map.remove('a');assert(#map.names()==1 and #map.storageNames()==0)
-          map.load();assert(#map.names()==1 and #map.storageNames()==0)
+          map.save();map.load();assert(#map.names()==1 and #map.storageNames()==0) -- edits are durable at save
           names=map.names();map.add('a',2,0,0);assert(map.names()~=names)
         ''')
 
@@ -163,8 +163,9 @@ class LibraryApiTests(unittest.TestCase):
           package.preload.logistics=function() return {
             onMutation=function() end,
             onRead=function(_,fn) read=fn end,
+            jobs=function() return {} end,
             status=function(id) return jobs[id] end} end
-          package.loaded.event={push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end}
+          package.loaded.event={push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end,timer=function() return 1 end}
           os.rename=function() return true end
           map.add('rack',0,0,0);map.add('other',1,0,0)
           map.name('stock','rack',0);map.name('alias','rack',1)
@@ -195,7 +196,7 @@ class LibraryApiTests(unittest.TestCase):
           map.name('stock','rack',0);verify(128,false) -- observation survives restoration
           map.name('alias','rack',1);verify(128,true) -- aliases never double count
           map.save();map.remove('rack');verify(0,false)
-          map.load();verify(0,true) -- load includes the persisted per-record removal
+          map.save();map.load();verify(0,true) -- load includes the saved per-record removal
           -- Checking both revision and totals on unchanged redraws is allocation-free.
           collectgarbage('collect');collectgarbage('stop');local memory=collectgarbage('count')
           local before=copies
