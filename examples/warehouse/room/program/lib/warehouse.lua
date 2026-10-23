@@ -165,8 +165,7 @@ local function beginMutation(id,endpoints,steps)
     mutationEpochs[key]=(mutationEpochs[key] or 0)+1
   end
 end
-local mutationHook=type(logistics.onMutation)=="function"
-if mutationHook then logistics.onMutation("warehouse.role-cache",beginMutation) end
+logistics.onMutation("warehouse.role-cache",beginMutation)
 local function invalidateRead(e)
   local cached=roleCache[e.node] and roleCache[e.node][e.side]
   if not cached then return end
@@ -190,8 +189,7 @@ local function beginRead(id,endpoints)
   syncMapRevision()
   pendingReads[id]=readProvenance(endpoints);pendingCatalogue[id]=true
 end
-local readHook=type(logistics.onRead)=="function"
-if readHook then logistics.onRead("warehouse.role-cache",beginRead) end
+logistics.onRead("warehouse.role-cache",beginRead)
 local function readCurrent(reads,e)
   for _,r in ipairs(reads or {}) do
     local same=r.node==e.node and r.side==e.side and (r.slots==nil)==(e.slots==nil)
@@ -216,9 +214,7 @@ local function readCurrent(reads,e)
       return true
     end
   end
-  -- Legacy/fake completion fixtures have no read submission hook. Actual
-  -- routers require captured provenance, including direct external read jobs.
-  return reads==nil and not readHook and not mutationHook
+  return false
 end
 local function grouped(storage)
   local key=inventory(storage) or storage
@@ -284,29 +280,11 @@ local function incomingCapacity(key,i,maximum,planned)
   return used
 end
 local function submit(steps,opts,reservations)
-  syncMapRevision()
-  local reads,movements={},{}
-  for _,step in ipairs(steps) do
-    if step.read then
-      local e=endpoint(step.read)
-      if e then
-        local r={node=e.node,side=e.side,slots=type(step.read)=="table" and step.read.slots or nil}
-        if r.slots then local slots={};for k,v in ipairs(r.slots) do slots[k]=v end;r.slots=slots end
-        reads[#reads+1]=r
-      end
-    elseif step.take or step.put then movements[#movements+1]=step.take or step.put end
-  end
-  -- Refused submissions and synchronously failed jobs may have no result legs.
-  for _,e in ipairs(reads) do invalidateRead(e) end
-  if not mutationHook then claim(steps);mutationKeys(movements) end
-  local provenance=not readHook and readProvenance(reads) or nil
   local id,err=logistics.job(steps,opts)
   local s=id and logistics.status(id)
   if id and s and s.state~='done' and s.state~='failed' and s.state~='partial' then
     inFlight[id]=reservations;pendingCatalogue[id]=true
     flight_store:put("job_"..id,reservations);flight_store:flush()
-    if not readHook then pendingReads[id]=provenance end
-    if not mutationHook and #movements>0 then beginMutation(id,movements) end
   end
   return id,err
 end
@@ -675,9 +653,8 @@ function M.store(i,n,from,opts)
   if remaining>0 then return nil,"requested "..n..", capacity "..total..", unknown inventories "..unknown end
   return submit(steps,opts,reservations)
 end
--- Packed APIs keep one tracked job per confirmed cargo-sized tour. Planning
--- uses ordinary stock estimates for fetches, but collection requires a fresh
--- authoritative exact source view (including declared empty slots).
+-- Packed APIs keep one tracked job per confirmed cargo-sized tour. Fetches use
+-- known stock; collections take expected output and settle from the receipt.
 local function manyRequests(requests)
   assert(type(requests)=="table","requests required")
   local n=0;for k in pairs(requests) do

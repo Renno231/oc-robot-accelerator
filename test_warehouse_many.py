@@ -48,14 +48,16 @@ class WarehouseManyTests(unittest.TestCase):
           require('serialization').unserialize=function(key) return clone(serial[key]) end
           FLEET={{name='a',cargoSlots=4},{name='b',cargoSlots=6}}
           local lg=require('logistics');lg.drones=function() return clone(FLEET) end
+          local submit=lg.job
           lg.job=function(steps,opts)
-            local id=#jobs+1;jobs[id]={state='queued',submitted=clone(steps),opts=clone(opts)};return id
+            local id=submit(steps,opts)
+            jobs[id].submitted=clone(steps);jobs[id].opts=clone(opts);return id
           end
           function stack(name,count,maximum)
             return {name=name,damage=0,size=count,maxSize=maximum or 64}
           end
           function observe(storage,listing,size)
-            local id=#jobs+1;jobs[id]={state='done',steps={{read=storages[storage],
+            local id=lg.job({{read=storage}});jobs[id]={state='done',steps={{read=storages[storage],
               listing=listing,size=size or 27}}};listener('logistics',id)
           end
           function addStorage(name,listing,size,settings)
