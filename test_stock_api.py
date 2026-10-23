@@ -22,7 +22,7 @@ class WarehouseApiTests(unittest.TestCase):
             return serialize(t,...)
           end
           function scan(storage,n,size)
-            local id=#jobs+1;jobs[id]={state='done',steps={{read=storages[storage],size=size or 27,
+            local id=require('logistics').job({{read=storage}});jobs[id]={state='done',steps={{read=storages[storage],size=size or 27,
               listing=n>0 and {{name=item.name,damage=item.damage,label=item.label,size=n,maxSize=64}} or {}}}}
             listener('logistics',id)
           end
@@ -95,7 +95,13 @@ class LibraryApiTests(unittest.TestCase):
             local out={};for k,v in pairs(t) do out[k]=clone(v) end;return out
           end
           package.preload.serialization=function() return {
-            serialize=function(t) copies=copies+1;seq=seq+1;serial[tostring(seq)]=clone(t);return tostring(seq) end,
+            serialize=function(t)
+              copies=copies+1
+              if type(t)=='table' and type(t[1])=='string' and type(t[2])=='number' then
+                local key=t[1]..'/'..tostring(t[2])..'/'..tostring(t[3]);serial[key]=clone(t);return key
+              end
+              seq=seq+1;serial[tostring(seq)]=clone(t);return tostring(seq)
+            end,
             unserialize=function(s) return clone(serial[s]) end} end
           files={};io.open=function(path,mode)
             if mode=='r' and not files[path] then return nil end
@@ -155,6 +161,8 @@ class LibraryApiTests(unittest.TestCase):
           package.preload.computer=function() return {uptime=function() return 0 end} end
           jobs={}
           package.preload.logistics=function() return {
+            onMutation=function() end,
+            onRead=function(_,fn) read=fn end,
             status=function(id) return jobs[id] end} end
           package.loaded.event={push=function() end,listen=function(name,fn) if name=='logistics' then listener=fn end end}
           os.rename=function() return true end
@@ -166,8 +174,9 @@ class LibraryApiTests(unittest.TestCase):
         self.load('warehouse', 'wh')
         self.lua.execute('''
           item={name='mod:stock',damage=0}
+          read(1,{map.storage('stock')})
           jobs[1]={state='done',steps={{read=map.storage('stock'),size=27,
-            listing={{name=item.name,damage=0,size=128,maxSize=64}}}}}
+            listing={{name=item.name,damage=0,size=64,maxSize=64},{name=item.name,damage=0,size=64,maxSize=64}}}}}
           listener('logistics',1)
           local cached=wh.totals();local rev=wh.revision()
           local function verify(count,revisionFirst)
