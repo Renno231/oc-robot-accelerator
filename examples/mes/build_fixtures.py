@@ -142,6 +142,10 @@ def build_native(target, case, mode='coordinated', seconds=10):
     value['containerEdits'] = ([{'position': [0, 65, 1], 'slot': 1, 'count': 16, 'expectedCount': 64,
                                 'request': {'computer': 0, 'marker': 'home/warehouse-remove-items',
                                             'signal': 'warehouse_items_removed'}}] if case == 'shortfall' else [])
+    if case == 'shortfall':
+        # Outside warehouse membership until a normal transfer replenishes stock.
+        reserve = next(c for c in value['containers'] if c['position'] == [7, 68, 3])
+        reserve['slots'] = [{'slot': 1, 'item': 'minecraft:clay_ball', 'count': 16}]
     expected = [{'position': [8, 65, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}]
     if case == 'torches16':
         expected += [{'position': [0, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:log', 'count': 3}]},
