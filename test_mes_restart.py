@@ -206,6 +206,28 @@ class MesRestartTests(unittest.TestCase):
           return held('source','mod:metal'),held('source','mod:raw')
         '''), (1, 99))
 
+    def test_waiting_for_stock_survives_restart_and_warehouse_read_wakes_order(self):
+        for machine in (False, True):
+            for mode in ('log', 'files'):
+                with self.subTest(machine=machine, mode=mode):
+                    lua = self.start(mode)
+                    lua.globals().MACHINE = machine
+                    lua.execute('''
+                      INV.source['mod:raw']=0
+                      wh.observed('stock',{});drain();require('mes_service').pump()
+                      local id=submit(MACHINE)
+                      untilFact(function() return (M.status(id).stages[1].detail or ''):find('Waiting for mod:raw',1,true) end)
+                      assert(M.status(id).status=='running')
+                      reboot()
+                      assert(M.status(id).status=='running')
+                      add('source','mod:raw',1)
+                      assert(wh.scan('stock'))
+                      untilFact(function() return M.status(id).status~='running' end)
+                      assert(M.status(id).status=='complete',M.status(id).reason)
+                      assert(held('source',MACHINE and 'mod:metal' or 'mod:crafted')==1)
+                      assert(ROBOT_CALLS==(MACHINE and 0 or 1))
+                    ''')
+
     def compare_restart(self, machine, predicate, setup='', two=False):
         for mode in ('log', 'files'):
             outcomes = []

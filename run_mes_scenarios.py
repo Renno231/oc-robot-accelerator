@@ -45,7 +45,7 @@ def verify_case(case, runtime):
     expected_runs = len(ROBOT_PARTS) if case == 'robot-parts' else 2 if case in ('concurrent', 'ocparts-repeat') else 1
     if case == 'robot-expand': expected_runs = len(ROBOT_PARTS) + 3
     assert len(runs) == expected_runs, 'missing completed run receipt'
-    assert all(r['status'] == ('failed' if case == 'shortfall' else 'complete') for r in runs)
+    assert all(r['status'] == 'complete' for r in runs)
     stages = [s for r in runs for s in rows(r['stages'])]
     intervals = [dict(crafter=s['crafter'], start=s['craftStarted'], finish=s['craftFinished'])
                  for s in stages if s.get('craftStarted') is not None]
@@ -53,9 +53,10 @@ def verify_case(case, runtime):
         for b in intervals[i+1:]:
             assert a['crafter'] != b['crafter'] or max(a['start'], b['start']) >= min(a['finish'], b['finish']), 'same robot overlap'
     if case == 'shortfall':
-        assert not intervals and not totals.get('minecraft:brick_block', 0)
-        assert totals.get('minecraft:clay_ball', 0) + totals.get('minecraft:brick', 0) == 48
-        assert any(s['kind'] == 'machine' and s['state'] == 'failed' for s in stages)
+        assert intervals and totals.get('minecraft:brick_block') == 16
+        assert not totals.get('minecraft:clay_ball', 0) and not totals.get('minecraft:brick', 0)
+        machine = next(s for s in stages if s['kind'] == 'machine')
+        assert sum(l['items'] for l in rows(machine['loadLedger'])) == 64, 'completed input repeated'
     elif case in ('robot-parts', 'robot-expand'):
         ordered = sorted(runs, key=lambda r: r['id'])
         parts = ordered[:len(ROBOT_PARTS)]

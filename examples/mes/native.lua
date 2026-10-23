@@ -27,6 +27,7 @@ local mes,lg,wh=require('mes'),require('logistics'),require('warehouse')
 local case=assert(loadfile('/home/program/case.lua'))()
 local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand'
 local setup=assert(loadfile('/home/program/setup.lua'))()
+if case.name=='shortfall' then wh.remove('s7_3_S') end
 local drones=wait(function() local rows=lg.pending();if #rows==6 then return rows end end)
 table.sort(drones,function(a,b) return assert(distances[a])<assert(distances[b]) end)
 for i,address in ipairs(drones) do assert(lg.register(address,'d'..i,setup.homes[i])) end
@@ -144,15 +145,24 @@ return 0
   else ids={assert(mes.run(plan))} end
   if case.name=='concurrent' then ids[2]=assert(mes.run(assert(mes.plan('minecraft:torch',16)))) end
   for _,id in ipairs(ids) do
-    local result=assert(mes.wait(id))
-    assert(result.status==(case.name=='shortfall' and 'failed' or 'complete'),result.reason or result.error)
     if case.name=='shortfall' then
-      for _,stage in ipairs(result.stages) do
-        if stage.kind=='robot' then assert(not stage.receipt and not stage.craftStarted) end
-      end
+      wait(function()
+        local status=mes.status(id)
+        assert(status.status=='running',status.reason or 'shortage abandoned the order')
+        for _,stage in ipairs(status.stages) do
+          if stage.kind=='robot' then assert(not stage.craftStarted) end
+          if stage.kind=='machine' and stage.done==48 and
+            (stage.detail or ''):find('Waiting for minecraft:clay_ball',1,true) then return true end
+        end
+      end)
+      assert(wh.count(item('minecraft:brick'))==48)
+      local refill=assert(lg.transfer(item('minecraft:clay_ball'),16,'s7_3_S','s0_0_N'))
+      assert(done(refill).state=='done') -- Its normal warehouse receipt wakes the same order.
     end
+    local result=assert(mes.wait(id))
+    assert(result.status=='complete',result.reason or result.error)
   end
-  if case.name~='shortfall' then assert(wh.count(item(target))==case.quantity,'wrong output count') end
+  assert(wh.count(item(target))==case.quantity,'wrong output count')
   if case.name=='ocparts-repeat' then
     -- Same live service and stock: the first order's surplus feeds the next.
     local id=assert(mes.run(assert(mes.plan(target,3))))
