@@ -254,6 +254,20 @@ class MesRestartTests(unittest.TestCase):
           return held('source','mod:metal'),held('source','mod:raw')
         '''), (1, 99))
 
+    def test_complete_run_delivers_to_its_export_chest(self):
+        lua = self.start()
+        self.assertEqual(lua.execute('''
+          local fetched
+          package.loaded['logistics.iochest']={list=function() return {{name='out',role='export'}} end,
+            fetch=function(i,n,to) fetched=i.name..' '..n..' '..to;return 7 end}
+          local t={item='mod:metal',qty_produced=1,recipeOutput=1,recipe={'mod:raw'},node='n',
+            input_nodes={'raw'},machineType='furnace',isProcessing=true}
+          local id=assert(M.run({tasks={t},requestItem=t.item,requestQuantity=1},{config=CFG,deliver='out'}))
+          untilFact(function() return M.status(id).status~='running' end)
+          local r=M.status(id);assert(r.status=='complete',r.reason)
+          return fetched,r.delivery and r.delivery.job,r.delivery and r.delivery.reason
+        '''), ('mod:metal 1 out', 7, None))
+
     def test_waiting_for_stock_survives_restart_and_warehouse_read_wakes_order(self):
         for machine in (False, True):
             for mode in ('log', 'files'):
@@ -568,9 +582,9 @@ class MesRestartTests(unittest.TestCase):
                   local id=submit(true,1);untilFact(function() return M.status(id).status~='running' end)
                   assert(M.status(id).status=='complete')
                   local t=assert(saved().timing.kiln);assert(t.samples>0 and t.hi<math.huge)
-                  local hi=t.hi;reboot()
+                  local hi,source=t.hi,M.resources{config=CFG}.machines.kiln.seconds.source;reboot()
                   local row=M.resources{config=CFG}.machines.kiln
-                  assert(row.seconds.hi==hi and row.seconds.source=='learned')
+                  assert(row.seconds.hi==hi and row.seconds.source==source)
                 ''')
 
     def test_idle_ticks_do_not_write_or_flush_mes(self):

@@ -140,10 +140,9 @@ running top-ups or creative power.
 
 1. Scan all 64 stock members and assert clay/coal/brick seed counts.
 2. Fetch the per-furnace clay allocation and eight coal through group roles.
-3. Assert brick store fails cleanly with **unknown stack size** before any
-   output read. Only the test sleeps for the pinned source-derived smelt time;
-   the controller libraries remain event-driven. Read real output faces to
-   learn the brick stack size and count, then call `warehouse.store` without
+3. Only the test sleeps for the pinned source-derived smelt time; the
+   controller libraries remain event-driven. Read real output faces to count
+   the bricks, then call `warehouse.store` without
    choosing a destination chest, with `wait = {{timeout = allocation*10+60}}`.
 4. Assert filtered/priority placement and catalogue totals **before** the final
    native stock scan, then assert that scan agrees. Real machine input/output

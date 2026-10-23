@@ -35,6 +35,10 @@ class TimingTests(unittest.TestCase):
     def test_source_lower(self):
         self.lua.execute("T.seconds(w,g);w.timing.a.lo=6;local n,t,s=T.seconds(w,g);assert(n==12 and s=='lower');w.timing.a.lo=5;n,t,s=T.seconds(w,g);assert(s=='config')")
 
+    def test_configured_time_outranks_a_loose_learned_bound(self):
+        # One charcoal with 33 s drone trips each way bounds the furnace at 62 s an item.
+        self.lua.execute("T.seconds(w,g);w.timing.a.hi=62;local n,t,s=T.seconds(w,g);assert(n==10 and s=='config')")
+
     def test_source_config(self):
         self.lua.execute("local n,t,s=T.seconds(w,g);assert(n==10 and s=='config');g.mt.seconds=0;n,t,s=T.seconds(w,g);assert(n==0 and s=='config')")
 
@@ -127,7 +131,7 @@ class TimingTests(unittest.TestCase):
           w.timing.a.hi=10.8;T.persist(p,w);assert(puts==1)
           w.timing.a.hi=10.4;T.persist(p,w);assert(puts==2)
           local restart={timing=p.timing,machines=w.machines}
-          assert(T.seconds(restart,g)==10.4)
+          local _,t=T.seconds(restart,g);assert(t.hi==10.4)
           local fresh={name='a',mt=g.mt,loads={},quarantined={}}
           assert(fresh.epoch==nil)
         ''')
@@ -142,7 +146,7 @@ class TimingTests(unittest.TestCase):
     def test_individual_machines_and_type_median(self):
         self.lua.execute('''
           T.seconds(w,g);w.timing.a.hi=10
-          b={name='b',mt={seconds=10}};T.seconds(w,b);w.timing.b.hi=20
+          b={name='b',mt={}};T.seconds(w,b);w.timing.b.hi=20
           c={name='c',mt={}}
           assert(T.seconds(w,g)==10 and T.seconds(w,b)==20 and T.seconds(w,c)==15)
         ''')
