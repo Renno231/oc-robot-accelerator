@@ -18,6 +18,9 @@ local function read(path,default)
 end
 local config=read("/etc/logistics.cfg",{})
 local port,reserve,retries=27103,config.reserve or 1000,config.retries or 2
+-- A lingering drone waits this long where its trip ended; the controller stops
+-- offering it work a margin earlier, so a trip never chases a drone flying home.
+local LINGER,LINGER_MARGIN=8,2
 assert(port>=1 and port<=65535 and port%1==0 and reserve>0 and reserve<=5000 and retries>=0 and retries%1==0,"invalid logistics config")
 local modem=component.modem
 assert(modem and modem.isWireless(),"wireless modem required")
@@ -157,7 +160,13 @@ local function scheduleJob(job)
     if n==0 and not next(job.lostPending or {}) then finish(job,job.moved>0 and "partial" or "failed") end
     return
   end
+  -- A drone lingering where its last trip ended is offered work first.
+  local order={}
   for _,d in pairs(fleet) do
+    if d.lingerUntil and not (uptime() and uptime()<d.lingerUntil) then d.lingerUntil=nil;state(d,"returning") end
+    if d.lingerUntil then table.insert(order,1,d) else order[#order+1]=d end
+  end
+  for _,d in ipairs(order) do
     if job.openEnded and n>0 then break end
     if n>=(job.opts.drones or math.huge) then break end
     -- A job for one held drone delivers what that drone already carries.
@@ -227,7 +236,8 @@ local function scheduleJob(job)
             if n==0 then error("step counts unmet") end
             return nil
           end
-          return {steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,routes={take=points({d.home})}}
+          return {steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,
+            linger=job.opts.linger and uptime() and LINGER or nil,routes={take=points({d.node or d.home})}}
         end
       end)
       if not ok then job.blocked=true;job.reason=tostring(task);if n==0 then finish(job,job.moved>0 and "partial" or "failed") end;return end
@@ -238,7 +248,7 @@ local function scheduleJob(job)
       nextTrip=nextTrip+1
       local timing={trip=nextTrip,drone=d.name,startedAt=uptime()}
       job.tripTimings=job.tripTimings or {};job.tripTimings[#job.tripTimings+1]=timing
-      job.active[nextTrip]={drone=d.name,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;d.state="working";job.state="active"
+      job.active[nextTrip]={drone=d.name,steps=allocation,timing=timing};d.trip=nextTrip;d.job=job.id;state(d,"working");d.lingerUntil=nil;job.state="active"
       job.dispatchedAt=job.dispatchedAt or uptime()
       save(job);send(d,"trip",nextTrip,data);n=n+1
     end
@@ -330,7 +340,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
     elseif id==0 and result.state=="ready" then
       if result.notAtHome then d.lost=true;state(d,"lost") end
       if d.lost then return end
-      state(d,(result.held or 0)>0 and "held" or "idle");d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
+      d.lingerUntil=nil;state(d,(result.held or 0)>0 and "held" or "idle");d.node=d.home;d.cargoSlots=result.cargoSlots;d.freeMemory=result.freeMemory;d.boots=(d.boots or 0)+1;wakeScheduler()
       if result.cargo then
         d.held={};for _,s in pairs(result.cargo) do d.held[#d.held+1]={item={name=s.name,damage=s.damage,label=s.label},count=s.size} end
       end
@@ -339,7 +349,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         if not pending then event.push("logistics_held",d.name) end
       end
     elseif d.trip==id and d.job then
-      if result.state=="charging" then d.state="charging";return end
+      if result.state=="charging" then state(d,"charging");return end
       local job=jobs[d.job];local assigned=job and job.active[id];if not assigned then return end
       if result.state=="progress" then assigned.progress=result;save(job);return end
       if result.state=="blocked" then
@@ -390,7 +400,7 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
       if job.action then
         if result.survey then event.push('survey_result',job.id,serialization.serialize(result.survey,false)) end
         job.trips=job.trips+1;job.scan=result.scan;job.test=job.test or result.test
-        job.remaining=0;d.state=(result.away or (result.held or 0)>0) and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil
+        job.remaining=0;state(d,(result.away or (result.held or 0)>0) and "held" or "idle");d.held=(result.held or 0)>0 and result.cargo or nil
         d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
         if (result.held or 0)>0 then
           for _,cargo in pairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=cargo.item,count=cargo.count} end
@@ -418,7 +428,8 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         end end
         job.remaining=math.max(0,job.requested-job.moved)
         for _,held in ipairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=held.item,count=held.count} end
-        d.state=(result.held or 0)>0 and "held" or "idle";d.held=(result.held or 0)>0 and result.cargo or nil;d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
+        state(d,(result.held or 0)>0 and "held" or "idle");d.held=(result.held or 0)>0 and result.cargo or nil;d.node=not result.away and d.home or nil;d.trip=nil;d.job=nil
+        if result.lingering and map.node(result.lingering) and uptime() then d.node=result.lingering;d.lingerUntil=uptime()+LINGER-LINGER_MARGIN end
         local advanced=false;for _,r in pairs(result.steps or {}) do if (r.moved or 0)>0 then advanced=true end end
         if not complete and not advanced and not result.reason then result.reason="step counts unmet" end
         if result.reason and not result.recharge and not job.blocked then
@@ -480,9 +491,10 @@ function M.drones()
 end
 local function options(opts)
   opts=opts or {}
-  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait" or k=="expectedItems" or k=="drone" or k=="cargo","unsupported option "..k) end
+  for k in pairs(opts) do assert(k=="retries" or k=="drones" or k=="split" or k=="overflow" or k=="wait" or k=="expectedItems" or k=="drone" or k=="cargo" or k=="linger","unsupported option "..k) end
   for _,k in ipairs({"retries","drones"}) do if opts[k]~=nil then assert(type(opts[k])=="number" and opts[k]%1==0 and opts[k]>=(k=="drones" and 1 or 0),"invalid "..k) end end
   assert(opts.split==nil or type(opts.split)=="boolean","invalid split")
+  assert(opts.linger==nil or type(opts.linger)=="boolean","invalid linger")
   if opts.wait then assert(type(opts.wait)=="table" and type(opts.wait.timeout)=="number" and opts.wait.timeout>=0 and opts.wait.timeout<math.huge,"invalid wait timeout") end
   local out=serialization.unserialize(serialization.serialize(opts))
   if out.expectedItems then

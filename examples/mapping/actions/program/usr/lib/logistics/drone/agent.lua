@@ -273,6 +273,11 @@ local function runSteps(task,id,result)
   if result.recharge and result.held>0 then
     result.recharge=nil;result.refused=true;result.reason="source refused cargo on charging interruption"
   end
+  -- A lingering trip that went cleanly waits where it ended for a follow-up
+  -- trip (an import's collect after its read) instead of flying home first.
+  if task.linger and not result.reason and result.held==0 and computer.energy()>=task.reserve then
+    result.lingering=currentPoint.name;return
+  end
   goTo(task.home)
   if computer.energy()<task.reserve then
     report(id,{state="charging"});repeat computer.pullSignal(0.5) until computer.energy()>=task.reserve
@@ -289,9 +294,20 @@ if not x or drone.getOffset()>=.02 then
     end
   end
 end
-report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil})
+local function ready() report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing()or nil}) end
+ready()
+-- While lingering, the flown path back home is kept; with no trip in time the
+-- drone retraces it (it was clear on the way out) and reports ready at home.
+local lingerUntil
+local function returnHome()
+  local reverse={};for i=#history,1,-1 do reverse[#reverse+1]=history[i] end
+  history=nil;lingerUntil=nil
+  local ok=pcall(fly,reverse)
+  if ok then ready() else report(0,{state="ready",notAtHome=true,offset=drone.getOffset(),cargo=cargoListing()}) end
+end
 while true do
-  local e={computer.pullSignal()}
+  if lingerUntil and computer.uptime()>=lingerUntil then returnHome() end
+  local e={computer.pullSignal(lingerUntil and math.max(0,lingerUntil-computer.uptime()) or nil)}
   if e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="release" then
     last=nil
     local listing=cargoListing()
@@ -300,7 +316,9 @@ while true do
     last=nil
     local task=decode(e[9]);local id=e[8]
     if task and (cargoCount()==0 or task.cargo and task.steps) then
-      activeTrip=id;history={task.routes.take[1]};currentPoint=history[1];rerouted=false;testingCandidate=false
+      -- A trip taken while lingering continues the path from home.
+      if not lingerUntil then history={task.routes.take[1]};currentPoint=history[1] end
+      activeTrip=id;lingerUntil=nil;rerouted=false;testingCandidate=false
       local result={state="idle",held=0}
       local ok,err=pcall(function()
         -- Every trip starts/ends at home. Charge before accepting actual work.
@@ -333,11 +351,12 @@ while true do
         if not returned then result.reason=result.reason.."; home retrace: "..tostring(why);result.away=true end
         result.held=cargoCount()
       end
-      history=nil
       last={id,report(id,result)}
+      if result.lingering then lingerUntil=computer.uptime()+task.linger else history=nil end
     end
   elseif e[1]=="modem_message" and e[3]==controller and e[4]==port and e[6]==token and e[7]=="status" then
     if last then modem.send(controller,port,token,"report",last[1],last[2]) end
-    report(0,{state="ready",survey=component.list('geolyzer')()~=nil,freeMemory=computer.freeMemory(),held=cargoCount(),cargo=cargoCount()>0 and cargoListing() or nil})
+    -- Away from home, ready waits until the drone is back there.
+    if not lingerUntil then ready() end
   end
 end

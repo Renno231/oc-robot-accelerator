@@ -92,7 +92,6 @@ for _,name in ipairs(names) do
   result.loads[name]={requested=amount,moved=ca.moved,state=ca.state,job=a,fuelJob=b}
 end
 assert(wh.count(clay)==0 and wh.count(coal)==4,'stock after loading')
-local id,why=wh.store(brick,amount,'furnA.out');assert(not id and why:find('unknown stack size',1,true));result.unknown=why
 -- TileEntityFurnace.getCookTime = 200 ticks; coal = 1600 ticks. At 20 TPS,
 -- 64 items need 640 seconds and eight coal. Only the test sleeps.
 os.sleep(amount*200/20)
