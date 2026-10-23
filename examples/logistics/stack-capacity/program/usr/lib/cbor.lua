@@ -1,1 +1,296 @@
-local function a(b,c)local d,e=pcall(require,b)if not d then return end;if c then return e[c]end;return e end;local f=function(g)local d,h=load(function()local i=g;g=nil;return i end)if d and h then return h()end end;local setmetatable=setmetatable;local getmetatable=getmetatable;local j=debug.getmetatable;local assert=assert;local error=error;local type=type;local pairs=pairs;local ipairs=ipairs;local tostring=tostring;local k=string.char;local l=table.concat;local m=table.sort;local n=math.floor;local o=math.abs;local p=math.huge;local q=math.max;local r=math.maxinteger or 9007199254740992;local s=math.mininteger or-9007199254740992;local t=0/0;local u=math.frexp;local v=math.ldexp or function(w,x)return w*2.0^x end;local y=math.type or function(z)return z%1==0 and z<=r and z>=s and"integer"or"float"end;local A=string.pack or a("struct","pack")local B=string.unpack or a("struct","unpack")local C=a("bit32","rshift")or a("bit","rshift")or f"return function(a,b) return a >> b end"or function(D,E)return q(0,n(D/2^E))end;if A and A(">I2",0)~="\0\0"then A=nil end;if B and B(">I2","\1\2\3\4")~=0x102 then B=nil end;local F=nil;local G={}local function H(I,J)return G[type(I)](I,J)end;local function K(L,M)if M==0 and L<0 then L,M=-L-1,32 end;if L<24 then return k(M+L)elseif L<2^8 then return k(M+24,L)elseif L<2^16 then return k(M+25,C(L,8),L%0x100)elseif L<2^32 then return k(M+26,C(L,24)%0x100,C(L,16)%0x100,C(L,8)%0x100,L%0x100)elseif L<2^64 then local N=n(L/2^32)L=L%2^32;return k(M+27,C(N,24)%0x100,C(N,16)%0x100,C(N,8)%0x100,N%0x100,C(L,24)%0x100,C(L,16)%0x100,C(L,8)%0x100,L%0x100)end;error"int too large"end;if A then function K(L,M)local O;M=M or 0;if L<24 then O,M=">B",M+L elseif L<256 then O,M=">BB",M+24 elseif L<65536 then O,M=">BI2",M+25 elseif L<4294967296 then O,M=">BI4",M+26 else O,M=">BI8",M+27 end;return A(O,M,L)end end;local P={}function P:__tostring()return self.name or("simple(%d)"):format(self.value)end;function P:__tocbor()return self.cbor or K(self.value,224)end;local function Q(R,S,T)assert(R>=0 and R<=255,"bad argument #1 to 'simple' (integer in range 0..255 expected)")return setmetatable({value=R,name=S,cbor=T},P)end;local U={}function U:__tostring()return("%d(%s)"):format(self.tag,tostring(self.value))end;function U:__tocbor(J)return K(self.tag,192)..H(self.value,J)end;local function V(W,R)assert(W>=0,"bad argument #1 to 'tagged' (positive integer expected)")return setmetatable({tag=W,value=R},U)end;local X=Q(22,"null")local Y=Q(23,"undefined")local Z=Q(31,"break","\255")function G.number(L)return G[y(L)](L)end;function G.integer(L)if L<0 then return K(-1-L,32)end;return K(L,0)end;function G.float(L)if L~=L then return"\251\127\255\255\255\255\255\255\255"end;local _=(L>0 or 1/L>0)and 0 or 1;L=o(L)if L==p then return k(251,_*128+128-1).."\240\0\0\0\0\0\0"end;local a0,a1=u(L)if a0==0 then return k(251,_*128).."\0\0\0\0\0\0\0"end;a0=a0*2;a1=a1+1024-2;if a1<=0 then a0=a0*2^(a1-1)a1=0 else a0=a0-1 end;return k(251,_*2^7+n(a1/2^4)%2^7,a1%2^4*2^4+n(a0*2^4%0x100),n(a0*2^12%0x100),n(a0*2^20%0x100),n(a0*2^28%0x100),n(a0*2^36%0x100),n(a0*2^44%0x100),n(a0*2^52%0x100))end;if A then function G.float(L)return A(">Bd",251,L)end end;function G.bytestring(g)return K(#g,64)..g end;function G.utf8string(g)return K(#g,96)..g end;G.string=G.bytestring;function G.boolean(a2)return a2 and"\245"or"\244"end;G["nil"]=function()return"\246"end;function G.userdata(a3,J)local a4=j(a3)if a4 then local a5=J and J[a4]or a4.__tocbor;if a5 then return a5(a3,J)end end;error"can't encode userdata"end;function G.table(a6,J)local a4=getmetatable(a6)if a4 then local a7=J and J[a4]or a4.__tocbor;if a7 then return a7(a6,J)end end;local a8,a9,aa,ab={K(#a6,128)},{"\191"},1,2;local ac=true;for ad,ae in pairs(a6)do ac=ac and aa==ad;aa=aa+1;local af=H(ae,J)a8[aa]=af;a9[ab],ab=H(ad,J),ab+1;a9[ab],ab=af,ab+1 end;a9[1]=K(aa-1,160)return l(ac and a8 or a9)end;function G.array(a6,J)local a8={}for aa,ae in ipairs(a6)do a8[aa]=H(ae,J)end;return K(#a8,128)..l(a8)end;function G.map(a6,J)local a9,ab,ag={"\191"},2,0;for ad,ae in pairs(a6)do a9[ab],ab=H(ad,J),ab+1;a9[ab],ab=H(ae,J),ab+1;ag=ag+1 end;a9[1]=K(ag,160)return l(a9)end;G.dict=G.map;function G.ordered_map(a6,J)local a9={}if not a6[1]then local aa=0;for ad in pairs(a6)do aa=aa+1;a9[aa]=ad end;m(a9)end;for aa,ad in ipairs(a6[1]and a6 or a9)do a9[aa]=H(ad,J)..H(a6[ad],J)end;return K(#a9,160)..l(a9)end;G["function"]=function()error"can't encode function"end;local function ah(ai,ag)return ai:read(ag)end;local function aj(ai)return ai:read(1):byte()end;local function ak(ai,al)if al<24 then return al elseif al<28 then local am=0;for an=1,2^(al-24)do am=am*256+aj(ai)end;return am else error"invalid length"end end;local ao={}local function ap(ai)local aq=aj(ai)return C(aq,5),aq%32 end;local function ar(ai,J)local as,al=ap(ai)return ao[as](ai,al,J)end;local function at(ai,al)return ak(ai,al)end;local function au(ai,al)return-1-ak(ai,al)end;local function av(ai,al)if al~=31 then return ah(ai,ak(ai,al))end;local am={}local aa=1;local ae=ar(ai)while ae~=Z do am[aa],aa=ae,aa+1;ae=ar(ai)end;return l(am)end;local function aw(ai,al)return av(ai,al)end;local function ax(ai,al,J)local am={}if al==31 then local aa=1;local ae=ar(ai,J)while ae~=Z do am[aa],aa=ae,aa+1;ae=ar(ai,J)end else local ag=ak(ai,al)for aa=1,ag do am[aa]=ar(ai,J)end end;return am end;local function ay(ai,al,J)local am={}local ad;if al==31 then local aa=1;ad=ar(ai,J)while ad~=Z do am[ad],aa=ar(ai,J),aa+1;ad=ar(ai,J)end else local ag=ak(ai,al)for an=1,ag do ad=ar(ai,J)am[ad]=ar(ai,J)end end;return am end;local az={}local function aA(ai,al,J)local W=ak(ai,al)local R=ar(ai,J)local aB=J and J[W]or az[W]if aB then return aB(R)end;return V(W,R)end;local function aC(ai)local a1=aj(ai)local a0=aj(ai)local _=a1<128 and 1 or-1;a0=a0+a1*256%1024;a1=C(a1,2)%32;if a1==0 then return _*v(a0,-24)elseif a1~=31 then return _*v(a0+1024,a1-25)elseif a0==0 then return _*p else return t end end;local function aD(ai)local a1=aj(ai)local a0=aj(ai)local _=a1<128 and 1 or-1;a1=a1*2%256+C(a0,7)a0=a0%128;a0=a0*256+aj(ai)a0=a0*256+aj(ai)if a1==0 then return _*v(a1,-149)elseif a1~=0xff then return _*v(a0+2^23,a1-150)elseif a0==0 then return _*p else return t end end;local function aE(ai)local a1=aj(ai)local a0=aj(ai)local _=a1<128 and 1 or-1;a1=a1%128*16+C(a0,4)a0=a0%16;a0=a0*256+aj(ai)a0=a0*256+aj(ai)a0=a0*256+aj(ai)a0=a0*256+aj(ai)a0=a0*256+aj(ai)a0=a0*256+aj(ai)if a1==0 then return _*v(a1,-149)elseif a1~=0xff then return _*v(a0+2^52,a1-1075)elseif a0==0 then return _*p else return t end end;if B then function aD(ai)return B(">f",ah(ai,4))end;function aE(ai)return B(">d",ah(ai,8))end end;local function aF(ai,R,J)if R==24 then R=aj(ai)end;if R==20 then return false elseif R==21 then return true elseif R==22 then return X elseif R==23 then return Y elseif R==25 then return aC(ai)elseif R==26 then return aD(ai)elseif R==27 then return aE(ai)elseif R==31 then return Z end;if J and J.simple then return J.simple(R)end;return Q(R)end;ao[0]=at;ao[1]=au;ao[2]=av;ao[3]=aw;ao[4]=ax;ao[5]=ay;ao[6]=aA;ao[7]=aF;local function aG(g,J)local ai={}local aH=1;local aI;if type(J)=="function"then aI=J elseif type(J)=="table"then aI=J.more elseif J~=nil then error(("bad argument #2 to 'decode' (function or table expected, got %s)"):format(type(J)))end;if type(aI)~="function"then function aI()error"input too short"end end;function ai:read(aJ)local i=g:sub(aH,aH+aJ-1)if#i<aJ then i=aI(aJ-#i,ai,J)if i then self:write(i)end;return self:read(aJ)end;aH=aH+aJ;return i end;function ai:write(aJ)g=g..aJ;if aH>256 then g=g:sub(aH+1)aH=1 end;return#aJ end;return ar(ai,J)end;return{encode=H,decode=aG,decode_file=ar,type_encoders=G,type_decoders=ao,tagged_decoders=az,simple=Q,tagged=V,null=X,undefined=Y}
+-- CBOR (RFC 8949) for Lua 5.3, with lua-cbor's interface and the same encoded bytes.
+--
+-- A string encodes as a byte string, a table whose keys run 1..n in pairs order as an array, any
+-- other table as a map in pairs order, and a float as a double. A table or userdata whose
+-- metatable has an encoder in the options (options[metatable]) or a __tocbor field is encoded by
+-- that function, which returns the bytes. CBOR null decodes as cbor.null, not nil.
+--
+-- Encoding appends pieces to one list joined once at the end, so a nested value is never copied
+-- into its parent's string. Decoding walks the input by position and makes new strings only for
+-- string values.
+local M = {}
+local byte, char, sub, pack, unpack = string.byte, string.char, string.sub, string.pack, string.unpack
+local concat, sort = table.concat, table.sort
+local type, pairs, ipairs, getmetatable, setmetatable = type, pairs, ipairs, getmetatable, setmetatable
+local mtype, huge = math.type, math.huge
+local rawmeta = debug and debug.getmetatable or getmetatable
+
+-- Simple values (major type 7) and tags (major type 6) as objects.
+local Simple = {}
+function Simple:__tostring() return self.name or ('simple(%d)'):format(self.value) end
+local Tagged = {}
+function Tagged:__tostring() return ('%d(%s)'):format(self.tag, tostring(self.value)) end
+
+-- The initial byte(s) of an item: major is the major type shifted into the high 3 bits.
+local function head(n, major)
+  if n < 24 then return char(major + n)
+  elseif n < 256 then return char(major + 24, n)
+  elseif n < 65536 then return pack('>BI2', major + 25, n)
+  elseif n < 4294967296 then return pack('>BI4', major + 26, n)
+  else return pack('>BI8', major + 27, n) end
+end
+
+function Simple:__tocbor() return self.cbor or head(self.value, 224) end
+function Tagged:__tocbor(options) return head(self.tag, 192) .. M.encode(self.value, options) end
+
+function M.simple(value, name, cbor) -- simple value 0..255 -- object
+  assert(value >= 0 and value <= 255, "bad argument #1 to 'simple' (integer in range 0..255 expected)")
+  return setmetatable({value = value, name = name, cbor = cbor}, Simple)
+end
+function M.tagged(tag, value) -- tag, value -- object
+  assert(tag >= 0, "bad argument #1 to 'tagged' (positive integer expected)")
+  return setmetatable({tag = tag, value = value}, Tagged)
+end
+M.null, M.undefined = M.simple(22, 'null'), M.simple(23, 'undefined')
+local BREAK = M.simple(31, 'break', '\255')
+local null, undefined = M.null, M.undefined
+
+-- Encoding. Each put appends a value's pieces to out after index k and returns the new last index.
+local put, putters
+
+local function putMap(t, options, out, k)
+  local count = 0
+  for _ in pairs(t) do count = count + 1 end
+  k = k + 1; out[k] = head(count, 160)
+  for key, v in pairs(t) do k = put(key, options, out, k); k = put(v, options, out, k) end
+  return k
+end
+
+local function putTable(t, options, out, k)
+  local count, array = 0, true
+  for key in pairs(t) do
+    count = count + 1
+    if array and key ~= count then array = false end
+  end
+  if not array then
+    k = k + 1; out[k] = head(count, 160)
+    for key, v in pairs(t) do k = put(key, options, out, k); k = put(v, options, out, k) end
+    return k
+  end
+  k = k + 1; out[k] = head(count, 128)
+  for i = 1, count do k = put(t[i], options, out, k) end
+  return k
+end
+
+local function putArray(t, options, out, k)
+  local count = 0
+  for _ in ipairs(t) do count = count + 1 end
+  k = k + 1; out[k] = head(count, 128)
+  for i = 1, count do k = put(t[i], options, out, k) end
+  return k
+end
+
+-- Keys in the order of t's own array part, or else sorted.
+local function putOrderedMap(t, options, out, k)
+  local keys = t
+  if not t[1] then
+    keys = {}
+    for key in pairs(t) do keys[#keys + 1] = key end
+    sort(keys)
+  end
+  local count = 0
+  for _ in ipairs(keys) do count = count + 1 end
+  k = k + 1; out[k] = head(count, 160)
+  for i = 1, count do local key = keys[i]; k = put(key, options, out, k); k = put(t[key], options, out, k) end
+  return k
+end
+
+-- A value whose metatable names an encoder; false if none does.
+local function putCustom(v, mt, options, out, k)
+  local encoder = options and options[mt] or mt.__tocbor
+  if not encoder then return false end
+  local putter = putters[encoder]
+  if putter then return putter(v, options, out, k) end
+  k = k + 1; out[k] = encoder(v, options)
+  return k
+end
+
+function put(v, options, out, k)
+  local t = type(v)
+  if t == 'string' then
+    out[k + 1] = head(#v, 64); out[k + 2] = v
+    return k + 2
+  elseif t == 'number' then
+    if mtype(v) == 'integer' then
+      out[k + 1] = v < 0 and head(-1 - v, 32) or head(v, 0)
+    else
+      out[k + 1] = pack('>Bd', 251, v)
+    end
+    return k + 1
+  elseif t == 'table' then
+    local mt = getmetatable(v)
+    if mt then
+      local done = putCustom(v, mt, options, out, k)
+      if done then return done end
+    end
+    return putTable(v, options, out, k)
+  elseif t == 'boolean' then
+    out[k + 1] = v and '\245' or '\244'
+    return k + 1
+  elseif t == 'nil' then
+    out[k + 1] = '\246'
+    return k + 1
+  elseif t == 'userdata' then
+    local mt = rawmeta(v)
+    local done = mt and putCustom(v, mt, options, out, k)
+    if done then return done end
+  end
+  error("can't encode " .. t)
+end
+
+function M.encode(v, options) -- value, options -- string
+  local out = {}
+  return concat(out, '', 1, put(v, options, out, 0))
+end
+
+-- Encoders that return a value's bytes, for options and __tocbor fields.
+local function bytesOf(putter)
+  return function(v, options)
+    local out = {}
+    return concat(out, '', 1, putter(v, options, out, 0))
+  end
+end
+local function putUtf8(s, _, out, k)
+  out[k + 1] = head(#s, 96); out[k + 2] = s
+  return k + 2
+end
+local function putFloat(v, _, out, k)
+  out[k + 1] = pack('>Bd', 251, v)
+  return k + 1
+end
+M.type_encoders = {
+  number = bytesOf(put), integer = bytesOf(put), float = bytesOf(putFloat),
+  bytestring = bytesOf(put), utf8string = bytesOf(putUtf8), string = bytesOf(put),
+  boolean = bytesOf(put), ['nil'] = bytesOf(put), userdata = bytesOf(put), ['function'] = bytesOf(put),
+  table = bytesOf(putTable), array = bytesOf(putArray), map = bytesOf(putMap), ordered_map = bytesOf(putOrderedMap),
+}
+M.type_encoders.dict = M.type_encoders.map
+-- Table encoders named in options or __tocbor run in place rather than through their strings.
+putters = {
+  [M.type_encoders.table] = putTable, [M.type_encoders.array] = putArray,
+  [M.type_encoders.map] = putMap, [M.type_encoders.ordered_map] = putOrderedMap,
+}
+
+-- Decoding. The input is s, the next byte at, its last byte last; more, if set, returns further
+-- input. Tags without a decoder in the options (options[tag]) or tagged_decoders become objects.
+M.tagged_decoders = {}
+local s, at, last, more, opts
+
+local function fill(n) -- make s hold the n bytes from at
+  local short = at + n - 1 - last
+  local chunk = more and more(short)
+  if type(chunk) ~= 'string' or chunk == '' then error('input too short') end
+  s = sub(s, at) .. chunk; at = 1; last = #s
+  if last < n then fill(n) end
+end
+
+local WIDE = {[2] = '>I2', [4] = '>I4', [8] = '>I8'}
+local item
+
+local function simple(n)
+  if n == 24 then
+    if at > last then fill(1) end
+    n = byte(s, at); at = at + 1
+  end
+  if n == 20 then return false
+  elseif n == 21 then return true
+  elseif n == 22 then return null
+  elseif n == 23 then return undefined
+  elseif n == 25 then
+    if at + 1 > last then fill(2) end
+    local a, b = byte(s, at, at + 1); at = at + 2
+    local sign, mantissa, exponent = a < 128 and 1 or -1, b + a * 256 % 1024, (a >> 2) % 32
+    if exponent == 0 then return sign * (mantissa * 2.0 ^ -24) -- a float first, so -0 keeps its sign
+    elseif exponent ~= 31 then return sign * (mantissa + 1024) * 2.0 ^ (exponent - 25)
+    elseif mantissa == 0 then return sign * huge
+    else return 0 / 0 end
+  elseif n == 26 or n == 27 then
+    local w = n == 26 and 4 or 8
+    if at + w - 1 > last then fill(w) end
+    local v = unpack(n == 26 and '>f' or '>d', s, at); at = at + w
+    return v
+  elseif n == 31 then return BREAK end
+  if opts and opts.simple then return opts.simple(n) end
+  return M.simple(n)
+end
+
+-- An indefinite-length string, array or map: items up to a break.
+local function indefinite(major)
+  local t, i, v = {}, 0, item()
+  if major == 5 then
+    while v ~= BREAK do t[v] = item(); v = item() end
+    return t
+  end
+  while v ~= BREAK do i = i + 1; t[i] = v; v = item() end
+  if major == 4 then return t end
+  return concat(t)
+end
+
+function item()
+  if at > last then fill(1) end
+  local initial = byte(s, at); at = at + 1
+  local major, n = initial >> 5, initial & 31
+  if major == 7 then return simple(n) end
+  if n >= 24 then
+    if n == 24 then
+      if at > last then fill(1) end
+      n = byte(s, at); at = at + 1
+    elseif n < 28 then
+      local w = 1 << (n - 24)
+      if at + w - 1 > last then fill(w) end
+      n = unpack(WIDE[w], s, at); at = at + w
+    elseif n == 31 and major >= 2 and major <= 5 then
+      return indefinite(major)
+    else
+      error('invalid length')
+    end
+  end
+  if major == 0 then return n
+  elseif major == 1 then return -1 - n
+  elseif major <= 3 then
+    if n < 0 then error('invalid length') end
+    if at + n - 1 > last then fill(n) end
+    local v = sub(s, at, at + n - 1); at = at + n
+    return v
+  elseif major == 4 then
+    local t = {}
+    for i = 1, n do t[i] = item() end
+    return t
+  elseif major == 5 then
+    local t = {}
+    for _ = 1, n do local key = item(); t[key] = item() end
+    return t
+  end
+  local v = item()
+  local decoder = opts and opts[n] or M.tagged_decoders[n]
+  if decoder then return decoder(v) end
+  return M.tagged(n, v)
+end
+
+-- Decode one item; the state is restored after, so a tag decoder may decode too.
+local function run(input, refill, options)
+  local s0, at0, last0, more0, opts0 = s, at, last, more, opts
+  s, at, last, more, opts = input, 1, #input, refill, options
+  local ok, v = pcall(item)
+  s, at, last, more, opts = s0, at0, last0, more0, opts0
+  if not ok then error(v, 0) end
+  return v
+end
+
+-- options: a table (options.more returns further input when it runs short, options.simple
+-- decodes unknown simple values, options[tag] decodes a tag's value), or the more function alone.
+function M.decode(input, options) -- string, options -- value
+  local refill
+  if type(options) == 'function' then refill, options = options, nil
+  elseif type(options) == 'table' then refill = options.more
+  elseif options ~= nil then
+    error(("bad argument #2 to 'decode' (function or table expected, got %s)"):format(type(options)))
+  end
+  return run(input, refill, options)
+end
+
+function M.decode_file(reader, options) -- reader with read(n), options -- value; reads only the item's bytes
+  return run('', function(n) return reader:read(n) end, options)
+end
+
+return M
