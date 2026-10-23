@@ -181,6 +181,82 @@ class LogisticsRestartTests(unittest.TestCase):
           assert(ok,err);assert(ready.state=='ready' and ready.held==3 and ready.cargo[1].size==3)
         ''')
 
+    def test_lingering_read_hands_its_drone_the_next_job(self):
+        self.start('log').execute('''
+          local function lingeringRead()
+            local id=lg.job({{read='out'}},{drones=1,retries=0,linger=true});drain()
+            assert(FAKE.working and FAKE.task.linger==8);FAKE.working=false
+            report(FAKE.trip,{state='idle',steps={{moved=0,listing={},size=27}},held=0,lingering='dest'});drain()
+            assert(lg.status(id).state=='done');return id
+          end
+          lingeringRead()
+          local d=lg.drones()[1];assert(d.state=='idle' and d.node=='dest')
+          -- The next job starts where the drone waits, not at its charger.
+          assert(wh.fetch(item,4,'out',{split=false}));drain()
+          assert(FAKE.working and FAKE.task.routes.take[1].name=='dest' and not FAKE.task.linger)
+          finishPhysical(true);assert(lg.drones()[1].node=='home')
+          -- Past the window the drone is flying home: no work until it is back.
+          lingeringRead();advance(6)
+          assert(wh.fetch(item,2,'out',{split=false}));drain()
+          assert(not FAKE.working and lg.drones()[1].state=='returning')
+          ready();drain()
+          assert(FAKE.working and FAKE.task.routes.take[1].name=='home')
+          finishPhysical(true)
+          -- A scan of several storages lingers between reads; one storage does not.
+          assert(#wh.scan({'stock','out'})==2);drain()
+          assert(FAKE.working and FAKE.task.linger==8)
+        ''')
+
+    def test_single_storage_scan_goes_home(self):
+        self.start('log').execute('''
+          wh.scan('out');drain()
+          assert(FAKE.working and not FAKE.task.linger)
+        ''')
+
+    def test_agent_lingers_then_continues_or_retraces_home(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().AGENT = Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.execute('''
+          local T,WAITS,REPORTS,NAV=0,{},{},nil
+          local drone={inventorySize=function() return 4 end,count=function() return 0 end,
+            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+            getOffset=function() return 0 end,getVelocity=function() return 0 end,move=function() end}
+          local inv={getStackInInternalSlot=function() end,getInventorySize=function() return 27 end,
+            getStackInSlot=function() end}
+          component={list=function(kind) return function() return kind end end,
+            proxy=function(kind) return kind=='drone' and drone or inv end}
+          computer={energy=function() return 5000 end,freeMemory=function() return 32000 end,uptime=function() return T end,
+            pullSignal=function(timeout) WAITS[#WAITS+1]=timeout or 'none';return coroutine.yield() end}
+          local modem={send=function(_,_,_,kind,id,payload)
+            if kind=='report' then REPORTS[#REPORTS+1]=assert(load('return '..payload))() end
+            if kind=='navigate' then NAV=assert(load('return '..payload))() end
+          end}
+          local points={home={name='home',x=0,y=0,z=0},chest={name='chest',x=2,y=0,z=0}}
+          local agent=coroutine.create(assert(load(AGENT)))
+          local function resume(...)
+            assert(coroutine.resume(agent,...))
+            while NAV do local n=NAV;NAV=nil
+              local route='{route={{name="'..n.from..'",x='..points[n.from].x..',y=0,z=0},{name="'..n.to..'",x='..points[n.to].x..',y=0,z=0}}}'
+              assert(coroutine.resume(agent,'modem_message','local','controller',27103,0,'token','navigation',ACTIVE,route))
+            end
+          end
+          local function trip(id,linger)
+            ACTIVE=id
+            resume('modem_message','local','controller',27103,0,'token','trip',id,
+              '{steps={{read={node="chest",side=0}}},home="home",reserve=100,'..(linger and 'linger=8,' or '')..
+              'routes={take={{name="home",x=0,y=0,z=0}}}}')
+            return REPORTS[#REPORTS]
+          end
+          resume(modem,'token','controller','d1',27103,0,0,0)
+          local r=trip(1,true);assert(r.lingering=='chest' and WAITS[#WAITS]==8)
+          -- A trip while lingering starts at the chest and ends at home.
+          r=trip(2);assert(not r.lingering and r.position.x==0 and WAITS[#WAITS]=='none')
+          r=trip(3,true);assert(r.lingering=='chest' and r.position.x==2)
+          -- No trip in time: retrace the flown path home and report ready there.
+          T=9;resume()
+          r=REPORTS[#REPORTS];assert(r.state=='ready' and not r.notAtHome and r.position.x==0 and WAITS[#WAITS]=='none')
+        ''')
+
     def test_boot_offset_mismatch_stays_lost_until_found(self):
         for offset in (0.02, 0.2):
             with self.subTest(offset=offset):
