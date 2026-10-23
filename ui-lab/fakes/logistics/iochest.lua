@@ -43,9 +43,6 @@ function M.importNow(n)
   local r=row(n,"import");if r.sensor then import(r);return true end
   local id=lg.fake("read",{storage=r.name},nil,nil,3);r.pending[id]={a={},read=true};save(r);return id
 end
-function M.markEmptied(n)
-  local r=row(n,"export");assert(not r.sensor,"sensor reports the chest");r.listing={};r.reason=nil;save(r);return true
-end
 local function fetch(req,n,one)
   local r=row(n,"export");local stock=copy(r.listing)
   local free=sizes[r.name];for _,v in pairs(stock) do free=free-math.ceil(v.count/(wh.stackSize(v.item) or 64)) end

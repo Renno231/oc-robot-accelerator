@@ -192,7 +192,7 @@ class IOChestTests(unittest.TestCase):
           assert(jobs()==n and not record('in1').sensor)
         ''')
 
-    def test_manual_import_one_read_and_manual_export_empty(self):
+    def test_manual_import_one_read_and_export_without_sensor_keeps_no_count(self):
         self.lua.execute('''
           local stock=chest('stock','stock',5,0)
           local input=chest('in1','import',10,64)
@@ -201,8 +201,8 @@ class IOChestTests(unittest.TestCase):
           finishAll();assert(input.count==0 and stock.count==64 and count('in1')==0)
           local _,reads=counts();assert(reads==1)
           assert(ic.fetch(item,64,'out1'));finishAll()
-          assert(count('out1')==64 and output.count==64)
-          output.count=0;assert(ic.markEmptied('out1'));assert(count('out1')==0)
+          -- Nobody sees what a player takes out, so an Out chest without a sensor keeps no count.
+          assert(count('out1')==0 and output.count==64)
           local _,again=counts();assert(again==1)
         ''')
 

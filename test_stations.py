@@ -31,7 +31,7 @@ class StationsTests(unittest.TestCase):
           variant('log');TIME=0;LISTEN={};EVENTS={};FAKES={};HISTORY={};INV={};BLOCKED=false
           package.loaded.computer={uptime=function() return TIME end}
           package.loaded.event={listen=function(n,f) LISTEN[n]=LISTEN[n] or {};table.insert(LISTEN[n],f) end,
-            push=function(...) EVENTS[#EVENTS+1]={...} end}
+            push=function(...) EVENTS[#EVENTS+1]={...} end,timer=function() return 1 end,cancel=function() end}
           function emit(n,...) for _,f in ipairs(LISTEN[n] or {}) do f(n,...) end end
           function drain() while #EVENTS>0 do local e=table.remove(EVENTS,1);emit(table.unpack(e)) end end
           package.preload["logistics.map"]=function() return assert(load(MAP))() end

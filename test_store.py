@@ -18,7 +18,11 @@ def install_store(lua, preserve_io=False):
       local fs={}
       function fs.exists(p) count('exists');return disk[p]~=nil or dirs[p]~=nil end
       function fs.makeDirectory(p) count('makeDirectory');dirs[p]=true;return true end
-      function fs.remove(p) count('remove');disk[p]=nil;return true end
+      function fs.remove(p) -- OpenComputers removes a directory with what it holds
+        count('remove');disk[p]=nil;dirs[p]=nil
+        for name in pairs(disk) do if name:sub(1,#p+1)==p..'/' then disk[name]=nil end end
+        return true
+      end
       function fs.list(p)
         count('list');local names={}
         for name in pairs(disk) do if name:sub(1,#p+1)==p..'/' then names[#names+1]=name:sub(#p+2) end end
@@ -27,6 +31,7 @@ def install_store(lua, preserve_io=False):
       package.preload.filesystem=function() return fs end
       os.rename=function(a,b) count('rename');renames=renames+1;disk[b]=disk[a];disk[a]=nil;return true end
       fs.rename=os.rename
+      os.remove=fs.remove -- OpenOS: os.remove is filesystem.remove
       local previous=io.open
       io.open=function(path,mode)
         if PRESERVE_IO and path~='/etc/store.cfg' and not path:match('^/etc/map%.db') and not path:match('^/etc/warehouse%.db')
@@ -91,12 +96,11 @@ class StoreTests(unittest.TestCase):
     def test_compaction_with_mutations_and_deletion(self):
         self.lua.execute('''
           local store=require('logistics.store');local s=store.open('/compact.log');s:load()
-          for i=1,6 do s:put('k'..i,i) end
-          for i=1,11 do s:put('k1',100+i) end
-          assert(disk['/compact.log.new']~=nil)
-          s:delete('k2');s:put('new',false)
-          for i=1,12 do s:put('k3',i) end
-          assert(renames>0);s:flush();s:close()
+          for i=1,6 do s:put('k'..i,i) end;s:flush()
+          for i=1,11 do s:put('k1',100+i);s:flush() end
+          s:delete('k2');s:put('new',false);s:flush()
+          for i=1,12 do s:put('k3',i);s:flush() end
+          assert(renames>0 and disk['/compact.log.new']==nil);s:close()
           s=store.open('/compact.log');local r=s:load()
           assert(r.k1==111 and r.k2==nil and r.k3==12 and r.new==false and r.k6==6)
           s:close()
@@ -107,8 +111,9 @@ class StoreTests(unittest.TestCase):
           local store=require('logistics.store');local s=store.open('/restart.log');s:load()
           for i=1,8 do s:put('k'..i,i) end
           for i=1,9 do s:put('k1',i+20) end
-          assert(disk['/restart.log.new']~=nil and renames==0)
+          assert(disk['/restart.log']==nil,'puts wait for flush')
           s:flush();s:close()
+          disk['/restart.log.new']='half-written compaction'
           local s2=store.open('/restart.log');assert(disk['/restart.log.new']==nil)
           local r=s2:load();assert(r.k1==29 and r.k8==8);s2:close()
         ''')
@@ -140,8 +145,8 @@ class StoreTests(unittest.TestCase):
                 self.lua.execute('''
                   variant(MODE);local s=require('logistics.store').open('/calls_'..MODE..'.log');s:load()
                   resetCalls();for i=1,100 do s:put('k'..i,i) end
-                  if MODE=='log' then assert(not calls.write);s:flush()
-                    assert(calls.write==1 and not calls.open and not calls.close)
+                  if MODE=='log' then assert(not next(calls),'puts wait for flush');s:flush()
+                    assert(calls.write==1 and calls.open==1 and calls.close==1)
                   else assert(calls.write==100 and calls.open==100 and calls.close==100) end
                   s:close()
                 ''')
