@@ -137,7 +137,9 @@ final class RunnerRuntime {
         String key=RunnerScenario.string(obj.get("item"));ResourceLocation id=new ResourceLocation(key);
         if(!Item.REGISTRY.containsKey(id) || Item.REGISTRY.getObject(id)==Items.AIR) throw new IllegalArgumentException("unknown item: "+key);
         ItemStack stack=new ItemStack(Item.REGISTRY.getObject(id),count,RunnerScenario.integer(obj.get("metadata"),0,32767));
-        stack.setTagCompound(JsonToNBT.getTagFromJson(RunnerScenario.string(obj.get("nbt"))));
+        // "{}" means no tag: an empty compound would make the stack unlike plain items of the same kind.
+        net.minecraft.nbt.NBTTagCompound tag=JsonToNBT.getTagFromJson(RunnerScenario.string(obj.get("nbt")));
+        if(!tag.getKeySet().isEmpty()) stack.setTagCompound(tag);
         if(count>stack.getMaxStackSize()) throw new IllegalArgumentException("illegal item stack: "+key);
         return stack;
     }
