@@ -57,8 +57,8 @@ wh.remove('a')
 -- C is empty but remembers the real stack limit of its previously seen iron.
 none,reason=wh.store(iron,1729,'a')
 assert(not none and reason:find('capacity 1728',1,true),'empty inventory forgot seen maxSize')
-none,reason=wh.store(gold,1,'a')
-assert(not none and reason:find('capacity 0',1,true) and reason:find('unknown stack size for minecraft:gold_ingot:0',1,true) and reason:find('reading the source teaches it',1,true),'unseen item size guessed')
+-- Only sizes other than 64 are recorded: unseen gold is a 64-stack.
+assert(wh.stackSize(gold)==64 and wh.stackSize(pearl)==16,'stack size default')
 assert(done(assert(wh.store(iron,1,'a',{drones=1,retries=0}))).state=='done')
 assert(wh.count(iron)==1 and wh.count(pearl)==16)
 -- Thirteen real read jobs exercise complete incremental snapshots, followed

@@ -2,6 +2,9 @@ local cbor=require("cbor")
 local fs=require("filesystem")
 local serialization=require("serialization")
 local M={}
+-- OpenOS closes a process's files when it exits. Store files live as long as
+-- the store, whichever process (service or UI) opened or reopened them.
+local function keep(f) if f and f.stream then require("process").removeHandle(f.stream) end;return f end
 function M.open(path,variant)
   local cfg=io.open("/etc/store.cfg","r")
   local settings={}
@@ -16,7 +19,7 @@ function M.open(path,variant)
     if not fs.exists(path) then assert(fs.makeDirectory(path)) end
   else
     if fs.exists(path..".new") then assert(fs.remove(path..".new")) end
-    handle=assert(io.open(path,"ab"))
+    handle=assert(keep(io.open(path,"ab")))
   end
   function s:load()
     local records={};current={};rows=0;live=0
@@ -54,7 +57,7 @@ function M.open(path,variant)
     assert(handle:write(bytes));rows=rows+1
     if not staging and rows>math.max(16,2*live) then
       local keys={};for k in pairs(current) do keys[#keys+1]=k end
-      staging={file=assert(io.open(path..".new","wb")),keys=keys,index=1,rows=0}
+      staging={file=assert(keep(io.open(path..".new","wb"))),keys=keys,index=1,rows=0}
     end
     if staging then
       assert(staging.file:write(bytes));staging.rows=staging.rows+1
@@ -66,7 +69,7 @@ function M.open(path,variant)
       end
       if staging.index>#staging.keys then
         assert(staging.file:flush());staging.file:close();handle:close()
-        assert(os.rename(path..".new",path));handle=assert(io.open(path,"ab"))
+        assert(os.rename(path..".new",path));handle=assert(keep(io.open(path,"ab")))
         rows=staging.rows;staging=nil
       end
     end

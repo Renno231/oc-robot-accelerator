@@ -29,13 +29,16 @@ local identityGeneration,mutationEpochs=0,{}
 local function metadataChanged()
   roleCache={};identityIndex=nil;identityGeneration=identityGeneration+1
 end
+-- Stack sizes other than 64, as scans saw them; anything not listed is 64.
 local limits=read("/etc/warehouse.stacks",{})
 local limitsDirty=false
+for k,v in pairs(limits) do if v==64 then limits[k]=nil;limitsDirty=true end end
 local function limitKey(i) return i.name..":"..tostring(i.damage or 0) end
+local function limit(i) return limits[limitKey(i)] or 64 end
 local function learn(i,maximum)
   if i and type(maximum)=="number" and maximum>0 then
-    local k=limitKey(i)
-    if limits[k]~=maximum then limits[k]=maximum;limitsDirty=true end
+    local k=limitKey(i);local v=maximum~=64 and maximum or nil
+    if limits[k]~=v then limits[k]=v;limitsDirty=true end
   end
 end
 local function saveLimits()
@@ -344,7 +347,7 @@ function M.inflight()
   return out
 end
 function M.contents(storage) local key=inventory(storage) or storage;return db[key] and copy(db[key]) or nil end
-function M.stackSize(i) return limits[limitKey(item(i))] end
+function M.stackSize(i) return limit(item(i)) end
 local function roleSlots(slots,size)
   assert(type(slots)=="table" and next(slots),"nonempty slots required")
   if size~=nil then assert(type(size)=="number" and size>=0 and size<math.huge and size%1==0,"invalid inventory size") end
@@ -402,18 +405,20 @@ local function at(endpoint)
   if not endpoint then return end
   for s,e in pairs(endpointStorages) do if e.node==endpoint.node and e.side==endpoint.side then return s end end
 end
-local function readStorage(storage)
-  return submit({{read=storage}},{drones=1,retries=0},{})
+local function readStorage(storage,linger)
+  return submit({{read=storage}},{drones=1,retries=0,linger=linger},{})
 end
 -- Explicit scans are independent one-face read jobs: even a completely full
 -- chest fits the existing result packet bound, unlike a 64-face result.
-function M.scan(storages)
+-- opts.linger: the drone waits at the storage for a follow-up job. Scans of
+-- several storages always linger, so a drone goes from read to read.
+function M.scan(storages,opts)
   local list={}
   if type(storages)=="string" then storages={storages} end
   if storages then for _,s in ipairs(storages) do assert(map.storage(s),"unknown storage");list[#list+1]=s end
   else for _,faces in pairs(entries()) do list[#list+1]=faces[1].storage end end
-  table.sort(list);local ids,seen={},{}
-  for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s);seen[key]=true end end
+  table.sort(list);local ids,seen={},{};local linger=opts and opts.linger or #list>1
+  for _,s in ipairs(list) do local key=inventory(s) or s;if not seen[key] then ids[#ids+1]=readStorage(s,linger);seen[key]=true end end
   return ids
 end
 local function adjust(storage,i,delta,maximum,touched,empty)
@@ -480,7 +485,7 @@ local function deliverHeld(name)
   if not d or d.state~="held" or not d.held then return end
   local stock,source=entries(),map.place(d.home);local planned,steps={},{}
   for _,h in ipairs(d.held) do
-    local i=item(h.item);local maximum=limits[limitKey(i)] or 64;local remaining=h.count
+    local i=item(h.item);local maximum=limit(i);local remaining=h.count
     for _,c in ipairs(storeTargets(stock,i,nil,source,maximum,planned)) do
       if remaining==0 then break end
       local n=math.min(remaining,c.capacity)
@@ -622,13 +627,12 @@ local function targetOrder(a,b)
   return a.storage<b.storage
 end
 function M.store(i,n,from,opts)
-  i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum=limits[limitKey(i)]
-  if not maximum then return nil,"requested "..n..", capacity 0, unknown stack size for "..i.name..":"..i.damage.."; reading the source teaches it" end
+  i=item(i);positive(n);local candidates,total,unknown={},0,0;local maximum=limit(i)
   for _,faces in pairs(entries()) do
     local uncertain
     for _,face in ipairs(faces) do
       local e=face.entry;local accept=accepts(face.settings,i)
-      if accept~=false and e and not e.capacityUnknown and maximum then
+      if accept~=false and e and not e.capacityUnknown then
         local held=quantity(e,i);local room=0;for _,v in pairs(e.items) do if matches(v.item,i) then room=room+v.room end end
         local occupied=0;for _,v in pairs(e.items) do occupied=occupied+v.count end
         local tier=accept and 1 or held>0 and 2 or occupied==0 and 3 or e.freeSlots>0 and 4 or nil
@@ -636,7 +640,7 @@ function M.store(i,n,from,opts)
         if tier and capacity>0 then
           candidates[#candidates+1]={storage=face.storage,key=face.key,tier=tier,priority=face.settings.priority or 0,capacity=capacity,freeSlots=e.freeSlots}
         end
-      elseif accept~=false and (not e or e.capacityUnknown or not maximum) then uncertain=true end
+      elseif accept~=false and (not e or e.capacityUnknown) then uncertain=true end
     end
     if uncertain then unknown=unknown+1 end
   end
@@ -810,7 +814,7 @@ function M.fetchMany(requests,to,opts)
     local slots=cargoSlots();local stock=entries()
     local pieces,planned,missing={},{},{}
     for index,r in ipairs(requests) do
-      local i,remaining=r.item,r.count;local maximum=limits[limitKey(r.item)]
+      local i,remaining=r.item,r.count;local maximum=limit(r.item)
       local candidates={}
       for _,faces in pairs(stock) do
         local e=faces[1].entry;local held=quantity(e,i)
@@ -831,10 +835,9 @@ function M.fetchMany(requests,to,opts)
           if best then
             local stacks=0
             for _,v in pairs(e.items) do if matches(v.item,i) then
-              local limit=v.maxSize or maximum
-              assert(limit,"unknown stack limit for "..limitKey(i).."; scan item first")
-              stacks=stacks+(v.stacks or math.ceil(v.count/limit))
-              maximum=math.min(maximum or limit,limit)
+              local size=v.maxSize or maximum
+              stacks=stacks+(v.stacks or math.ceil(v.count/size))
+              maximum=math.min(maximum,size)
             end end
             candidates[#candidates+1]={storage=best,key=faces[1].key,count=available,stacks=stacks,distance=dist,
               rows=observedSource(best,i,manyReserved(faces[1].key,i,'take',planned))}
@@ -902,7 +905,7 @@ function M.collect(from,requests,opts)
     local stock=entries();local source=node(from);local planned,pieces,missing={},{},{}
     for index,r in ipairs(requests) do
       -- An item never seen yet is planned at 64; the drone's report teaches the real limit.
-      local i=r.item;local maximum=limits[limitKey(i)] or 64;local remaining=r.count
+      local i=r.item;local maximum=limit(i);local remaining=r.count
       local to=r.to and manyEndpoint(r.to)
       for _,c in ipairs(storeTargets(stock,i,from,source,maximum,planned)) do
         if remaining==0 then break end
