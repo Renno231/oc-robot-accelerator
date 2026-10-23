@@ -59,7 +59,8 @@ function M.remove(name,opts)
   if not r or r.state~="ready" and r.state~="failed" then return nil,"station is not removable" end
   if opts.items and opts.items~="move" and opts.items~="forget" then return nil,"items must be move or forget" end
   if (items[name] or 0)>0 and not opts.items then return nil,"holds "..items[name].." items: remove with move or forget" end
-  local function gone() R[name]=nil;items[name]=nil;event.push("station",name,"removed") end
+  -- Real cleanup unnames its members on the map, so the names can be reused.
+  local function gone() for _,m in ipairs(r.members) do map.unname(m.storage) end;R[name]=nil;items[name]=nil;event.push("station",name,"removed") end
   if opts.items=="move" and (items[name] or 0)>0 then r.state="removing";r.phase=nil;event.timer(2,gone) else gone() end
   return true
 end
