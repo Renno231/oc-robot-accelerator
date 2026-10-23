@@ -197,9 +197,12 @@ function M.run(plan,opts)
   local fail=plan.requestItem=="minecraft:brick_block" and plan.requestQuantity>24
   local tick
   function tick()
-    local s=r.stages[k];if not s then return end
+    local s=r.stages[k];if not s or r.status~="running" then return end
     local states=s.kind=="machine" and {"fetching","processing","processing","processing","storing","done"} or seq
     s.state=states[step];s.detail=s.state=="fetching" and "3 trips" or s.state=="processing" and "furnaceA, furnaceB" or ""
+    if s.kind=="machine" and s.state=="processing" and not s.loadLedger then
+      s.loadLedger={{group="furnaceA",items=5,state="processing",due=computer.uptime()+2},{group="furnaceB",items=5,state="processing",due=computer.uptime()+4}}
+    end
     if s.state=="processing" then s.done=math.min(s.total,s.done+math.ceil(s.total/3)) elseif s.state=="done" or s.state=="storing" then s.done=s.total end
     if fail and k==1 and step==3 then s.state="failed";r.status="failed";r.reason="furnaceB output short: 24 of 32 after deadline";r.where={{item="minecraft:clay_ball",count=8,storage="furnB.in"},{item="minecraft:brick",count=24,storage="furnB.out"}};r.finished=computer.uptime();busy=nil
       event.push("mes","stage",id,k,"failed");event.push("mes","done",id,"failed");return end
@@ -211,10 +214,15 @@ function M.run(plan,opts)
         local job,why=require("logistics.iochest").fetch({name=n or r.item,damage=tonumber(d) or 0},r.qty,opts.deliver)
         r.delivery={to=opts.deliver,job=job,reason=why}
       end
-      event.push("mes","done",id,"complete") else event.timer(1,tick) end
+      event.push("mes","done",id,"complete") else event.timer(s.state=="processing" and 4 or 1,tick) end
   end
   event.timer(1,tick)
   return id
+end
+function M.cancel(id,reason)
+  local r=runs[id];if not r then return nil,"Unknown run" end
+  if r.status=="running" then r.status="failed";r.reason=reason;r.finished=computer.uptime();busy=nil;event.push("mes","done",id,"failed") end
+  return true
 end
 function M.wait(id) while runs[id].status=="running" do event.pull(1) end;return copy(runs[id]) end
 function M.status(id) return copy(runs[id]) end
