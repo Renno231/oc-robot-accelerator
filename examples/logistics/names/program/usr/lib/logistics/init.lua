@@ -170,7 +170,8 @@ local function scheduleJob(job)
     if job.openEnded and n>0 then break end
     if n>=(job.opts.drones or math.huge) then break end
     -- A job for one held drone delivers what that drone already carries.
-    local ready=job.opts.drone==nil and d.state=="idle" or job.opts.drone==d.name and d.state=="held" and d.held~=nil
+    local ready=job.opts.drone==nil and d.state=="idle" or job.opts.drone==d.name and
+      (job.home and d.state=="idle" or d.state=="held" and d.held~=nil)
     local ordinary=false
     if d.survey and not job.survey and not job.opts.drone then for _,v in pairs(fleet) do if v.state=='idle' and not v.survey then ordinary=true;break end end end
     if ready and (not job.survey or d.survey) and not ordinary then
@@ -236,7 +237,7 @@ local function scheduleJob(job)
             if n==0 then error("step counts unmet") end
             return nil
           end
-          return {job=job.id,expected=job.opts.expectedItems,steps=steps,allocation=allocation,cargo=job.opts.cargo,home=d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,
+          return {job=job.id,expected=job.opts.expectedItems,steps=steps,allocation=allocation,cargo=job.opts.cargo,home=job.home or d.home,reserve=reserve,wait=job.opts.wait,overflow=job.opts.overflow,split=job.opts.split,
             linger=job.opts.linger and uptime() and LINGER or nil,routes={take=points({d.node or d.home})}}
         end
       end)
@@ -485,6 +486,9 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
         end end
         job.remaining=math.max(0,job.requested-job.moved)
         for _,held in ipairs(result.cargo or {}) do job.held[#job.held+1]={drone=d.name,item=held.item,count=held.count} end
+        if job.home and complete and not result.reason and registry[d.name] then
+          d.home=job.home;registry[d.name].home=job.home;persist()
+        end
         -- A drone that delivered everything reports before flying home: it
         -- returns, and is idle again when it says ready there.
         state(d,result.homing and "returning" or (result.held or 0)>0 and "held" or "idle");d.held=(result.held or 0)>0 and result.cargo or nil
@@ -539,6 +543,28 @@ function M.forget(name)
   local d=fleet[name];if not d then return false end
   if d.job then return nil,"drone is active" end
   registry[name]=nil;fleet[name]=nil;addresses[d.address]=nil;persist();return true
+end
+-- A new name for an idle drone. Its EEPROM keeps the old one, which nothing reads.
+function M.rename(name,new)
+  local d=fleet[name];if not d then return nil,"unknown drone" end
+  if d.state~="idle" or d.job then return nil,"drone is not idle" end
+  if type(new)~="string" or not new:match("^[%w_-]+$") or #new>48 or registry[new] then return nil,"invalid/duplicate name" end
+  for _,job in pairs(jobs) do if not job.finished and job.opts.drone==name then return nil,"drone has a pending job" end end
+  registry[new]=registry[name];registry[name]=nil;fleet[new]=d;fleet[name]=nil;d.name=new;persist()
+  return true
+end
+-- Moves an idle drone's home to a mapped charger, shared or not: it flies
+-- there as a trip, and its home is the new charger once that trip completes.
+function M.rehome(name,home)
+  local d=fleet[name];if not d then return nil,"unknown drone" end
+  if d.state~="idle" or d.job then return nil,"drone is not idle" end
+  local node=map.node(home);if not node or not node.charger then return nil,"home must be a mapped charger" end
+  if home==d.home then return nil,"already its home" end
+  for _,job in pairs(jobs) do
+    if not job.finished and job.home and job.opts.drone==name then return nil,"a move is already pending" end
+  end
+  local id=M.job({{go=home}},{drone=name});jobs[id].home=home;save(jobs[id])
+  return id
 end
 function M.sensors()
   local a={};for n,r in pairs(registry) do if r.kind=="sensor" then a[#a+1]=n end end
