@@ -19,7 +19,9 @@ PROGRAM_ENTRIES = 256
 WORLD_BYTES = 256 * 1024 * 1024
 WORLD_ENTRIES = 10000
 REGISTRY = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+\Z')
+PALETTE = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+(:([0-9]|1[0-5]))?\Z')   # full-build target, optional block metadata
 PROPERTY = re.compile(r'[A-Za-z0-9_.+-]{1,64}\Z')
+PLAYER = re.compile(r'[A-Za-z0-9_]{3,16}\Z')
 RESERVED = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(10)), *(f'LPT{i}' for i in range(10))}
 
 
@@ -72,6 +74,15 @@ def _inside(position, region):
     return pos
 
 
+def _workspace(position, region, fixture):
+    """A full-build robot or chest: inside the observed region, or in the work space or its one-cell rim."""
+    pos = _position(position)
+    if not all(lo <= p <= hi for p, lo, hi in zip(pos, region['min'], region['max'])):
+        if not all(lo - 1 <= p <= hi + 1 for p, lo, hi in zip(pos, fixture['min'], fixture['max'])):
+            raise ValueError('position outside full build work space and observation region')
+    return pos
+
+
 def _nbt(value):
     if not isinstance(value, str) or len(value.encode('utf-8')) > 4096:
         raise ValueError('SNBT byte bound exceeded')
@@ -110,8 +121,12 @@ def _component_name(value):
     return _text(value, re.compile(r'[A-Za-z][A-Za-z0-9_]{0,63}\Z'), 64)
 
 
+MOD_ITEM = re.compile(r'[a-z0-9_]{1,64}:[a-z0-9_]{1,64}(:[0-9]{1,5})?\Z')
+
+
 def _upgrade(value):
-    if isinstance(value, str): return _component_name(value)
+    # Another mod's upgrade goes by registry name, modid:item[:metadata]; native assembly still judges it.
+    if isinstance(value, str): return _text(value, MOD_ITEM, 140) if ':' in value else _component_name(value)
     _object(value, ['item', 'level', 'experience'], ['item'])
     if value['item'] != 'experienceupgrade' or ('level' in value) == ('experience' in value):
         raise ValueError('experienceupgrade configuration requires exactly one of level or experience')
@@ -182,21 +197,36 @@ def normalize(value):
         blocks.append({'min': low, 'max': high, 'block': _text(block['block'], REGISTRY, 128), 'properties': properties})
     normalized_world = {'region': region, 'blocks': blocks}
     if 'fullBuild' in world:
-        fixture = _object(world['fullBuild'], ['min', 'max', 'expected', 'palette', 'chest', 'materials', 'resume', 'returnSlots'],
+        fixture = _object(world['fullBuild'], ['min', 'max', 'expected', 'palette', 'chest', 'materials', 'resume', 'returnSlots', 'extraChests'],
                           ['min', 'max', 'expected', 'palette', 'chest', 'materials'])
         low, high = _position(fixture['min']), _position(fixture['max'])
         if version != 3 or any(a > b for a,b in zip(low,high)) or math.prod(b-a+1 for a,b in zip(low,high)) > 2147483647:
             raise ValueError('full build fixture bound')
         expected = relative(fixture['expected'])
-        palette = [_text(s, REGISTRY, 128) for s in _array(fixture['palette'],256)]
+        palette = [_text(s, PALETTE, 128) for s in _array(fixture['palette'],256)]
         if not palette: raise ValueError('full build palette required')
-        materials=[]
-        for m in _array(fixture['materials'],27):
-            _object(m,['item','count'],['item','count'])
-            materials.append({'item':_text(m['item'],REGISTRY,128),'count':_integer(m['count'],1,2147483647)})
-        if not materials: raise ValueError('full build materials required')
+        def stock(entries):
+            materials=[]
+            for m in _array(entries,27):
+                _object(m,['item','count','metadata'],['item','count'])
+                materials.append({'item':_text(m['item'],REGISTRY,128),'count':_integer(m['count'],1,2147483647)})
+                if 'metadata' in m: materials[-1]['metadata']=_integer(m['metadata'],0,15)
+            if not materials: raise ValueError('full build materials required')
+            return materials
+        materials=stock(fixture['materials'])
+        space={'min':low,'max':high}
         normalized_world['fullBuild']={'min':low,'max':high,'expected':expected,'palette':palette,
-            'chest':_inside(fixture['chest'],region),'materials':materials}
+            'chest':_workspace(fixture['chest'],region,space),'materials':materials}
+        if 'extraChests' in fixture:
+            # One stocked chest per extra robot, each with its own finite budget.
+            extra=[]
+            for c in _array(fixture['extraChests'],3):
+                _object(c,['position','materials'],['position','materials'])
+                extra.append({'position':_workspace(c['position'],region,space),'materials':stock(c['materials'])})
+            if not extra or 'resume' in fixture: raise ValueError('extra chests require 1..3 entries and no resume')
+            chests=[tuple(normalized_world['fullBuild']['chest'])]+[tuple(c['position']) for c in extra]
+            if len(set(chests))!=len(chests): raise ValueError('duplicate full build chest')
+            normalized_world['fullBuild']['extraChests']=extra
         if 'returnSlots' in fixture:
             normalized_world['fullBuild']['returnSlots']=_integer(fixture['returnSlots'],0,26)
         if 'resume' in fixture:
@@ -222,17 +252,13 @@ def normalize(value):
     inventory = [_item(item, True, slots) for item in _array(robot.get('inventory', []), slots)]
     if len({i['slot'] for i in inventory}) != len(inventory): raise ValueError('duplicate inventory slot')
     robot_position = _position(robot['position'])
-    if 'fullBuild' in normalized_world:
-        fixture=normalized_world['fullBuild']
-        if not all(lo<=p<=hi for p,lo,hi in zip(robot_position,region['min'],region['max'])):
-            if not all(lo-1<=p<=hi+1 for p,lo,hi in zip(robot_position,fixture['min'],fixture['max'])):
-                raise ValueError('robot outside full build work space and observation region')
+    if 'fullBuild' in normalized_world: robot_position=_workspace(robot_position,region,normalized_world['fullBuild'])
     else: robot_position=_inside(robot_position,region)
     normalized_robot = {'position': robot_position, 'facing': facing, 'hardware': hardware,
                         'energy': energy, 'tool': _item(robot.get('tool', {'item': 'minecraft:diamond_pickaxe'})),
                         'inventory': inventory}
     if 'randomSeed' in robot: normalized_robot['randomSeed'] = _integer(robot['randomSeed'], 0, 2147483647)
-    execution = _object(value.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks', 'autosaveWallSeconds'])
+    execution = _object(value.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks', 'autosaveWallSeconds', 'viewer'])
     mode = execution.get('mode', 'baseline' if version == 2 else 'coordinated')
     delay = execution.get('executionDelayMillis', 12)
     if mode not in (('baseline', 'coordinated', 'paced') if version == 3 else ('baseline', 'coordinated')) or type(delay) is not int or delay not in (0, 12):
@@ -246,6 +272,14 @@ def normalize(value):
     source_execution=value.get('execution', {})
     if 'autosaveWallSeconds' in source_execution:
         execution['autosaveWallSeconds']=_integer(source_execution['autosaveWallSeconds'],0,2147483647)
+    if 'viewer' in source_execution:
+        # Camera clients for filming: a fixed loopback port, offline-mode login for the named players (operators),
+        # the run held until they have all joined, and the world kept up holdSeconds after it finishes.
+        viewer=_object(source_execution['viewer'],['port','players','holdSeconds'],['port','players'])
+        players=[_text(name,PLAYER,16) for name in _array(viewer['players'],8)]
+        if not players or len(set(players))!=len(players): raise ValueError('viewer players must be 1..8 distinct names')
+        execution['viewer']={'port':_integer(viewer['port'],1024,65535),'players':players,
+                             'holdSeconds':_integer(viewer.get('holdSeconds',0),0,600)}
     observations = _object(value.get('observations', {}),
                            ['everyTicks'] if version == 1 else ['everyTicks', 'maxBytes', 'onFull'])
     normalized_observations = {'everyTicks': _integer(observations.get('everyTicks', 20), 1, 200)}

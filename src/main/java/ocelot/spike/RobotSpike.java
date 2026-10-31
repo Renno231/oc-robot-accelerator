@@ -48,7 +48,7 @@ public final class RobotSpike {
     private ItemStack initialTool;
     private long started, tickStarted, ticks, maxTicks, timeoutNanos, cpuTickNanos, taskStarted;
     private JsonObject preparedGate;
-    private boolean initialized, booted, finished;
+    private boolean initialized, booted, finished, watched;
     private String mode;
     private Scenario scenario;
     private RunnerScenario runnerScenario;
@@ -109,6 +109,7 @@ public final class RobotSpike {
             timeoutNanos = bounded("robotspike.timeoutSeconds", 120, 1, 600) * 1000000000L;
         }
         started = System.nanoTime();
+        watched = runnerScenario == null || runnerScenario.viewers.isEmpty();
         Trace.open(root, runnerScenario == null && scenario.trace);
         boolean infiniteEnergy=runnerScenario!=null && runnerScenario.v4!=null && runnerScenario.v4.infiniteEnergy;
         if (li.cil.oc.Settings.get().httpEnabled() || li.cil.oc.Settings.get().tcpEnabled() || li.cil.oc.Settings.get().ignorePower()!=infiniteEnergy)
@@ -117,18 +118,18 @@ public final class RobotSpike {
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST) public void startTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.START || !initialized || finished) return;
+        if (event.phase != TickEvent.Phase.START || !initialized || finished || !viewersJoined()) return;
         tickStarted = System.nanoTime();
         Trace.tick = ++ticks;
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST) public void endTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || !initialized || finished) return;
+        if (event.phase != TickEvent.Phase.END || !initialized || finished || !watched) return;
         try {
             if (System.nanoTime() - started > timeoutNanos) { finish(false, "wall_limit"); return; }
             int chunks = 0;
             for (WorldServer dimension : server.worlds) chunks += dimension.getChunkProvider().getLoadedChunkCount();
-            if (chunks > 2048) { finish(false, "chunk_limit:" + chunks); return; }
+            if (chunks > maxChunks()) { finish(false, "chunk_limit:" + chunks); return; }
             if (runner != null) {
                 if (!runner.ready()) setup();
                 else {
@@ -252,7 +253,7 @@ public final class RobotSpike {
 
     /** A bounded experimental rendezvous, not a proof of equivalence for arbitrary yields. */
     private void awaitWorker() throws Exception {
-        long deadline = System.nanoTime() + 1000000000L;
+        long deadline = System.nanoTime() + RunnerScheduler.workerLimitNanos();
         while (true) {
             String state = machineState();
             if (!workerNeedsTime(state, ((li.cil.oc.server.machine.Machine)robot.machine()).isExecuting())) return;
@@ -323,6 +324,19 @@ public final class RobotSpike {
         return value;
     }
 
+    /** Camera players load their own view (32 chunks each way at the viewer server's view distance) on top of the run's 2048. */
+    private int maxChunks() {
+        return 2048 + (runnerScenario == null ? 0 : runnerScenario.viewers.size() * 65 * 65);
+    }
+
+    /** With execution.viewer, nothing is set up or run until every camera player has joined; the clock starts then. */
+    private boolean viewersJoined() {
+        if (watched) return true;
+        for (String name : runnerScenario.viewers) if (server.getPlayerList().getPlayerByUsername(name) == null) return false;
+        started = System.nanoTime();
+        return watched = true;
+    }
+
     private void finish(boolean passed, String reason) {
         if (finished) return;
         finished = true;
@@ -349,8 +363,8 @@ public final class RobotSpike {
             }
             result.addProperty("traceEnabled", runner == null && scenario.trace);
             result.addProperty("executionDelayMillis", li.cil.oc.Settings.get().executionDelay());
-            result.addProperty("maxLoadedChunks", 2048);
-            result.addProperty("workerProgressLimitMillis", 1000);
+            result.addProperty("maxLoadedChunks", maxChunks());
+            result.addProperty("workerProgressLimitMillis", RunnerScheduler.workerLimitNanos() / 1000000L);
             if (runner == null && initialTool != null) {
                 result.addProperty("initialTool", initialTool.serializeNBT().toString());
                 result.addProperty("finalTool", robot.getStackInSlot(0).serializeNBT().toString());
@@ -368,7 +382,15 @@ public final class RobotSpike {
             if (ticket != null) { ForgeChunkManager.releaseTicket(ticket); ticket = null; }
             for(ForgeChunkManager.Ticket extra:buildTickets)ForgeChunkManager.releaseTicket(extra);
             buildTickets.clear();
-            server.initiateShutdown();
+            int hold = runnerScenario == null ? 0 : runnerScenario.viewerHoldSeconds;
+            if (hold == 0) server.initiateShutdown();
+            else {   // keep the finished world up for the camera players
+                Thread later = new Thread(() -> {
+                    try { Thread.sleep(hold * 1000L); } catch (InterruptedException ignored) { }
+                    server.initiateShutdown();
+                }, "viewer-hold");
+                later.setDaemon(true); later.start();
+            }
         }
     }
 

@@ -4,8 +4,10 @@ import com.google.gson.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.util.*;
 import java.util.zip.GZIPInputStream;
 import li.cil.oc.api.internal.Robot;
+import net.minecraft.block.state.IBlockState;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
@@ -21,28 +23,61 @@ import net.minecraft.world.WorldServer;
 final class RunnerFullBuild {
     final JsonObject config;
     final long[] remaining;
-    final Item[] items;
+    /** Stocked kinds: item and metadata, count 1. */
+    final ItemStack[] items;
     final BlockPos chest;
+    /** A further robot's stocked chest with its own finite budget. */
+    private static final class Stock {
+        final BlockPos chest;final ItemStack[] items;final long[] remaining;
+        Stock(BlockPos chest,ItemStack[] items,long[] remaining){this.chest=chest;this.items=items;this.remaining=remaining;}
+    }
+    private final List<Stock> extra=new ArrayList<>();
     private int x,y,z,xMin,xMax,yMin,yMax,zMin,zMax;
     private boolean initialized,prepared;
     private boolean recoveryRobotRemoved;
     private InputStream recoveryExpected;
     private long recoveredBlocks;
     private final long[] reclaimed;
-    RunnerFullBuild(JsonObject config) {
-        this.config=config;chest=RunnerObservations.pos(RunnerScenario.position(config.get("chest")));
+    /** The program directory holding the expected world: robot 0's when several robots build. */
+    private final String program;
+    RunnerFullBuild(JsonObject config,String program) {
+        this.config=config;this.program=program;chest=RunnerObservations.pos(RunnerScenario.position(config.get("chest")));
         JsonArray materials=config.getAsJsonArray("materials");
-        remaining=new long[materials.size()];items=new Item[materials.size()];reclaimed=new long[materials.size()];
+        remaining=new long[materials.size()];items=new ItemStack[materials.size()];reclaimed=new long[materials.size()];
+        stock(materials,items,remaining);
+        if(config.has("extraChests"))for(JsonElement e:config.getAsJsonArray("extraChests")) {
+            JsonObject c=e.getAsJsonObject();JsonArray m=c.getAsJsonArray("materials");
+            ItemStack[] i=new ItemStack[m.size()];long[] r=new long[m.size()];stock(m,i,r);
+            extra.add(new Stock(RunnerObservations.pos(RunnerScenario.position(c.get("position"))),i,r));
+        }
+    }
+    private static void stock(JsonArray materials,ItemStack[] items,long[] remaining) {
         for(int i=0;i<items.length;i++) {
             JsonObject m=materials.get(i).getAsJsonObject();ResourceLocation id=new ResourceLocation(m.get("item").getAsString());
             if(!Item.REGISTRY.containsKey(id))throw new IllegalArgumentException("bulk material missing: "+id);
-            items[i]=Item.REGISTRY.getObject(id);remaining[i]=m.get("count").getAsLong();
+            items[i]=new ItemStack(Item.REGISTRY.getObject(id),1,m.has("metadata")?m.get("metadata").getAsInt():0);remaining[i]=m.get("count").getAsLong();
         }
+    }
+    private static boolean same(ItemStack stack,ItemStack kind) {
+        return !stack.isEmpty() && stack.getItem()==kind.getItem() && stack.getMetadata()==kind.getMetadata();
+    }
+    /** The stocked kind that places a palette target: same registry name and, when given, metadata. */
+    private static boolean matches(String target,ItemStack kind) {
+        int colon=target.lastIndexOf(':');boolean meta=colon>target.indexOf(':');
+        return (meta?target.substring(0,colon):target).equals(String.valueOf(kind.getItem().getRegistryName())) &&
+            (!meta || kind.getMetadata()==Integer.parseInt(target.substring(colon+1)));
+    }
+    /** Palette target: a registry name, optionally suffixed with ":metadata". */
+    static boolean matches(String target,IBlockState state) {
+        int colon=target.lastIndexOf(':');boolean meta=colon>target.indexOf(':');
+        String name=meta?target.substring(0,colon):target;
+        return name.equals(String.valueOf(state.getBlock().getRegistryName())) &&
+            (!meta || state.getBlock().getMetaFromState(state)==Integer.parseInt(target.substring(colon+1)));
     }
     private void reclaim(IInventory inventory) {
         for(int slot=0;slot<inventory.getSizeInventory();slot++) {
             ItemStack stack=inventory.getStackInSlot(slot);
-            for(int i=0;i<items.length;i++)if(!stack.isEmpty() && stack.getItem()==items[i])reclaimed[i]+=stack.getCount();
+            for(int i=0;i<items.length;i++)if(same(stack,items[i]))reclaimed[i]+=stack.getCount();
         }
         inventory.clear();
     }
@@ -77,19 +112,22 @@ final class RunnerFullBuild {
         // server tick. This bounds responsiveness, not the allowed build size.
         while(x<=xMax){
             BlockPos p=new BlockPos(x,y,z);
-            if(y==yMin)world.setBlockState(p,Blocks.STONE.getDefaultState(),2);
+            if(y==yMin)world.setBlockState(p,Blocks.GRASS.getDefaultState(),2);
             else if(!world.isAirBlock(p))world.setBlockToAir(p);
             if(++y>yMax){y=yMin;if(++z>zMax){z=zMin;x++;}}
             if(System.nanoTime()>=deadline)return false;
         }
+        // Every stocked chest stands in the cleared rim; declared world blocks may also place the first.
+        if(world.isAirBlock(chest))world.setBlockState(chest,Blocks.CHEST.getDefaultState(),3);
+        for(Stock stock:extra)world.setBlockState(stock.chest,Blocks.CHEST.getDefaultState(),3);
         prepared=true;return true;
     }
     private boolean recover(WorldServer world,Path root,int[] lo,int[] hi) throws IOException {
         if(!initialized) {
             xMin=lo[0];xMax=hi[0];yMin=lo[1];yMax=hi[1];zMin=lo[2];zMax=hi[2];
             x=xMin;y=yMin;z=zMin;initialized=true;
-            Path path=root.resolve("program").resolve(config.get("expected").getAsString()).normalize();
-            if(!path.startsWith(root.resolve("program")))throw new IOException("recovery expected path");
+            Path path=root.resolve(program).resolve(config.get("expected").getAsString()).normalize();
+            if(!path.startsWith(root.resolve(program)))throw new IOException("recovery expected path");
             recoveryExpected=new BufferedInputStream(new GZIPInputStream(Files.newInputStream(path)));
         }
         JsonArray palette=config.getAsJsonArray("palette");long deadline=System.nanoTime()+20000000L;
@@ -98,11 +136,11 @@ final class RunnerFullBuild {
         while(y<=yMax) {
             int id=recoveryExpected.read();if(id<0 || id>=palette.size())throw new IOException("recovery expected stream");
             String target=palette.get(id).getAsString();BlockPos p=new BlockPos(x,y,z);
-            String actual=String.valueOf(world.getBlockState(p).getBlock().getRegistryName());
+            IBlockState state=world.getBlockState(p);String actual=String.valueOf(state.getBlock().getRegistryName());
             if(!actual.equals("minecraft:air")) {
-                if(!actual.equals(target))throw new IOException("recovery foreign block: "+p+" "+actual+" != "+target);
+                if(!matches(target,state))throw new IOException("recovery foreign block: "+p+" "+actual+" != "+target);
                 boolean material=false;
-                for(int i=0;i<items.length;i++)if(actual.equals(String.valueOf(items[i].getRegistryName()))) {
+                for(int i=0;i<items.length;i++)if(matches(target,items[i])) {
                     if(--remaining[i]<0)throw new IOException("recovery material budget exceeded");
                     material=true;break;
                 }
@@ -120,7 +158,7 @@ final class RunnerFullBuild {
         JsonArray stock=new JsonArray();
         for(int i=0;i<items.length;i++) {
             if(reclaimed[i]>remaining[i])throw new IOException("recovery resident stock exceeds remaining source budget");
-            JsonObject m=new JsonObject();m.addProperty("item",String.valueOf(items[i].getRegistryName()));
+            JsonObject m=new JsonObject();m.addProperty("item",String.valueOf(items[i].getItem().getRegistryName()));m.addProperty("metadata",items[i].getMetadata());
             m.addProperty("remainingSourceBudget",remaining[i]);m.addProperty("reclaimedResidentStock",reclaimed[i]);stock.add(m);
         }
         report.add("materials",stock);
@@ -128,6 +166,10 @@ final class RunnerFullBuild {
         prepared=true;return true;
     }
     void refill(WorldServer world) {
+        refill(world,chest,items,remaining);
+        for(Stock stock:extra)refill(world,stock.chest,stock.items,stock.remaining);
+    }
+    private void refill(WorldServer world,BlockPos chest,ItemStack[] items,long[] remaining) {
         TileEntityChest inventory=(TileEntityChest)world.getTileEntity(chest);
         if(inventory==null)throw new IllegalStateException("bulk chest unavailable");
         int returns=config.has("returnSlots")?config.get("returnSlots").getAsInt():0;
@@ -136,40 +178,47 @@ final class RunnerFullBuild {
             if(stack.isEmpty())continue;
             // A real controller can choose any available native chest slot.
             // Reclaim misplaced declared material as well as designated returns.
-            if(slot<inventory.getSizeInventory()-returns && stack.getItem()==items[slot%items.length] && stack.getMetadata()==0)continue;
+            if(slot<inventory.getSizeInventory()-returns && same(stack,items[slot%items.length]))continue;
             int material=-1;
-            for(int i=0;i<items.length;i++)if(stack.getItem()==items[i] && stack.getMetadata()==0)material=i;
+            for(int i=0;i<items.length;i++)if(same(stack,items[i]))material=i;
             if(material<0)throw new IllegalStateException("unsupported bulk material return");
             remaining[material]=Math.addExact(remaining[material],stack.getCount());
             inventory.setInventorySlotContents(slot,ItemStack.EMPTY);inventory.markDirty();
         }
         for(int slot=0;slot<inventory.getSizeInventory()-returns;slot++) {
             int i=slot%items.length;ItemStack stack=inventory.getStackInSlot(slot);
-            if(!stack.isEmpty() && stack.getItem()!=items[i])throw new IllegalStateException("bulk chest slot changed");
-            int have=stack.isEmpty()?0:stack.getCount();int add=(int)Math.min(remaining[i],items[i].getItemStackLimit()-have);
-            if(add>0){inventory.setInventorySlotContents(slot,new ItemStack(items[i],have+add));remaining[i]-=add;inventory.markDirty();}
+            if(!stack.isEmpty() && !same(stack,items[i]))throw new IllegalStateException("bulk chest slot changed");
+            int have=stack.isEmpty()?0:stack.getCount();int add=(int)Math.min(remaining[i],items[i].getMaxStackSize()-have);
+            if(add>0){ItemStack next=items[i].copy();next.setCount(have+add);inventory.setInventorySlotContents(slot,next);remaining[i]-=add;inventory.markDirty();}
         }
     }
     boolean verify(WorldServer world,Path root) throws IOException {
         int[] lo=RunnerScenario.position(config.get("min")),hi=RunnerScenario.position(config.get("max"));
         JsonArray palette=config.getAsJsonArray("palette"),examples=new JsonArray();
         long checked=0,nonAir=0,mismatches=0;
-        Path expected=root.resolve("program").resolve(config.get("expected").getAsString()).normalize();
-        if(!expected.startsWith(root.resolve("program")))throw new IOException("expected path outside program");
+        Path expected=root.resolve(program).resolve(config.get("expected").getAsString()).normalize();
+        if(!expected.startsWith(root.resolve(program)))throw new IOException("expected path outside program");
         try(InputStream in=new BufferedInputStream(new GZIPInputStream(Files.newInputStream(expected)))) {
             for(int y=lo[1];y<=hi[1];y++)for(int z=lo[2];z<=hi[2];z++)for(int x=lo[0];x<=hi[0];x++) {
                 int id=in.read();if(id<0 || id>=palette.size())throw new IOException("expected data truncated/invalid");
                 String target=palette.get(id).getAsString();BlockPos p=new BlockPos(x,y,z);
-                String actual=String.valueOf(world.getBlockState(p).getBlock().getRegistryName());
+                IBlockState state=world.getBlockState(p);String actual=String.valueOf(state.getBlock().getRegistryName());
+                if(state.getBlock().getMetaFromState(state)!=0)actual+=":"+state.getBlock().getMetaFromState(state);
                 checked++;if(!target.equals("minecraft:air"))nonAir++;
-                if(!target.equals(actual)){mismatches++;if(examples.size()<20){JsonObject e=new JsonObject();e.add("position",RunnerObservations.coords(p));e.addProperty("expected",target);e.addProperty("actual",actual);examples.add(e);}}
+                if(!matches(target,state)){mismatches++;if(examples.size()<20){JsonObject e=new JsonObject();e.add("position",RunnerObservations.coords(p));e.addProperty("expected",target);e.addProperty("actual",actual);examples.add(e);}}
             }
             if(in.read()!=-1)throw new IOException("expected data trailing bytes");
         }
         JsonObject result=new JsonObject();result.addProperty("checkedCells",checked);result.addProperty("expectedNonAir",nonAir);
         result.addProperty("mismatches",mismatches);result.add("examples",examples);
-        JsonArray stock=new JsonArray();for(int i=0;i<items.length;i++){JsonObject e=new JsonObject();e.addProperty("item",String.valueOf(items[i].getRegistryName()));e.addProperty("bulkRemaining",remaining[i]);stock.add(e);}result.add("stock",stock);
+        result.add("stock",stock(items,remaining));
+        if(!extra.isEmpty()){JsonArray stocks=new JsonArray();for(Stock s:extra)stocks.add(stock(s.items,s.remaining));result.add("extraStock",stocks);}
         Files.write(root.resolve("full-build-verification.json"),result.toString().getBytes(StandardCharsets.UTF_8));
         return mismatches==0;
+    }
+    private static JsonArray stock(ItemStack[] items,long[] remaining) {
+        JsonArray stock=new JsonArray();
+        for(int i=0;i<items.length;i++){JsonObject e=new JsonObject();e.addProperty("item",String.valueOf(items[i].getItem().getRegistryName()));e.addProperty("metadata",items[i].getMetadata());e.addProperty("bulkRemaining",remaining[i]);stock.add(e);}
+        return stock;
     }
 }

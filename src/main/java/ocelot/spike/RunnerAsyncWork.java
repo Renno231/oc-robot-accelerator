@@ -9,18 +9,18 @@ import scala.Function1;
 /** Pinned OC save submissions and Forge chunk reads, from admission through completion.
  * Shares the temporal owner's lock so an async admission cannot race an idle jump.
  * Tracking starts at class loading, including work submitted before the runner binds.
+ * Never refuses work: Forge and OC queue it without limit, and this only mirrors those queues.
  */
 public final class RunnerAsyncWork {
     private static final Set<Future<?>> futures=Collections.newSetFromMap(new IdentityHashMap<>());
     private static final Set<Runnable> chunks=Collections.newSetFromMap(new IdentityHashMap<>());
     private static int submitting;
     private static boolean uncertain;
-    private static final int LIMIT=4096;
     private RunnerAsyncWork() {}
 
     /** Replaces only Function1.apply inside the pinned SafeThreadPool.withPool. */
     public static Object submit(Function1<Object,Object> function,Object executor) {
-        synchronized(RunnerScheduler.LOCK) {prune();capacity();submitting++;}
+        synchronized(RunnerScheduler.LOCK) {prune();submitting++;}
         Object result=null;boolean completed=false;
         try {result=function.apply(executor);completed=true;return result;}
         finally {
@@ -35,7 +35,7 @@ public final class RunnerAsyncWork {
         }
     }
     public static void executeChunk(ThreadPoolExecutor executor,Runnable task) {
-        synchronized(RunnerScheduler.LOCK) {prune();capacity();if(!chunks.add(task)) throw new IllegalStateException("duplicate_chunk_submission");}
+        synchronized(RunnerScheduler.LOCK) {prune();if(!chunks.add(task)) throw new IllegalStateException("duplicate_chunk_submission");}
         try {executor.execute(task);}
         catch(RuntimeException | Error error) {chunkFinished(task);throw error;}
     }
@@ -49,9 +49,6 @@ public final class RunnerAsyncWork {
     /** Called at the native executor's afterExecute boundary, including exceptions. */
     public static void chunkFinished(Runnable task) {
         synchronized(RunnerScheduler.LOCK) {chunks.remove(task);RunnerScheduler.LOCK.notifyAll();}
-    }
-    private static void capacity() {
-        if(futures.size()+chunks.size()+submitting>=LIMIT) throw new IllegalStateException("async_tracking_limit");
     }
     private static void prune() {
         for(Iterator<Future<?>> iterator=futures.iterator();iterator.hasNext();) {

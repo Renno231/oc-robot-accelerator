@@ -72,6 +72,17 @@ class HardwareContract(unittest.TestCase):
             value['robot']['hardware']['tier']=tier
             with self.subTest(tier=tier),self.assertRaises(ValueError):scenario.normalize(value)
 
+    def test_other_mod_upgrade_by_registry_name(self):
+        value = configured(); hardware = value['robot']['hardware']
+        hardware['upgrades'] = ['computronics:oc_parts:1', 'inventoryupgrade']
+        hardware['containers'] = [{'item': 'upgradecontainer1', 'component': 'mymod:chat_box'}]
+        self.assertEqual(scenario.normalize(value)['robot']['hardware'], hardware)
+        for bad in ['computronics:oc_parts:1:2', 'Computronics:oc_parts', '../x:y', 'a:b:-1', 'a:b:123456', ':b']:
+            for patch in [{'upgrades': [bad]}, {'containers': [{'item': 'upgradecontainer1', 'component': bad}]},
+                          {'containers': [{'item': bad}]}, {'cpu': bad}]:
+                value = configured(); value['robot']['hardware'].update(patch)
+                with self.subTest(patch=patch), self.assertRaises(ValueError): scenario.normalize(value)
+
     def test_recipe_shape_and_bounds(self):
         patches = [{'tier': 0}, {'tier': 4}, {'tier': True}, {'cpu': '../cpu3'},
                    {'memory': []}, {'memory': ['ram6'] * 3}, {'cards': ['a'] * 4},

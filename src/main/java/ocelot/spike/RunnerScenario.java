@@ -17,7 +17,8 @@ final class RunnerScenario {
     final String facing;
     final double energy;
     final Integer randomSeed;
-    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes, autosaveWallSeconds;
+    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes, autosaveWallSeconds, viewerHoldSeconds;
+    final List<String> viewers = new ArrayList<>();   // camera players the run waits for (execution.viewer)
     final boolean source;
     final RunnerDroneScenario v4;
     private RunnerScenario(JsonObject root) {
@@ -31,18 +32,25 @@ final class RunnerScenario {
         entry = path(string(program.get("entry")));
         if (!entry.endsWith(".lua")) throw bad("Lua entry");
         JsonObject world = object(root.get("world"), "region,blocks,source,fullBuild");
-        fullBuild=world.has("fullBuild")?object(world.get("fullBuild"),"min,max,expected,palette,chest,materials,resume,returnSlots"):null;
+        fullBuild=world.has("fullBuild")?object(world.get("fullBuild"),"min,max,expected,palette,chest,materials,resume,returnSlots,extraChests"):null;
         if(fullBuild!=null && fullBuild.has("returnSlots"))integer(fullBuild.get("returnSlots"),0,26);
         if(fullBuild!=null) {
-            if(version!=3) throw bad("full build version");
+            if(version!=3 && v4==null) throw bad("full build version");
             int[] lo=position(fullBuild.get("min")),hi=position(fullBuild.get("max"));long cells=1;
             for(int i=0;i<3;i++){if(lo[i]>hi[i])throw bad("full build order");cells*=((long)hi[i]-lo[i]+1);}
             if(cells>Integer.MAX_VALUE)throw bad("full build integer representation");
             path(string(fullBuild.get("expected")));position(fullBuild.get("chest"));
             if(array(fullBuild.get("palette"),256).size()==0 || array(fullBuild.get("materials"),27).size()==0)throw bad("full build palette/materials required");
-            for(JsonElement e:array(fullBuild.get("palette"),256))registry(e);
-            for(JsonElement e:array(fullBuild.get("materials"),27)) {
-                JsonObject m=object(e,"item,count");registry(m.get("item"));integer(m.get("count"),1,Integer.MAX_VALUE);
+            for(JsonElement e:array(fullBuild.get("palette"),256))text(e,ID.pattern()+"(:([0-9]|1[0-5]))?",128);
+            materials(fullBuild.get("materials"));
+            if(fullBuild.has("extraChests")) {
+                JsonArray extra=array(fullBuild.get("extraChests"),3);
+                if(extra.size()==0 || fullBuild.has("resume"))throw bad("extra chests");
+                Set<String> chests=new HashSet<>();chests.add(fullBuild.get("chest").toString());
+                for(JsonElement e:extra) {
+                    JsonObject c=object(e,"position,materials");position(c.get("position"));materials(c.get("materials"));
+                    if(!chests.add(c.get("position").toString()))throw bad("duplicate full build chest");
+                }
             }
         }
         source = world.has("source");
@@ -54,7 +62,10 @@ final class RunnerScenario {
         }
         JsonObject region = object(world.get("region"), "min,max");
         min = position(region.get("min")); max = position(region.get("max"));
-        if(fullBuild!=null)inside(position(fullBuild.get("chest")));
+        if(fullBuild!=null) {
+            workspace(position(fullBuild.get("chest")));
+            if(fullBuild.has("extraChests"))for(JsonElement e:fullBuild.getAsJsonArray("extraChests"))workspace(position(e.getAsJsonObject().get("position")));
+        }
         if (regionCells() > 32768 || regionCells() < 1 ||
             ((long)Math.floorDiv(max[0],16)-Math.floorDiv(min[0],16)+1) *
             ((long)Math.floorDiv(max[2],16)-Math.floorDiv(min[2],16)+1) > 64) throw bad("region bounds");
@@ -75,13 +86,7 @@ final class RunnerScenario {
         randomSeed=robot.has("randomSeed")?integer(robot.get("randomSeed"),0,Integer.MAX_VALUE):null;
         position = position(robot.get("position"));
         if(fullBuild==null)inside(position);
-        else {
-            boolean observed=true;for(int i=0;i<3;i++)observed&=position[i]>=min[i] && position[i]<=max[i];
-            if(!observed) {
-                int[] lo=position(fullBuild.get("min")),hi=position(fullBuild.get("max"));
-                for(int i=0;i<3;i++)if(position[i]<lo[i]-1 || position[i]>hi[i]+1)throw bad("robot outside full build workspace");
-            }
-        }
+        else workspace(position);
         hardware=version==3?hardware(robot.get("hardware")):null;
         if (version<3 && !"tier3".equals(string(robot.get("hardware")))) throw bad("hardware");
         facing = string(robot.get("facing"));
@@ -97,8 +102,15 @@ final class RunnerScenario {
             JsonObject item = item(element,true,capacity);
             if (!slots.add(integer(item.get("slot"),1,capacity))) throw bad("duplicate slot");
         }
-        JsonObject execution = object(root.get("execution"),"mode,maxTicks,timeoutSeconds,executionDelayMillis,stallTicks,autosaveWallSeconds");
+        JsonObject execution = object(root.get("execution"),"mode,maxTicks,timeoutSeconds,executionDelayMillis,stallTicks,autosaveWallSeconds,viewer");
         autosaveWallSeconds=execution.has("autosaveWallSeconds")?integer(execution.get("autosaveWallSeconds"),0,Integer.MAX_VALUE):0;
+        if (execution.has("viewer")) {
+            JsonObject viewer=object(execution.get("viewer"),"port,players,holdSeconds");
+            integer(viewer.get("port"),1024,65535);
+            for (JsonElement name:array(viewer.get("players"),8)) viewers.add(text(name,"[A-Za-z0-9_]{3,16}",16));
+            if (viewers.isEmpty() || new HashSet<>(viewers).size()!=viewers.size()) throw bad("viewer players");
+            viewerHoldSeconds=integer(viewer.get("holdSeconds"),0,600);
+        } else viewerHoldSeconds=0;
         mode = string(execution.get("mode"));
         if (!mode.equals("baseline") && !mode.equals("coordinated") && !(version==3 && mode.equals("paced"))) throw bad("mode");
         maxTicks=integer(execution.get("maxTicks"),1,fullBuild!=null?Integer.MAX_VALUE:version==1?10000:1728000);
@@ -129,6 +141,20 @@ final class RunnerScenario {
         return volume<0 || volume>Integer.MAX_VALUE ? -1 : (int)volume;
     }
     void inside(int[] p) { for(int i=0;i<3;i++) if(p[i]<min[i] || p[i]>max[i]) throw bad("outside region"); }
+    /** Full-build robots and chests: inside the region, or in the work space or its one-cell rim. */
+    void workspace(int[] p) {
+        boolean observed=true;for(int i=0;i<3;i++)observed&=p[i]>=min[i] && p[i]<=max[i];
+        if(observed)return;
+        int[] lo=position(fullBuild.get("min")),hi=position(fullBuild.get("max"));
+        for(int i=0;i<3;i++)if(p[i]<lo[i]-1 || p[i]>hi[i]+1)throw bad("outside full build workspace");
+    }
+    private static void materials(JsonElement value) {
+        if(array(value,27).size()==0)throw bad("full build materials required");
+        for(JsonElement e:array(value,27)) {
+            JsonObject m=object(e,"item,count,metadata");registry(m.get("item"));integer(m.get("count"),1,Integer.MAX_VALUE);
+            if(m.has("metadata"))integer(m.get("metadata"),0,15);
+        }
+    }
     static RunnerScenario parse(String json) {
         if (json.getBytes(StandardCharsets.UTF_8).length > 128*1024) throw bad("manifest bytes");
         try {
@@ -165,7 +191,7 @@ final class RunnerScenario {
             if (!allowed.equals(present)) {
                 // Optional fields stay absent rather than gaining implicit values.
                 Set<String> missing=new HashSet<>(allowed); missing.removeAll(present);
-                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","autosaveWallSeconds").containsAll(missing)) throw bad("object fields: "+keys);
+                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","extraChests","metadata","autosaveWallSeconds","viewer").containsAll(missing)) throw bad("object fields: "+keys);
             }
         }
     }
@@ -208,7 +234,11 @@ final class RunnerScenario {
         return h;
     }
     private static void upgrade(JsonElement e) {
-        if(e!=null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isString()) {componentName(e);return;}
+        if(e!=null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isString()) {
+            // Another mod's upgrade goes by registry name, modid:item[:metadata]; native assembly still judges it.
+            if(string(e).indexOf(':')>=0) text(e,"[a-z0-9_]{1,64}:[a-z0-9_]{1,64}(:[0-9]{1,5})?",140);else componentName(e);
+            return;
+        }
         if(e==null || !e.isJsonObject()) throw bad("upgrade configuration");
         JsonObject c=e.getAsJsonObject();
         if(c.has("level")==c.has("experience")) throw bad("experienceupgrade requires level or experience");

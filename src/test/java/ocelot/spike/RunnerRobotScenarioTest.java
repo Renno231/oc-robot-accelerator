@@ -37,6 +37,22 @@ public class RunnerRobotScenarioTest {
         JsonObject root=fixture();root.getAsJsonObject("execution").remove("infiniteEnergy");assertFalse(RunnerScenario.parse(root.toString()).v4.infiniteEnergy);
         root.getAsJsonObject("execution").addProperty("infiniteEnergy","true");rejects(root);
     }
+    @Test public void upToEightRobotsAndOtherModUpgrades() throws Exception {
+        JsonObject root=fixture();JsonArray robots=root.getAsJsonArray("robots");
+        for(int i=1;i<9;i++) robots.add(new JsonParser().parse(robots.get(0).toString()));
+        for(int i=0;i<9;i++) {
+            JsonObject robot=robots.get(i).getAsJsonObject();
+            robot.add("position",new JsonParser().parse("["+(i%4-2)+",67,"+(i/4-3)+"]"));
+            robot.getAsJsonObject("program").addProperty("directory","robot-program-"+i);
+        }
+        rejects(root);
+        robots.remove(8);assertEquals(8,RunnerScenario.parse(root.toString()).v4.robots.size());
+        JsonArray upgrades=robots.get(0).getAsJsonObject().getAsJsonObject("hardware").getAsJsonArray("upgrades");
+        upgrades.add("computronics:oc_parts:1");RunnerScenario.parse(root.toString());
+        for(String bad:new String[]{"Computronics:oc_parts","computronics:oc_parts:1:2","../x:y",":b"}) {
+            upgrades.set(upgrades.size()-1,new JsonPrimitive(bad));rejects(root);
+        }
+    }
     @Test public void strictRobotContract() throws Exception {
         for(String key:new String[]{"facing","energy","hardware","program","inventory"}) {
             JsonObject root=fixture();root.getAsJsonArray("robots").get(0).getAsJsonObject().remove(key);rejects(root);

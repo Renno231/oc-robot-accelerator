@@ -1,0 +1,267 @@
+{
+ "schemaVersion": 4,
+ "id": "island-four",
+ "world": {
+  "region": {
+   "min": [
+    -2,
+    64,
+    -2
+   ],
+   "max": [
+    6,
+    67,
+    6
+   ]
+  },
+  "blocks": [],
+  "fullBuild": {
+   "min": [
+    0,
+    65,
+    0
+   ],
+   "max": [
+    203,
+    137,
+    199
+   ],
+   "expected": "expected.bin.gz",
+   "palette": [
+    "minecraft:air",
+    "minecraft:stone"
+   ],
+   "chest": [
+    -1,
+    65,
+    -1
+   ],
+   "materials": [
+    {
+     "item": "minecraft:stone",
+     "count": 250000
+    }
+   ],
+   "extraChests": [
+    {
+     "position": [
+      204,
+      65,
+      -1
+     ],
+     "materials": [
+      {
+       "item": "minecraft:stone",
+       "count": 250000
+      }
+     ]
+    },
+    {
+     "position": [
+      -1,
+      65,
+      200
+     ],
+     "materials": [
+      {
+       "item": "minecraft:stone",
+       "count": 250000
+      }
+     ]
+    },
+    {
+     "position": [
+      204,
+      65,
+      200
+     ],
+     "materials": [
+      {
+       "item": "minecraft:stone",
+       "count": 250000
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "execution": {
+  "mode": "coordinated",
+  "executionDelayMillis": 12,
+  "maxTicks": 200000000,
+  "timeoutSeconds": 90000,
+  "stallTicks": 0,
+  "infiniteEnergy": true
+ },
+ "observations": {
+  "everyTicks": 20,
+  "maxBytes": 33554432,
+  "onFull": "stop"
+ },
+ "expect": {
+  "blocks": [],
+  "robots": [],
+  "containers": [],
+  "drones": []
+ },
+ "drones": [],
+ "robots": [
+  {
+   "position": [
+    0,
+    65,
+    -1
+   ],
+   "facing": "north",
+   "hardware": {
+    "tier": 2,
+    "cpu": "cpu2",
+    "memory": [
+     "ram3",
+     "ram4"
+    ],
+    "cards": [
+     "redstonecard1"
+    ],
+    "upgrades": [
+     "inventoryupgrade",
+     "craftingupgrade"
+    ],
+    "storage": [
+     "hdd2"
+    ],
+    "bootDrive": 0,
+    "containers": [
+     {
+      "item": "upgradecontainer1",
+      "component": "inventoryupgrade"
+     }
+    ]
+   },
+   "energy": 210500,
+   "inventory": [],
+   "program": {
+    "directory": "robot-program-0",
+    "entry": "main.lua"
+   }
+  },
+  {
+   "position": [
+    203,
+    65,
+    -1
+   ],
+   "facing": "north",
+   "hardware": {
+    "tier": 2,
+    "cpu": "cpu2",
+    "memory": [
+     "ram3",
+     "ram4"
+    ],
+    "cards": [
+     "redstonecard1"
+    ],
+    "upgrades": [
+     "inventoryupgrade",
+     "craftingupgrade"
+    ],
+    "storage": [
+     "hdd2"
+    ],
+    "bootDrive": 0,
+    "containers": [
+     {
+      "item": "upgradecontainer1",
+      "component": "inventoryupgrade"
+     }
+    ]
+   },
+   "energy": 210500,
+   "inventory": [],
+   "program": {
+    "directory": "robot-program-1",
+    "entry": "main.lua"
+   }
+  },
+  {
+   "position": [
+    0,
+    65,
+    200
+   ],
+   "facing": "north",
+   "hardware": {
+    "tier": 2,
+    "cpu": "cpu2",
+    "memory": [
+     "ram3",
+     "ram4"
+    ],
+    "cards": [
+     "redstonecard1"
+    ],
+    "upgrades": [
+     "inventoryupgrade",
+     "craftingupgrade"
+    ],
+    "storage": [
+     "hdd2"
+    ],
+    "bootDrive": 0,
+    "containers": [
+     {
+      "item": "upgradecontainer1",
+      "component": "inventoryupgrade"
+     }
+    ]
+   },
+   "energy": 210500,
+   "inventory": [],
+   "program": {
+    "directory": "robot-program-2",
+    "entry": "main.lua"
+   }
+  },
+  {
+   "position": [
+    203,
+    65,
+    200
+   ],
+   "facing": "north",
+   "hardware": {
+    "tier": 2,
+    "cpu": "cpu2",
+    "memory": [
+     "ram3",
+     "ram4"
+    ],
+    "cards": [
+     "redstonecard1"
+    ],
+    "upgrades": [
+     "inventoryupgrade",
+     "craftingupgrade"
+    ],
+    "storage": [
+     "hdd2"
+    ],
+    "bootDrive": 0,
+    "containers": [
+     {
+      "item": "upgradecontainer1",
+      "component": "inventoryupgrade"
+     }
+    ]
+   },
+   "energy": 210500,
+   "inventory": [],
+   "program": {
+    "directory": "robot-program-3",
+    "entry": "main.lua"
+   }
+  }
+ ],
+ "containers": []
+}

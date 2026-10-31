@@ -59,6 +59,20 @@ public class RunnerAsyncWorkTest {
             release.countDown();pool.submit(()->{}).get(1,TimeUnit.SECONDS);assertTrue(RunnerAsyncWork.trackedIdle());
         } finally {release.countDown();pool.shutdownNow();}
     }
+    @Test public void chunkReadsAreNeverRefused() throws Exception {
+        // Forge queues reads without limit and marks each chunk loading before it hands the read over; refusing one
+        // would leave that chunk loading forever. A rejoining viewer alone asks for 65x65 at view-distance 32.
+        ThreadPoolExecutor pool=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new LinkedBlockingQueue<>()) {
+            protected void afterExecute(Runnable task,Throwable error) {RunnerAsyncWork.chunkFinished(task);}
+        };
+        CountDownLatch release=new CountDownLatch(1);
+        try {
+            pool.execute(()->{try {release.await();}catch(InterruptedException e) {Thread.currentThread().interrupt();}});
+            for(int i=0;i<50000;i++) RunnerAsyncWork.executeChunk(pool,new Runnable() {public void run() {}});
+            assertFalse(RunnerAsyncWork.trackedIdle());
+            release.countDown();pool.submit(()->{}).get(5,TimeUnit.SECONDS);assertTrue(RunnerAsyncWork.trackedIdle());
+        } finally {release.countDown();pool.shutdownNow();}
+    }
     @Test public void submissionFailureCannotBeMistakenForQuiescence() {
         try {
             RunnerAsyncWork.submit(new AbstractFunction1<Object,Object>() {

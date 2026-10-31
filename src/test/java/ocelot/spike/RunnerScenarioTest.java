@@ -17,6 +17,36 @@ public class RunnerScenarioTest {
         value.getAsJsonObject("execution").addProperty("autosaveWallSeconds",-1);rejects(value);
         value.getAsJsonObject("execution").addProperty("autosaveWallSeconds",true);rejects(value);
     }
+    @Test public void viewerBoundary() throws Exception {
+        JsonObject value=fixture();
+        assertTrue(RunnerScenario.parse(value.toString()).viewers.isEmpty());
+        JsonObject viewer=new JsonObject();viewer.addProperty("port",25570);viewer.addProperty("holdSeconds",10);
+        JsonArray players=new JsonArray();players.add("CamWide");viewer.add("players",players);
+        value.getAsJsonObject("execution").add("viewer",viewer);
+        RunnerScenario spec=RunnerScenario.parse(value.toString());
+        assertEquals(java.util.Collections.singletonList("CamWide"),spec.viewers);assertEquals(10,spec.viewerHoldSeconds);
+        players.add("CamWide");rejects(value);
+        players.remove(1);viewer.remove("holdSeconds");rejects(value);
+    }
+    @Test public void fourRobotFullBuild() throws Exception {
+        JsonObject value=new JsonParser().parse(new String(Files.readAllBytes(Paths.get("fixtures/runner-four-robot-full-build.json")),StandardCharsets.UTF_8)).getAsJsonObject();
+        RunnerScenario spec=RunnerScenario.parse(value.toString());
+        assertEquals(4,spec.v4.robots.size());assertEquals(3,spec.fullBuild.getAsJsonArray("extraChests").size());
+        JsonArray outside=new JsonArray();outside.add(206);outside.add(65);outside.add(-1);
+        JsonObject extra=value.getAsJsonObject("world").getAsJsonObject("fullBuild").getAsJsonArray("extraChests").get(0).getAsJsonObject();
+        JsonElement original=extra.get("position");extra.add("position",outside);rejects(value);
+        extra.add("position",value.getAsJsonObject("world").getAsJsonObject("fullBuild").get("chest"));rejects(value);
+        extra.add("position",original);value.getAsJsonArray("robots").get(3).getAsJsonObject().add("position",outside);rejects(value);
+    }
+    @Test public void fullBuildMetadata() throws Exception {
+        JsonObject value=new JsonParser().parse(new String(Files.readAllBytes(Paths.get("fixtures/runner-four-robot-full-build.json")),StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject fixture=value.getAsJsonObject("world").getAsJsonObject("fullBuild");
+        JsonArray palette=new JsonArray();palette.add("minecraft:air");palette.add("minecraft:wool:9");fixture.add("palette",palette);
+        JsonObject wool=fixture.getAsJsonArray("materials").get(0).getAsJsonObject();wool.addProperty("item","minecraft:wool");wool.addProperty("metadata",9);
+        RunnerScenario.parse(value.toString());
+        wool.addProperty("metadata",16);rejects(value);
+        wool.addProperty("metadata",9);palette.set(1,new JsonPrimitive("minecraft:wool:16"));rejects(value);
+    }
     private JsonObject fixture() throws Exception {
         return new JsonParser().parse(new String(Files.readAllBytes(Paths.get("fixtures/runner-normalized.json")), StandardCharsets.UTF_8)).getAsJsonObject();
     }

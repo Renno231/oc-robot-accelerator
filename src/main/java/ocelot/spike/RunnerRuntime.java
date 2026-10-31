@@ -65,7 +65,7 @@ final class RunnerRuntime {
             checkOtherMachines();return;
         }
         if(spec.fullBuild!=null) {
-            if(fullBuild==null)fullBuild=new RunnerFullBuild(spec.fullBuild);
+            if(fullBuild==null)fullBuild=new RunnerFullBuild(spec.fullBuild,spec.v4!=null && spec.v4.robots.size()>0?"robot-program-0":"program");
             fullBuild.removeRecoveryRobot(world);
         }
         checkOtherMachines();
@@ -168,7 +168,10 @@ final class RunnerRuntime {
         if(power!=null && !power.initialize(tick)) return null;
         if(drones!=null) {
             if(scheduler!=null) scheduler.checkProgress();
+            // Every robot restocks from its own chest; the whole volume is verified once the robots return.
+            if(fullBuild!=null)fullBuild.refill(world);
             String outcome=drones.tick(tick);
+            if("passed".equals(outcome) && fullBuild!=null && !fullBuild.verify(world,root)) return "expectation_failed:full build";
             if(outcome==null && "capture".equals(System.getProperty("robotspike.reloadProbe")) && drones.captureReload()) return "reload_saved";
             return outcome;
         }
@@ -319,7 +322,7 @@ final class RunnerRuntime {
         return completedWorkerField.getLong(robot.machine());
     }
     private void awaitWorker() throws Exception {
-        long deadline=System.nanoTime()+1000000000L;
+        long deadline=System.nanoTime()+RunnerScheduler.workerLimitNanos();
         long before=completedWorkerNanos();
         while(true) {
             String state=machineState();

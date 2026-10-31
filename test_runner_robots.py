@@ -25,6 +25,9 @@ class RobotScenarioTests(unittest.TestCase):
         value['robots'] += copy.deepcopy(value['robots'])
         value['robots'][2]['position'] = [0, 66, 0]; value['robots'][3]['position'] = [2, 66, 0]
         self.assertEqual(len(scenario.normalize(value)['robots']), 4)
+        value['robots'] += copy.deepcopy(value['robots'])
+        for i in range(4, 8): value['robots'][i]['position'] = [4 + i % 2 * 2, 65 + i // 6, 0]
+        self.assertEqual(len(scenario.normalize(value)['robots']), 8)
         value.pop('computer'); value['containerEdits'] = []; value['expect']['robots'] = [{'index': 0}]
         self.assertEqual(scenario.normalize(value)['drones'], [])
 
@@ -46,7 +49,7 @@ class RobotScenarioTests(unittest.TestCase):
             with self.assertRaises(ValueError): scenario.normalize(old)
 
     def test_reject_robot_shapes(self):
-        cases = [(['robots'], []), (['robots'], valid()['robots'] * 3),
+        cases = [(['robots'], []), (['robots'], valid()['robots'] * 5),
                  (['robots', 0, 'facing'], 'up'), (['robots', 0, 'position'], [999, 65, 0]),
                  (['robots', 1, 'position'], [0, 65, 0]), (['robots', 0, 'tool'], {}),
                  (['robots', 0, 'program', 'directory'], '../escape'),

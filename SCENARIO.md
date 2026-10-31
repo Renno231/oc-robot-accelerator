@@ -54,7 +54,7 @@ Names are OpenComputers item names (`cpu3`, `ram6`), not Minecraft registry IDs.
 - `cpu`: `cpu1`, `cpu2`, or `cpu3`. Required.
 - `memory`: one or two modules, `ram1` to `ram6`. Required. Real capacities apply, so too little memory can fail OpenOS boot or your program.
 - `cards`: up to three, such as `graphicscard1` or `redstonecard1`. Optional.
-- `upgrades`: up to nine, such as `inventoryupgrade`, `inventorycontrollerupgrade`, `craftingupgrade`, or `batteryupgrade3`. Optional. The assembler decides which combinations fit.
+- `upgrades`: up to nine, such as `inventoryupgrade`, `inventorycontrollerupgrade`, `craftingupgrade`, or `batteryupgrade3`. Optional. The assembler decides which combinations fit. Another mod's upgrade goes by its registry name, `modid:item[:metadata]`, here or as a container's component: `computronics:oc_parts:1` is Computronics' chat upgrade. The mod has to be on the server: `ROBOT_RUNNER_EXTRA_MODS` names a directory whose jars are copied into each job's server.
 - `containers`: up to three `{item, component?}` entries. The optional component goes into the container and has to fit it; for example, `cardcontainer1` can't hold an `inventoryupgrade`.
 - `storage`: one or two HDDs, `hdd1` to `hdd3`. Required.
 - `bootDrive`: index into `storage` (starting at 0) of the drive that gets OpenOS and your program. Required. Other drives start empty. Real capacity and speed apply.
@@ -173,7 +173,7 @@ records; browser replay support for drones is not included.
 
 ### Multiple OpenOS robots (schema 4)
 
-Drone/computer scenarios may also declare `robots`, with **1–4** entries. Each
+Drone/computer scenarios may also declare `robots`, with **1–8** entries. Each
 requires `position`, a complete schema-3 `hardware` recipe, and `program` with a
 scenario-local `directory` and optional Lua `entry` (default `main.lua`). Optional
 `facing`, `inventory`, and `energy` follow schema-3 defaults and bounds. Hardware
@@ -184,7 +184,7 @@ An empty `drones: []` is allowed when robots are present, without a controller.
 
 Each robot has its own native HDD/OpenOS instance. Program source directories
 must not overlap other program or source-world directories; frozen/execution
-copies are named `robot-program-0` through `robot-program-3`. Corresponding logs
+copies are named `robot-program-0` through `robot-program-7`. Corresponding logs
 are `robot-program-N.log`. Results and observations include indexed `robots`
 states. Without a controller, all robot programs must return and stop cleanly.
 With a controller, success waits for both declared controllers to return;

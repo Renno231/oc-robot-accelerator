@@ -4,6 +4,9 @@
 
 - Split out of Ocelot Harness into its own repository. Nothing here depends on the harness, and existing scenarios and `robot-runner` commands keep working.
 - Fixed a rounding bug when validating the maximum foreground run deadline.
+- Up to eight robots in a schema-4 scenario (was four).
+- Robot upgrades from other mods by registry name (`modid:item[:metadata]`), such as Computronics' chat upgrade, with the mod supplied through `ROBOT_RUNNER_EXTRA_MODS`.
+- Background chunk reads and OC saves are never refused. A cap of 4,096 used to kick a viewer that rejoined at view distance 32 ("Internal server error") and could leave a chunk loading forever.
 
 ## 0.1.0-rc.2 (not published)
 

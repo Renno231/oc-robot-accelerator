@@ -276,6 +276,18 @@ def _install(inputs, root, execution, check):
     (root/'config/opencomputers/settings.conf').write_text(settings,encoding='utf-8')
     hashes['generated/config/opencomputers/settings.conf'] = supervisor._digest(
         root/'config/opencomputers/settings.conf',float('inf'),check)
+    viewer = normalized.get('execution',{}).get('viewer')
+    if viewer:
+        # Camera clients join on loopback at a fixed port in offline mode; operators so they can /tp and spectate.
+        # A wide view distance lets a camera frame a whole large build.
+        properties = supervisor.PROPERTIES.replace('server-port=0','server-port=%d' % viewer['port']).replace(
+            'online-mode=true','online-mode=false') + 'view-distance=32\n'
+        (root/'server.properties').write_text(properties,encoding='ascii')
+        ops = [{'uuid':str(uuid.UUID(bytes=hashlib.md5(('OfflinePlayer:'+name).encode()).digest(),version=3)),
+                'name':name,'level':4,'bypassesPlayerLimit':False} for name in viewer['players']]
+        (root/'ops.json').write_text(json.dumps(ops),encoding='utf-8')
+        for name in ('server.properties','ops.json'):
+            hashes['generated/'+name] = supervisor._digest(root/name,float('inf'),check)
     return hashes
 
 

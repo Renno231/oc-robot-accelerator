@@ -32,8 +32,8 @@ final class RunnerDroneScenario {
         drones=drone?RunnerScenario.array(root.get("drones"),MAX_DRONES):new JsonArray();
         microcontrollers=root.has("microcontrollers")?RunnerScenario.array(root.get("microcontrollers"),16):new JsonArray();
         if(root.has("microcontrollers") && (!drone || computer==null)) throw RunnerScenario.bad("microcontrollers require controller computer");
-        robots=root.has("robots")?RunnerScenario.array(root.get("robots"),4):new JsonArray();
-        if(root.has("robots") && (!drone || robots.size()==0)) throw RunnerScenario.bad("robots require drone mode and count 1..4");
+        robots=root.has("robots")?RunnerScenario.array(root.get("robots"),8):new JsonArray();
+        if(root.has("robots") && (!drone || robots.size()==0)) throw RunnerScenario.bad("robots require drone mode and count 1..8");
         if(drone && drones.size()==0 && computer==null && robots.size()==0) throw RunnerScenario.bad("drones count 1..16");
         containerEdits=root.has("containerEdits")?RunnerScenario.array(root.get("containerEdits"),64):new JsonArray();
         if(root.has("containerEdits") && !drone) throw RunnerScenario.bad("container edits require drone mode");
@@ -41,7 +41,7 @@ final class RunnerDroneScenario {
         if(root.has("droneActions") && !drone) throw RunnerScenario.bad("drone actions require drone mode");
         containers=RunnerScenario.array(root.get("containers"),128);
         JsonObject expect=RunnerScenario.object(root.get("expect"),(drone?"blocks,containers,drones":"blocks,inventory,position,containers")+(root.has("robots")?",robots":""));
-        expectedRobots=root.has("robots")?RunnerScenario.array(expect.get("robots"),4):new JsonArray();
+        expectedRobots=root.has("robots")?RunnerScenario.array(expect.get("robots"),8):new JsonArray();
         expectedDrones=drone?RunnerScenario.array(expect.get("drones"),MAX_DRONES):new JsonArray();
         expectedContainers=RunnerScenario.array(expect.get("containers"),128);
     }
@@ -72,7 +72,8 @@ final class RunnerDroneScenario {
         for(int index=0;index<robots.size();index++) {
             JsonObject r=robots.get(index).getAsJsonObject();
             RunnerScenario.fields(r,"position,facing,hardware,program,inventory,energy"+(r.has("assembly")?",assembly":""));
-            spec.inside(RunnerScenario.position(r.get("position")));
+            int[] at=RunnerScenario.position(r.get("position"));
+            if(spec.fullBuild!=null)spec.workspace(at);else spec.inside(at);
             if(!robotPositions.add(r.get("position").toString())) throw RunnerScenario.bad("duplicate robot position");
             if(!Arrays.asList("north","south","east","west").contains(RunnerScenario.string(r.get("facing")))) throw RunnerScenario.bad("robot facing");
             RunnerScenario.hardware(r.get("hardware"));

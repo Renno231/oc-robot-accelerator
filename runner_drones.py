@@ -148,7 +148,7 @@ def normalize(value):
         raise ValueError('drone expectations use expect.drones')
     if not drone_mode and 'drones' in extended: raise ValueError('drone expectations require drones')
     surrogate['expect'] = {k: v for k, v in extended.items() if k not in ('drones', 'containers', 'robots')}
-    execution = _object(surrogate.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks', 'infiniteEnergy'])
+    execution = _object(surrogate.get('execution', {}), ['mode', 'maxTicks', 'timeoutSeconds', 'executionDelayMillis', 'stallTicks', 'infiniteEnergy', 'viewer'])
     if 'infiniteEnergy' in execution:
         if type(execution['infiniteEnergy']) is not bool: raise ValueError('infiniteEnergy must be boolean')
         surrogate['execution'].pop('infiniteEnergy')
@@ -200,8 +200,8 @@ def normalize(value):
         result['drones'] = drones
         if 'microcontrollers' in value: result['microcontrollers'] = microcontrollers
     if 'robots' in value:
-        robots = _array(value['robots'], 4)
-        if not robots: raise ValueError('robots must contain 1..4 entries')
+        robots = _array(value['robots'], 8)
+        if not robots: raise ValueError('robots must contain 1..8 entries')
         result['robots'] = []
         for i, r in enumerate(robots):
             _object(r, ['position', 'facing', 'hardware', 'program', 'inventory', 'energy', 'assembly'], ['position', 'hardware', 'program'])
@@ -227,7 +227,7 @@ def normalize(value):
             result['robots'].append(robot)
         if len({tuple(r['position']) for r in result['robots']}) != len(robots): raise ValueError('duplicate robot position')
         result['expect']['robots'] = []
-        for r in _array(extended.get('robots', []), 4):
+        for r in _array(extended.get('robots', []), 8):
             _object(r, ['index', 'inventory'], ['index'])
             entry = {'index': _integer(r['index'], 0, len(robots) - 1)}
             if 'inventory' in r: entry['inventory'] = slots(r['inventory'], limit=85)

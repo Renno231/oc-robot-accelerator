@@ -125,11 +125,18 @@ public final class RunnerScheduler implements AutoCloseable {
     public static Calendar environmentCalendar() {
         Calendar result=Calendar.getInstance();result.setTimeInMillis(environmentMillis());return result;
     }
+    /** How long one Lua slice of a machine may run before the run fails: OC's own computer.timeout, after which OC
+     *  itself stops the machine as too long without yielding. Where OC's limit is off, its default of 5 s still
+     *  bounds the wait, so a hung worker ends the run. */
+    static long workerLimitNanos() {
+        double seconds=li.cil.oc.Settings.get().timeout();
+        return (long)((seconds>0?seconds:5)*1e9);
+    }
     void checkProgress() {
         synchronized(LOCK) {
             if(failure!=null) throw new IllegalStateException("worker_dispatch_failure",failure);
             long at=System.nanoTime();
-            for(Ticket ticket:running) if(at-ticket.started>=TimeUnit.SECONDS.toNanos(1))
+            for(Ticket ticket:running) if(at-ticket.started>=workerLimitNanos())
                 throw new IllegalStateException("worker_progress_limit");
         }
     }

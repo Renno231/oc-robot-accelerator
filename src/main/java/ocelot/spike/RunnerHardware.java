@@ -20,6 +20,12 @@ final class RunnerHardware {
         this.data=data; this.bootDrive=bootDrive; this.equipment=equipment;this.assemblyReport=report;
     }
     static ItemStack oc(String key) {
+        if(key.indexOf(':')>=0) { // another mod's part by registry name, modid:item[:metadata]
+            String[] id=key.split(":");
+            net.minecraft.item.Item item=net.minecraft.item.Item.getByNameOrId(id[0]+":"+id[1]);
+            if(item==null) throw new IllegalArgumentException("unknown hardware item: "+key);
+            return new ItemStack(item,1,id.length>2?Integer.parseInt(id[2]):0);
+        }
         li.cil.oc.api.detail.ItemInfo info=li.cil.oc.api.Items.get(key);
         if(info==null) throw new IllegalArgumentException("unknown OC hardware component: "+key);
         return info.createItemStack(1);
@@ -102,14 +108,18 @@ final class RunnerHardware {
     private static void requireKind(ItemStack stack,String kind) {
         li.cil.oc.api.driver.DriverItem driver=li.cil.oc.api.Driver.driverFor(stack,Robot.class);
         if(driver==null || !kind.equals(driver.slot(stack))) throw new IllegalArgumentException(
-            "hardware "+li.cil.oc.api.Items.get(stack).name()+" is not a robot "+kind);
+            "hardware "+name(stack)+" is not a robot "+kind);
+    }
+    private static String name(ItemStack stack) {
+        li.cil.oc.api.detail.ItemInfo info=li.cil.oc.api.Items.get(stack);
+        return info!=null?info.name():stack.getItem().getRegistryName()+":"+stack.getMetadata();
     }
     static int[] place(InventoryBasic inventory,AssemblerTemplates.Slot[] slots,int offset,List<ItemStack> items,String label) {
         boolean[][] fits=new boolean[items.size()][slots.length];
         for(int i=0;i<items.size();i++) for(int s=0;s<slots.length;s++) fits[i][s]=slots[s].validate(inventory,offset+s,items.get(i));
         int[] assignment=match(fits,slots.length);
         if(assignment==null) {
-            List<String> names=new ArrayList<>();for(ItemStack stack:items) names.add(li.cil.oc.api.Items.get(stack).name());
+            List<String> names=new ArrayList<>();for(ItemStack stack:items) names.add(name(stack));
             throw new IllegalArgumentException("hardware "+label+" do not fit native assembler slots/tier: "+names);
         }
         for(int i=0;i<items.size();i++) inventory.setInventorySlotContents(offset+assignment[i],items.get(i));
@@ -135,7 +145,7 @@ final class RunnerHardware {
             ItemStack stack=equipment.get(index); if(stack.isEmpty()) continue;
             int slot=index+1;
             if(!robot.isItemValidForSlot(slot,stack)) throw new IllegalArgumentException(
-                "hardware container "+(index+1)+" rejects "+li.cil.oc.api.Items.get(stack).name());
+                "hardware container "+(index+1)+" rejects "+name(stack));
             robot.setInventorySlotContents(slot,stack);
         }
     }

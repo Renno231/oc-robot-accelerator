@@ -44,4 +44,49 @@ class FullBuildScenarioTests(unittest.TestCase):
         value['robot']['position']=[1000,78,108]
         with self.assertRaises(ValueError):runner_scenario.normalize(value)
 
+class MetadataTests(unittest.TestCase):
+    def test_coloured_kinds_are_stocked_and_verified_by_metadata(self):
+        value=FullBuildScenarioTests().fixture();fixture=value['world']['fullBuild']
+        fixture['palette']=['minecraft:air','minecraft:wool:9','minecraft:wool:14']
+        fixture['materials']=[{'item':'minecraft:wool','count':5,'metadata':9},{'item':'minecraft:wool','count':3,'metadata':14}]
+        self.assertEqual(runner_scenario.normalize(value)['world']['fullBuild']['materials'][1]['metadata'],14)
+        for field,bad in [('palette',['minecraft:wool:16']),('palette',['minecraft:wool:x']),
+                          ('materials',[{'item':'minecraft:wool','count':1,'metadata':16}])]:
+            with self.subTest(bad=bad):
+                broken=FullBuildScenarioTests().fixture();broken['world']['fullBuild'][field]=bad
+                with self.assertRaises(ValueError):runner_scenario.normalize(broken)
+
+class FourRobotFullBuildTests(unittest.TestCase):
+    """Several v4 robots share one full-build volume; each restocks from its own chest and budget."""
+    def fixture(self):
+        corners=[[-1,65,-1],[204,65,-1],[-1,65,200],[204,65,200]]
+        robot=lambda i:{'position':[corners[i][0]+(1 if i%2==0 else -1),65,corners[i][2]],'facing':'north','energy':210500,
+                        'hardware':configured()['robot']['hardware'],'program':{'directory':'robot-%d'%i}}
+        stock=[{'item':'minecraft:stone','count':250000}]
+        return {'schemaVersion':4,'id':'island-four','world':{'region':{'min':[-2,64,-2],'max':[6,67,6]},
+                'fullBuild':{'min':[0,65,0],'max':[203,137,199],'expected':'expected.bin.gz',
+                             'palette':['minecraft:air','minecraft:stone'],'chest':corners[0],'materials':stock,
+                             'extraChests':[{'position':c,'materials':stock} for c in corners[1:]]}},
+                'drones':[],'robots':[robot(i) for i in range(4)],
+                'execution':{'mode':'coordinated','infiniteEnergy':True,'maxTicks':200000000,'timeoutSeconds':90000}}
+    def test_robots_and_chests_may_stand_on_the_work_space_rim(self):
+        value=runner_scenario.normalize(self.fixture())
+        self.assertEqual(value,runner_scenario.normalize(value))
+        self.assertEqual([r['position'] for r in value['robots']],[[0,65,-1],[203,65,-1],[0,65,200],[203,65,200]])
+        self.assertEqual([c['position'] for c in value['world']['fullBuild']['extraChests']],[[204,65,-1],[-1,65,200],[204,65,200]])
+    def test_extra_chests_are_bounded_distinct_and_inside_the_rim(self):
+        for change in ('outside','duplicate','empty','four','resume','no-materials'):
+            with self.subTest(change=change):
+                value=self.fixture();fixture=value['world']['fullBuild'];extra=fixture['extraChests']
+                if change=='outside':extra[0]['position']=[206,65,-1]
+                if change=='duplicate':extra[0]['position']=fixture['chest']
+                if change=='empty':fixture['extraChests']=[]
+                if change=='four':extra.append({'position':[100,65,-1],'materials':extra[0]['materials']})
+                if change=='resume':fixture['resume']={'robot':[0,65,-1],'builtBlocks':0};value['world']['source']='saved-world'
+                if change=='no-materials':extra[0]['materials']=[]
+                with self.assertRaises(ValueError):runner_scenario.normalize(value)
+    def test_robot_far_from_the_work_space_rejected(self):
+        value=self.fixture();value['robots'][3]['position']=[300,65,300]
+        with self.assertRaises(ValueError):runner_scenario.normalize(value)
+
 if __name__=='__main__':unittest.main()
