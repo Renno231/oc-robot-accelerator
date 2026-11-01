@@ -45,7 +45,8 @@ final class RunnerComputer {
         host=isRack()?RunnerRack.server(tile):tile;
         machine=(Machine)host.getClass().getMethod("machine").invoke(host);
         if(!machine.node().address().equals(identity.get("address").getAsString())) throw new IllegalStateException("reload_case_identity");
-        RunnerScheduler.attachMachine((Runnable)machine);program.restoreDiskIdentity(identity.get("disk").getAsString());
+        RunnerScheduler.attachMachine((Runnable)machine);RunnerHeapCensus.watch(machine,"computer "+spec.get("position"));
+        program.restoreDiskIdentity(identity.get("disk").getAsString());
         scala.Option<?>[] components=(scala.Option<?>[])host.getClass().getMethod("components").invoke(host);
         program.observeNativeDrive((IInventory)host,slot -> slot<components.length && components[slot].isDefined()?components[slot].get():null);
         if(!machine.isRunning() && !machine.start()) throw new IllegalStateException("reload_case_start_failed");
@@ -87,7 +88,7 @@ final class RunnerComputer {
         for(int i=0;i<parts.size();i++) inventory.setInventorySlotContents(assignment[i],parts.get(i));
         host.getClass().getMethod("connectComponents").invoke(host);
         machine=(Machine)host.getClass().getMethod("machine").invoke(host);
-        RunnerScheduler.attachMachine((Runnable)machine);
+        RunnerScheduler.attachMachine((Runnable)machine);RunnerHeapCensus.watch(machine,"computer "+spec.get("position"));
     }
     private boolean isRack() {return spec.has("kind") && spec.get("kind").getAsString().equals("rack");}
     private ItemStack part(String name,String kind) {

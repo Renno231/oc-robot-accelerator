@@ -153,10 +153,11 @@ public final class RunnerScheduler implements AutoCloseable {
     }
     private final class Ticket extends FutureTask<Void> implements ScheduledFuture<Void> {
         final ScheduledExecutorService executor;
+        final Runnable task;
         final long due;
         long started;
         ScheduledFuture<?> timer;
-        Ticket(ScheduledExecutorService executor,Runnable task,long due) {super(task,null);this.executor=executor;this.due=due;}
+        Ticket(ScheduledExecutorService executor,Runnable task,long due) {super(task,null);this.executor=executor;this.task=task;this.due=due;}
         boolean reserve() {
             if(closed || isCancelled() || !pending.remove(this)) return false;
             started=System.nanoTime();running.add(this);workerPasses++;return true;
@@ -166,7 +167,7 @@ public final class RunnerScheduler implements AutoCloseable {
             runReserved();
         }
         void runReserved() {
-            try {super.run();}
+            try {super.run();RunnerHeapCensus.afterSlice(task);}
             finally {synchronized(LOCK) {running.remove(this);LOCK.notifyAll();}}
         }
         @Override protected void done() {
