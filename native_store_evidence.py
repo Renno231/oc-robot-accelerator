@@ -164,10 +164,51 @@ def value(data):
     return result
 
 
+def lz4_block(data):
+    """One LZ4 block, as lz4.lua writes it: no frame and no size prefix."""
+    out, i = bytearray(), 0
+
+    def length(n):
+        nonlocal i
+        if n == 15:
+            while True:
+                extra = data[i]; i += 1; n += extra
+                if extra != 255:
+                    break
+        return n
+
+    while i < len(data):
+        token = data[i]; i += 1
+        n = length(token >> 4)
+        out += data[i:i + n]; i += n
+        if i >= len(data):
+            break
+        offset = data[i] | data[i + 1] << 8; i += 2
+        start = len(out) - offset
+        if offset == 0 or start < 0:
+            raise ValueError('bad LZ4 offset')
+        for k in range(length(token & 15) + 4):
+            out.append(out[start + k])
+    return bytes(out)
+
+
+def file_value(data):
+    """A directory store file: CBOR, or (mes.history) a CBOR byte string of LZ4-compressed CBOR."""
+    if data and data[0] >> 5 == 2:
+        stream = BytesIO(data)
+        initial = stream.read(1)[0] & 31
+        size = initial if initial < 24 else int.from_bytes(stream.read(1 << (initial - 24)), 'big')
+        packed = stream.read(size)
+        if len(packed) != size or stream.read(1):
+            raise ValueError('bad compressed CBOR value')
+        return value(lz4_block(packed))
+    return value(data)
+
+
 def read_store(path):
     path = Path(path)
     if path.is_dir():
-        return {unquote(entry.name, errors='strict'): value(entry.read_bytes())
+        return {unquote(entry.name, errors='strict'): file_value(entry.read_bytes())
                 for entry in sorted(path.iterdir()) if entry.is_file()}
     result = {}
     with path.open('rb') as stream:

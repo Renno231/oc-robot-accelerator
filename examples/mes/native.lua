@@ -25,12 +25,12 @@ local rc=assert(loadfile('/bin/rc.lua'))
 assert(rc('mes','enable')~=1);assert(rc('mes','start')~=1)
 local mes,lg,wh=require('mes'),require('logistics'),require('logistics.warehouse')
 local case=assert(loadfile('/home/program/case.lua'))()
-local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand'
+local ocparts=case.name=='ocparts' or case.name=='ocparts-repeat' or case.name=='robot-parts' or case.name=='robot-expand' or case.name=='load'
 local setup=assert(loadfile('/home/program/setup.lua'))()
 if case.name=='shortfall' then wh.remove('s7_3_S') end
-local drones=wait(function() local rows=lg.pending();if #rows==6 then return rows end end)
+local drones=wait(function() local rows=lg.pending();if #rows==case.drones then return rows end end)
 table.sort(drones,function(a,b) return assert(distances[a])<assert(distances[b]) end)
-for i,address in ipairs(drones) do assert(lg.register(address,'d'..i,setup.homes[i])) end
+for i,address in ipairs(drones) do assert(lg.register(address,'d'..i,setup.home)) end
 wait(function()
   for _,drone in ipairs(lg.drones()) do if drone.state~='idle' then return end end
   return true
@@ -46,7 +46,7 @@ local robots=wait(function() local rows=mes.pendingRobots();if #rows==case.robot
 table.sort(robots,function(a,b) return assert(distances[a.address])<assert(distances[b.address]) end)
 for i,robot in ipairs(robots) do
   local name='cpu'..i
-  assert(mes.registerRobot(robot.address,name,name..'.buf'))
+  assert(mes.registerRobot(robot.address,name,name..'.buf',case.face and name..'.bot' or nil))
 end
 -- Registration returns before the announced transport's first status arrives.
 -- Wait on the same cached resource view the MES displays, without querying it.
@@ -68,9 +68,9 @@ if case.name=='concurrent-fetch' then
   for _,id in ipairs({a,b}) do local r=done(id);assert(r.state=='done' and r.moved==64) end
 else
   fs.makeDirectory('/usr/lib/oredict')
-  assert(require('liblz16').open('/usr/lib/oredict/oredict.dblz','wb')):close()
+  assert(require('lz4_frame').open('/usr/lib/oredict/oredict.dblz','wb')):close()
   local file=assert(io.open('/home/program/recipes.tsv','r'))
-  local archive=assert(require('liblz16').open('/usr/lib/recipes/misc.dblz','wb'))
+  local archive=assert(require('lz4_frame').open('/usr/lib/recipes/misc.dblz','wb'))
   assert(archive:write(file:read('*a')));file:close();archive:close()
   local builder=require('recipes.build');local db=builder.build();assert(builder.save(db))
   local recipes=require('recipes');recipes.install(db)
@@ -79,12 +79,16 @@ else
   if ocparts then assert(loadfile('/home/program/ocparts-imports.lua'))() end
   if run then return run(wait,done) end
   if case.orders then
-    for _,order in ipairs(case.orders) do
+    -- Load places every order at once, so stages queue on both robots.
+    local ids={}
+    for i,order in ipairs(case.orders) do
       local plan=assert(mes.plan(order[1],order[2]))
       assert(#plan.missing==0,'missing materials for '..order[1])
-      local result=assert(mes.wait(assert(mes.run(plan))))
-      assert(result.status=='complete',result.reason or result.error)
+      local id=assert(mes.run(plan))
+      if case.name=='load' then ids[#ids+1]=id
+      else local result=assert(mes.wait(id));assert(result.status=='complete',result.reason or result.error) end
     end
+    for _,id in ipairs(ids) do local result=assert(mes.wait(id));assert(result.status=='complete',result.reason or result.error) end
     for _,order in ipairs(case.orders) do
       assert(wh.count(item(order[1]))==order[2],'wrong parts count: '..order[1])
     end
@@ -92,8 +96,12 @@ else
       local map=require('logistics.map')
       map.add('11:65:2',11,65,2,{faces={[3]=true}})
       map.add('12:65:2',12,65,2,{faces={[2]=true}})
-      map.link('10:65:2','11:65:2');map.link('11:65:2','12:65:2')
-      map.name('assembly','11:65:2',3);map.name('cpu3.buf','12:65:2',2);map.save()
+      map.link('10:65:2','11:65:2');map.link('11:65:2','12:65:2');map.name('assembly','11:65:2',3)
+      if case.face then
+        map.add('12:66:2',12,66,2,{faces={[2]=true}});map.link('12:65:2','12:66:2')
+        map.name('cpu3.buf','12:66:2',2);map.name('cpu3.bot','12:65:2',2)
+      else map.name('cpu3.buf','12:65:2',2) end
+      map.save()
       for _,order in ipairs(case.orders) do
         local result=done(assert(wh.fetch(item(order[1]),order[2],'assembly')))
         assert(result.state=='done' and result.moved==order[2],'parts pickup failed')
@@ -102,7 +110,7 @@ else
       assert(io.open('/home/assemble-robot','w')):close()
       assert(event.pull('robot_assembled'))
       local robot=wait(function() local pending=mes.pendingRobots();if #pending==1 then return pending[1] end end)
-      assert(mes.registerRobot(robot.address,'cpu3','cpu3.buf'))
+      assert(mes.registerRobot(robot.address,'cpu3','cpu3.buf',case.face and 'cpu3.bot' or nil))
       wait(function() local cpu=mes.resources().crafters.cpu3;return cpu and cpu.state=='idle' end)
       local ids={}
       for i,order in ipairs({{'opencomputers:component:11',2,'cpu3'},
@@ -155,7 +163,7 @@ else
     assert(keeper.enable('Bricks'))
     wait(function()
       local s=assert(keeper.status('Bricks'));local r=s.lastResult
-      assert(not r or r.success or r.status=='skipped',r and r.message)
+      assert(not r or r.success or r.status=='skipped' or r.status=='running',r and r.message)
       return wh.count(item(target))==16 and not s.busy
     end)
     assert(keeper.disable('Bricks'))

@@ -10,7 +10,8 @@ import subprocess
 import sys
 
 from examples.mes.build_fixtures import (ALL_CASES, OCPARTS_FINAL, OCPARTS_REPEAT_FINAL,
-                                        ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, build_native)
+                                        ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, build_native,
+                                        drone_count)
 from native_store_evidence import LuaData, read_store
 from supervisor import NO_WINDOW
 
@@ -21,12 +22,12 @@ def rows(value):
     return list(value.values()) if isinstance(value, dict) else value
 
 
-def verify_case(case, runtime):
+def verify_case(case, runtime, chest_only=False):
     """Physical results and production ledgers, without guest-side observers."""
     runtime = Path(runtime)
     native = json.loads((runtime / 'result.json').read_text())
     assert native['status'] == 'passed', native.get('reason')
-    assert len(native['drones']) == 6
+    assert len(native['drones']) == drone_count(case)
     assert all(r['inventoryCapacity'] == 85 and not r['inventory'] for r in native['robots'])
     assert all(not d['inventory'] for d in native['drones'])
     totals = {}
@@ -52,7 +53,7 @@ def verify_case(case, runtime):
         assert all(not s.get('craftStarted') and not s.get('physicalJobs') for s in rows(stopped['stages'])), 'stopped order dispatched work'
         assert totals == {'minecraft:planks': 16, 'minecraft:log': 4, 'minecraft:clay_ball': 64, 'minecraft:coal': 16}, totals
         return {'physicalCounts': totals, 'runs': runs}
-    expected_runs = len(ROBOT_PARTS) if case == 'robot-parts' else 2 if case in ('concurrent', 'ocparts-repeat', 'stockkeeper') else 1
+    expected_runs = len(ROBOT_PARTS) if case in ('robot-parts', 'load') else 2 if case in ('concurrent', 'ocparts-repeat', 'stockkeeper') else 1
     if case == 'robot-expand': expected_runs = len(ROBOT_PARTS) + 3
     assert len(runs) == expected_runs, 'missing completed run receipt'
     assert all(r['status'] == 'complete' for r in runs)
@@ -82,8 +83,15 @@ def verify_case(case, runtime):
                 assigned = [s['crafter'] for s in rows(run['stages']) if s['kind'] == 'robot']
                 assert assigned and set(assigned) == {cpu}, 'new capacity not exercised'
             assert max(r['started'] for r in later) < min(r['finished'] for r in later), 'requests were not concurrent'
-            for position in ([11, 65, 3], [12, 65, 1]):
+            for position in ([11, 65, 3], [12, 65 if chest_only else 66, 1]):
                 assert not next(c for c in native['containers'] if c['position'] == position)['slots']
+    elif case == 'load':
+        ordered = sorted(runs, key=lambda r: r['id'])
+        assert [(r['item'], r['qty']) for r in ordered] == list(ROBOT_PARTS.items()), 'wrong parts orders'
+        assert max(r['started'] for r in ordered) < min(r['finished'] for r in ordered), 'orders were not placed together'
+        assert {s['crafter'] for s in stages if s['kind'] == 'robot'} == {'cpu1', 'cpu2'}, 'a robot sat idle'
+        for id, qty in ROBOT_PARTS.items():
+            assert totals.get(id) == qty, (id, totals.get(id))
     elif case == 'ocparts-repeat':
         first, second = sorted(runs, key=lambda r: r['id'])
         assert (first['qty'], second['qty']) == (5, 3)
@@ -95,7 +103,10 @@ def verify_case(case, runtime):
         loads = [l for s in later if s['kind'] == 'machine' for l in rows(s['loadLedger'])]
         assert sum(l['items'] for l in loads) == 3
     elif case == 'ocparts':
-        assert len(intervals) >= 4 and {r['crafter'] for r in intervals} == {'cpu1', 'cpu2'}
+        # Robot work joined per robot: both robots' first stages (delivery, craft, pickup) run at once.
+        assert len(intervals) >= 3 and {r['crafter'] for r in intervals} == {'cpu1', 'cpu2'}
+        a, b = (min((s for s in stages if s.get('crafter') == c), key=lambda s: s['started']) for c in ('cpu1', 'cpu2'))
+        assert max(a['started'], b['started']) < min(a['finished'], b['finished']), 'robots did not work in parallel'
         assert totals == {id: count for id, count in OCPARTS_FINAL.items() if count}, totals
         machines = [s for s in stages if s['kind'] == 'machine']
         assert len(machines) == 1 and machines[0]['state'] == 'done', 'missing completed PCB stage'
@@ -197,14 +208,18 @@ def trip_report(capture, runtime):
             'review': 'Human trip walk required: purpose, routes, retries, and unused work.'}
 
 
-def run_case(case, root, installation, mode='coordinated', seconds=10):
+def run_case(case, root, installation, mode='coordinated', seconds=10, chest_only=False, heap_census=None):
     directory = root / (case + '-' + mode)
     source, jobs = directory / 'fixture', directory / 'jobs'
-    manifest = build_native(source, case, mode, seconds=seconds)
+    manifest = build_native(source, case, mode, seconds=seconds, chest_only=chest_only)
     capture = directory / 'host-capture.ndjson'
     env = dict(os.environ)
     env['JAVA_TOOL_OPTIONS'] = (env.get('JAVA_TOOL_OPTIONS', '') +
         ' -Drobotspike.hostCapture=true -Drobotspike.hostCaptureFile=' + capture.resolve().as_posix())
+    if heap_census:
+        # Host-side census of each controller's Lua heap; read with report_heap_census.py.
+        env['JAVA_TOOL_OPTIONS'] += (' -Drobotspike.heapCensusFile=' + (directory / 'heap-census.ndjson').resolve().as_posix() +
+                                     ' -Drobotspike.heapCensusEverySeconds=%d' % heap_census)
     command = [sys.executable, str(ROOT / 'runner.py'), 'run', str(manifest),
                '--installation', str(installation), '--jobs-root', str(jobs)]
     with (directory / 'native.log').open('w', encoding='utf8') as log:
@@ -228,7 +243,7 @@ def run_case(case, root, installation, mode='coordinated', seconds=10):
     row['nativePassed'] = result.returncode == 0 and state['state'] == 'passed'
     if row['nativePassed']:
         try:
-            evidence = verify_case(case, states[0].parent / 'runtime')
+            evidence = verify_case(case, states[0].parent / 'runtime', chest_only)
             (directory / 'acceptance.json').write_text(json.dumps(evidence, indent=2) + '\n')
         except (AssertionError, OSError, ValueError, KeyError) as error:
             row['nativePassed'] = False
@@ -248,7 +263,7 @@ def run(args):
         cases.append(('torches16', 'baseline'))
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         futures = [pool.submit(run_case, case, root, args.installation.resolve(), mode,
-                               args.machine_seconds) for case, mode in cases]
+                               args.machine_seconds, args.chest_only, args.heap_census) for case, mode in cases]
         rows = []
         for future, (case, mode) in zip(futures, cases):
             try:
@@ -266,7 +281,11 @@ if __name__ == '__main__':
     parser.add_argument('--cases', nargs='+', choices=ALL_CASES, default=list(ALL_CASES))
     parser.add_argument('--parallel', type=int, choices=range(1, 5), default=4)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--chest-only', action='store_true',
+                        help='earlier layout: chest in front of each robot, no drops into the robot')
     parser.add_argument('--machine-seconds', type=float, default=10,
                         help='fixture processing estimate, including deliberately underestimated cases')
+    parser.add_argument('--heap-census', type=int, metavar='SECONDS',
+                        help='census each controller Lua heap every SECONDS of game time and at new lows')
     rows = run(parser.parse_args())
     sys.exit(0 if all(r.get('nativePassed') and r.get('tripCoverageComplete') for r in rows) else 1)

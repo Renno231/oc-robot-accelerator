@@ -77,6 +77,8 @@ function M.open(path,variant)
     if not current[key] then live=live+1 end;current[key]=bytes
     if variant=="files" then write(filename(key),"wb",function(out) out(bytes) end) else append(key,value) end
   end
+  -- A record as last put, decoded from the copy kept for comparing puts.
+  function s:get(key) local bytes=current[key];return bytes and cbor.decode(bytes) end
   function s:delete(key)
     if not current[key] then return end
     current[key]=nil;live=live-1

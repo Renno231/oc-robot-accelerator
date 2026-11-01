@@ -20,12 +20,14 @@ for _,v in ipairs({{'A',7},{'B',9}}) do
   map.name('furn'..n..'.out',node(10,63,z,{[1]=true}),1)
   wh.group('furnace'..n,'furnace',{input='furn'..n..'.in',fuel='furn'..n..'.fuel',output='furn'..n..'.out'})
 end
-map.name('cpu1.buf','8:65:2',2)
+-- Drones drop into the robot from 8:65:2 and into its buffer chest on top from 8:66:2.
+node(8,66,2)
+map.name('cpu1.buf','8:66:2',2)
+map.name('cpu1.bot','8:65:2',2)
 wh.group('cpu1','crafter',{buffer='cpu1.buf'})
--- Drones have no hitboxes for each other: all six share one charger.
-map.add('-2:65:2',-2,65,2,{charger=true})
-local homes={}
-for i=1,6 do homes[i]='-2:65:2' end
+-- Drones have no hitboxes for each other: they all share one charger.
+local home='-2:65:2'
+map.add(home,-2,65,2,{charger=true})
 local nodes=map.nodes()
 for a,p in pairs(nodes) do for b,q in pairs(nodes) do
   if a<b and math.abs(p.x-q.x)+math.abs(p.y-q.y)+math.abs(p.z-q.z)==1 then map.link(a,b) end
@@ -40,4 +42,4 @@ for _,v in ipairs({{'minecraft:planks','s3_0_N'},{'minecraft:stick','s4_0_N'},
   if v[2]=='s5_0_N' then filter={{name='minecraft:torch',damage=0},{name='minecraft:brick_block',damage=0}} end
   wh.add(v[2],{filter=filter,priority=10})
 end
-return {homes=homes}
+return {home=home}

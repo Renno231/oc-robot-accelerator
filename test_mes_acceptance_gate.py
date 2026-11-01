@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from examples.mes.build_fixtures import (ALL_CASES, OCPARTS_FINAL, OCPARTS_REPEAT_FINAL,
-                                        ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, ROOT, build_native, split_item)
+                                        ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, ROOT, build_native, drone_count,
+                                        split_item)
 from run_mes_scenarios import trip_report, verify_case
 import runner_scenario
 
@@ -35,8 +36,9 @@ class MesAcceptanceGateTests(unittest.TestCase):
         native={'status':'passed', 'drones':[{'inventory':[]} for _ in range(6)],
                 'robots':[{'inventoryCapacity':85, 'inventory':[]} for _ in range(2)],
                 'containers':[{'slots':stacks}]}
+        # Each robot stage runs delivery to pickup; both robots' first stages overlap.
         stages=[{'kind':'robot', 'crafter':'cpu'+str(i%2+1), 'craftStarted':i*2,
-                 'craftFinished':i*2+1} for i in range(4)]
+                 'craftFinished':i*2+1, 'started':i*2, 'finished':i*2+3} for i in range(4)]
         stages.append({'kind':'machine', 'state':'done', 'loadLedger':[
             {'group':group, 'items':16, 'delivered':start, 'collected':10}
             for group in ('furnaceA','furnaceB') for start in (1,2)]})
@@ -98,7 +100,7 @@ class MesAcceptanceGateTests(unittest.TestCase):
         native['robots'].append({'inventoryCapacity': 85, 'inventory': []})
         native['containers'][0]['slots'] = [dict(item=split_item(k)[0], metadata=split_item(k)[1], count=v)
                                            for k, v in ROBOT_EXPAND_FINAL.items()]
-        native['containers'] += [dict(position=p, slots=[]) for p in ([11, 65, 3], [12, 65, 1])]
+        native['containers'] += [dict(position=p, slots=[]) for p in ([11, 65, 3], [12, 66, 1])]
         native['containers'][0]['position'] = [0, 65, 0]
         store = {'done_'+str(i): dict(id=i, item=k, qty=v, status='complete', stages=[],
                                      started=i*2, finished=i*2+1)
@@ -143,7 +145,7 @@ class MesAcceptanceGateTests(unittest.TestCase):
                     value = json.loads(path.read_text())
                     hardware = value['controller']['hardware']
                     self.assertEqual(['ram6'] * 4, hardware['memory'])
-                    self.assertEqual(6, len(value['drones']))
+                    self.assertEqual(drone_count(case), len(value['drones']))
                     program = path.parent / 'program'
                     for source in (ROOT/'drone-logistics/lib').glob('*.lua'):
                         self.assertEqual(source.read_bytes(), (program/'usr/lib'/source.name).read_bytes())

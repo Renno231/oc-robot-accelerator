@@ -237,6 +237,17 @@ class WarehouseManyTests(unittest.TestCase):
           assert(wh.count({name='mod:output'})==2)
         ''')
 
+    def test_collect_takes_each_item_from_the_slots_the_source_reported(self):
+        self.lua.execute('''
+          observe('stock',{},3)
+          local ids=assert(wh.collect({storage='buffer',slots={7,8,9}},{{item={name='mod:output'},count=4,slots={8}},
+            {item={name='mod:other'},count=2}}))
+          local taken={}
+          for _,s in ipairs(jobs[ids[1]].submitted) do if s.take then taken[s.item.name]=table.concat(s.take.slots,',') end end
+          assert(taken['mod:output']=='8' and taken['mod:other']=='7,8,9')
+          assert(not wh.collect('buffer',{{item={name='mod:output'},count=1,slots={8,8}}}))
+        ''')
+
     def test_validation_unknown_limits_fleet_and_later_failure_ids(self):
         self.lua.execute('''
           local requests=setupFour();local before=#jobs

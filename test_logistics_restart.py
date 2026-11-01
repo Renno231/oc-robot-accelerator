@@ -441,6 +441,32 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(require('serialization').unserialize(SENT[1].payload).reason=='unknown trip 999')
                 ''')
 
+    def test_drone_flying_home_after_its_job_closed_gets_routes(self):
+        # A drone that delivered everything closes its job and flies home: it asks
+        # for the way home, and around a blocked link, until it says ready there.
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                self.start(mode).execute('''
+                  local s=require('serialization')
+                  map.theta=function(a,b,_,avoid) if avoid and avoid['dest:source'] then return nil end;return {a,b} end
+                  local id=fetch();local trip=FAKE.trip
+                  finishPhysical(false);local final=clone(FAKE.last.result);final.homing=true;report(trip,final);drain()
+                  assert(lg.status(id).state=='done' and lg.drones()[1].state=='returning')
+                  local function answer(kind,payload)
+                    SENT={};emit('modem_message','local','remote',27103,0,'secret',kind,trip,s.serialize(payload))
+                    assert(#SENT==1 and SENT[1].kind=='navigation' and SENT[1].id==trip)
+                    return s.unserialize(SENT[1].payload)
+                  end
+                  local route=answer('navigate',{from='dest',to='home'}).route
+                  assert(route and route[1].name=='dest' and route[#route].name=='home')
+                  local blocked={state='blocked',link={a='dest',b='source'},to='home',energy=5000,position={x=0,y=0,z=0}}
+                  -- No way around: the same way again, as often as a working drone retries.
+                  for _=1,2 do assert(answer('report',blocked).route) end
+                  local last=answer('report',blocked);assert(not last.route and last.reason=='blocked link dest -> source')
+                  ready();drain();assert(lg.drones()[1].state=='idle')
+                  assert(answer('navigate',{from='dest',to='home'}).reason=='unknown trip '..trip)
+                ''')
+
 
 class AgentRestartTests(unittest.TestCase):
     def route_fixture(self, blocked=False):

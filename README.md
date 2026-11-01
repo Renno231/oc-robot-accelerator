@@ -43,7 +43,8 @@ This creates local directory links, not copies, and refuses to replace existing
 files or directories. Edits through `craftsystem/` or `drone-logistics/` belong to
 the OC-Utilities repository and must be committed there. Existing test commands,
 including `python run_mes_scenarios.py`, stage those canonical sources directly.
-The historical `craftsystemv1/`, `craftsystemv2/`, and `craftsystemv3/` stay unchanged.
+The historical `craftsystemv1/` and `craftsystemv2/` stay unchanged; `craftsystemv3/` is
+still in use and maintained in OC-Utilities.
 
 ### Host dependencies
 

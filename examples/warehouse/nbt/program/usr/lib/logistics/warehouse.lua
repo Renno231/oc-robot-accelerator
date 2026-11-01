@@ -695,6 +695,8 @@ local function manyRequests(requests)
   for k=1,n do
     local r=requests[k];assert(type(r)=="table","item request required")
     positive(r.count);out[k]={item=item(r.item),count=r.count,to=r.to,waitFor=r.waitFor}
+    -- slots: where a collected item sits at the source, when the source already knows.
+    if r.slots~=nil then out[k].slots=roleSlots(r.slots) end
   end
   return out
 end
@@ -941,7 +943,7 @@ function M.collect(from,requests,opts)
         local put={key=c.key,storage=c.storage,item=i,count=n,direction='put',maximum=maximum}
         local take=stock[inventory(from.storage)] and sourceReservation(from.storage,i,n)
         planned[#planned+1]=put
-        addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=from.slots},to or c.storage,take,put)
+        addPieces(pieces,index,i,n,maximum,1,{storage=from.storage,slots=r.slots or from.slots},to or c.storage,take,put)
         remaining=remaining-n
         end
       end

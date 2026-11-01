@@ -8,7 +8,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'examples/mes'
-ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control', 'cake')
+ALL_CASES = ('torches16', 'bricks16', 'specific-group', 'shortfall', 'concurrent-fetch', 'ocparts', 'ocparts-repeat', 'robot-parts', 'robot-expand', 'concurrent', 'merged-kit', 'stockkeeper', 'selected-kit', 'order-control', 'cake', 'load')
 ROBOT_LIBRARIES = ('api', 'tnet', 'hosts', 'pubsub', 'craft.executor', 'craft.receipts',
                    'craft.plan', 'craft.resources', 'craft.tool_budget', 'craft.tool_rules',
                    'item_identity', 'craft.robinv')
@@ -86,6 +86,10 @@ assert(recipes.save(assert(recipes.recipeFromSlots('processing',slots,27,'furnac
 """
 
 
+def drone_count(case):
+    return 10 if case == 'load' else 6
+
+
 def split_item(identity):
     parts = identity.rsplit(':', 1)
     return (parts[0], int(parts[1])) if parts[1].isdigit() else (identity, 0)
@@ -99,13 +103,19 @@ def rack_controller(position, program):
                          'storage': ['hdd3'] * 4, 'bootDrive': 0}}
 
 
-def build_native(target, case, mode='coordinated', seconds=10):
+def build_native(target, case, mode='coordinated', seconds=10, chest_only=False):
     if case not in ALL_CASES or mode not in ('coordinated', 'baseline'):
         raise ValueError('unknown MES case or execution mode')
     scenario_case = case
     if case in ('merged-kit', 'selected-kit'): case = 'concurrent'  # Same build and stock, ordered through a saved kit.
     if case == 'order-control': case = 'concurrent'  # Same build; stop one order while another owns its selected robot.
     if case == 'stockkeeper': case = 'bricks16'  # Same build, replenished in two saved batches.
+    if case == 'load': case = 'robot-parts'  # Same build and stock; every order placed at once.
+    drones = drone_count(scenario_case)
+    # Drones drop straight into each robot from in front of it; its buffer chest sits on top,
+    # for what arrives while it is still crafting. Chest only is the earlier layout:
+    # the chest stands in front of the robot and drones use only the chest.
+    rz, cy = (0, 65) if chest_only else (1, 66)
     parts = case in ('robot-parts', 'robot-expand')
     ocparts = case in ('ocparts', 'ocparts-repeat') or parts
     target = Path(target)
@@ -135,7 +145,6 @@ def build_native(target, case, mode='coordinated', seconds=10):
                                'count': 64 if case == 'concurrent-fetch' else 8}]
         if chest['position'] == [2, 66, 3]:
             chest['slots'] = [{'slot': 1, 'item': 'minecraft:coal', 'count': 16}]
-    value['containers'].append({'position': [8, 65, 1], 'block': 'minecraft:chest', 'slots': []})
     for z in (7, 9):
         value['containers'].append({'position': [10, 64, z], 'block': 'minecraft:furnace', 'slots': []})
     hardware = copy.deepcopy(controller['hardware'])
@@ -143,12 +152,16 @@ def build_native(target, case, mode='coordinated', seconds=10):
                     containers=[{'item': name, 'component': 'inventoryupgrade'} for name in
                                 ('upgradecontainer3', 'upgradecontainer2', 'upgradecontainer2')],
                     upgrades=['craftingupgrade', 'inventorycontrollerupgrade'] + ['inventoryupgrade'] * 3)
-    value['robots'] = [{'position': [8, 65, 0], 'facing': 'south', 'hardware': hardware,
+    value['containers'].append({'position': [8, cy, 1], 'block': 'minecraft:chest', 'slots': []})
+    value['robots'] = [{'position': [8, 65, rz], 'facing': 'south', 'hardware': hardware,
                         'program': {'directory': 'robot-program', 'entry': 'main.lua'},
                         'inventory': [], 'energy': 20000}]
-    # Drones have no hitboxes for each other: all six start on, and return to, one charger.
-    for drone in value['drones']: drone['position'] = [-2, 65, 2]
-    for _ in range(4): value['drones'].append(copy.deepcopy(value['drones'][0]))
+    # Drones have no hitboxes for each other: all of them start on, and return to, one charger.
+    # A tier 2 drone's third upgrade slot holds a second inventory upgrade: 8 cargo slots, the drone maximum.
+    for drone in value['drones']:
+        drone['position'] = [-2, 65, 2]
+        drone['hardware']['upgrades'] = ['inventorycontrollerupgrade', 'inventoryupgrade', 'inventoryupgrade']
+    while len(value['drones']) < drones: value['drones'].append(copy.deepcopy(value['drones'][0]))
     value['execution'] = {'mode': mode, 'maxTicks': 72000, 'timeoutSeconds': 3600, 'infiniteEnergy': True}
     value['observations'] = {'everyTicks': 10}
     value['containerEdits'] = ([{'position': [0, 65, 1], 'slot': 1, 'count': 16, 'expectedCount': 64,
@@ -158,12 +171,13 @@ def build_native(target, case, mode='coordinated', seconds=10):
         # Outside warehouse membership until a normal transfer replenishes stock.
         reserve = next(c for c in value['containers'] if c['position'] == [7, 68, 3])
         reserve['slots'] = [{'slot': 1, 'item': 'minecraft:clay_ball', 'count': 16}]
-    expected = [{'position': [8, 65, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}]
+    expected = [{'position': [8, cy, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}]
     if case == 'torches16':
         expected += [{'position': [0, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:log', 'count': 3}]},
                      {'position': [3, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:planks', 'count': 2}]},
                      {'position': [5, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:torch', 'count': 16}]},
-                     {'position': [2, 66, 3], 'slots': [{'slot': 1, 'item': 'minecraft:coal', 'count': 14}]}]
+                     # Four one-log loads, each with its own coal.
+                     {'position': [2, 66, 3], 'slots': [{'slot': 1, 'item': 'minecraft:coal', 'count': 12}]}]
     elif case in ('bricks16', 'specific-group'):
         expected += [{'position': [0, 65, 1], 'slots': [{'slot': 1, 'count': 0}]},
                      {'position': [5, 65, 1], 'slots': [{'slot': 1, 'item': 'minecraft:brick_block', 'count': 16}]},
@@ -174,36 +188,38 @@ def build_native(target, case, mode='coordinated', seconds=10):
         if ocparts:
             for chest in value['containers']: chest['slots'] = []
             for identity, qty in (ROBOT_PARTS_STOCK if parts else OCPARTS_STOCK).items():
+                # Orders placed at once each claim their own inputs: twice the stock covers them.
+                qty *= 2 if scenario_case == 'load' else 1
                 name, damage = split_item(identity)
                 for stack in range((qty + 63) // 64):
                     chest = value['containers'][stack]
                     chest['slots'].append({'slot': len(chest['slots']) + 1, 'item': name,
                                           'metadata': damage, 'count': min(64, qty - stack * 64)})
-        value['containers'].append({'position': [10, 65, 1], 'block': 'minecraft:chest', 'slots': []})
+        value['containers'].append({'position': [10, cy, 1], 'block': 'minecraft:chest', 'slots': []})
         for i, x in enumerate((8, 10)):
-            value['blocks'].append({'position': [x, 64, 0], 'block': 'opencomputers:charger',
+            value['blocks'].append({'position': [x, 64, rz], 'block': 'opencomputers:charger',
                                     'properties': {'facing': 'north'}})
             if i:
-                robot = copy.deepcopy(value['robots'][0]);robot['position'] = [x, 65, 0]
+                robot = copy.deepcopy(value['robots'][0]);robot['position'] = [x, 65, rz]
                 robot['program']['directory'] = 'robot-program-2';value['robots'].append(robot)
-        expected = [{'position': [x, 65, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}
-                    for x in (8, 10)] + [{'position': [10, 64, z], 'slots': [{'slot': n, 'count': 0} for n in range(1, 4)]}
-                                         for z in (7, 9)]
+        expected = [{'position': [x, cy, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]} for x in (8, 10)] + [
+            # Orders at once fuel a shared furnace each for their own loads: coal may stay in its fuel slot.
+            {'position': [10, 64, z], 'slots': [{'slot': n, 'count': 0} for n in ((1, 3) if scenario_case == 'load' else (1, 2, 3))]}
+            for z in (7, 9)]
     if case == 'robot-expand':
         value['containers'].append({'position': [11, 65, 3], 'block': 'minecraft:chest', 'slots': []})
         value['world']['blocks'].append({'min': [12, 64, 0], 'max': [12, 65, 1], 'block': 'minecraft:air'})
-        robot = copy.deepcopy(value['robots'][0]);robot['position'] = [12, 65, 0]
+        robot = copy.deepcopy(value['robots'][0]);robot['position'] = [12, 65, rz]
         robot['program']['directory'] = 'robot-program-3'
         robot['assembly'] = {'source': [11, 65, 3],
-            'blocks': [{'position': [12, 64, 0], 'block': 'opencomputers:charger', 'properties': {'facing': 'north'}},
-                       {'position': [12, 65, 1], 'block': 'minecraft:chest'}],
+            'blocks': [{'position': [12, 64, rz], 'block': 'opencomputers:charger', 'properties': {'facing': 'north'}},
+                       {'position': [12, cy, 1], 'block': 'minecraft:chest'}],
             'request': {'computer': 0, 'marker': 'home/assemble-robot', 'signal': 'robot_assembled'}}
         value['robots'].append(robot)
-        expected += [{'position': p, 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]}
-                     for p in ([11, 65, 3], [12, 65, 1])]
+        expected += [{'position': p, 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]} for p in ([11, 65, 3], [12, cy, 1])]
     value['expect'] = {'containers': expected,
         'robots': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 86)]} for i in range(len(value['robots']))],
-        'drones': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 5)]} for i in range(6)]}
+        'drones': [{'index': i, 'inventory': [{'slot': n, 'count': 0} for n in range(1, 9)]} for i in range(drones)]}
 
     program = target / 'program'
     shutil.copytree(ROOT / 'craftsystem/usr', program / 'usr',
@@ -223,10 +239,15 @@ def build_native(target, case, mode='coordinated', seconds=10):
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', target / 'loader.lua')
     shutil.copyfile(SOURCE / 'native.lua', program / 'main.lua')
     setup = (SOURCE / 'setup.lua').read_text()
+    cpu2 = ("map.name('cpu2.buf','10:65:2',2)" if chest_only else
+            "node(10,66,2)\nmap.name('cpu2.buf','10:66:2',2)\nmap.name('cpu2.bot','10:65:2',2)")
+    if chest_only:
+        setup = setup.replace("node(8,66,2)\nmap.name('cpu1.buf','8:66:2',2)\nmap.name('cpu1.bot','8:65:2',2)",
+                              "map.name('cpu1.buf','8:65:2',2)")
     if ocparts or case == 'concurrent':
         setup = setup.replace("wh.group('cpu1','crafter',{buffer='cpu1.buf'})",
-                              "wh.group('cpu1','crafter',{buffer='cpu1.buf'})\nmap.name('cpu2.buf','10:65:2',2)\nwh.group('cpu2','crafter',{buffer='cpu2.buf'})")
-    if ocparts: setup = setup.split('-- Dedicated destinations')[0] + '\nreturn {homes=homes}\n'
+                              "wh.group('cpu1','crafter',{buffer='cpu1.buf'})\n" + cpu2 + "\nwh.group('cpu2','crafter',{buffer='cpu2.buf'})")
+    if ocparts: setup = setup.split('-- Dedicated destinations')[0] + '\nreturn {home=home}\n'
     (program / 'setup.lua').write_text(setup)
     recipes = OCPARTS_RECIPES if ocparts else (SOURCE / 'recipes.tsv').read_text()
     if parts: recipes += (SOURCE / 'robot-parts.tsv').read_text()
@@ -234,15 +255,16 @@ def build_native(target, case, mode='coordinated', seconds=10):
     (program / 'recipes.tsv').write_text(recipes)
     (program / 'ocparts-imports.lua').write_text(OCPARTS_IMPORTS)
     orders = '{' + ','.join("{'%s',%d}" % order for order in ROBOT_PARTS.items()) + '}' if parts else 'nil'
-    (program / 'case.lua').write_text("return {name='%s',robots=%d,batch=%d,quantity=%d,seconds=%s,orders=%s}\n" % (
-        scenario_case, 2 if case == 'robot-expand' else len(value['robots']), 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
+    (program / 'case.lua').write_text("return {name='%s',robots=%d,drones=%d,face=%s,batch=%d,quantity=%d,seconds=%s,orders=%s}\n" % (
+        scenario_case, 2 if case == 'robot-expand' else len(value['robots']), drones,
+        'false' if chest_only else 'true', 1 if case == 'torches16' else OCPARTS_BATCH if ocparts else 64,
         5 if case == 'ocparts-repeat' else 1 if case == 'cake' else OCPARTS_QTY if ocparts else 16, 'nil' if seconds is None else seconds, orders))
     for robot in value['robots']:
         disk = target / robot['program']['directory']
         shutil.copyfile(SOURCE / 'robot.lua', disk / 'main.lua')
         (disk / 'etc/rc.d').mkdir(parents=True)
         shutil.copyfile(ROOT / 'craftsystem/etc/rc.d/cproc.lua', disk / 'etc/rc.d/cproc.lua')
-        (disk / 'etc/rc.cfg').write_text('enabled = {"cproc"}\ncproc = "--side=3"\n')
+        (disk / 'etc/rc.cfg').write_text('enabled = {"cproc"}\ncproc = "--side=%d"\n' % (3 if chest_only else 1))
     return write_fixture(target / 'scenario.json', value)
 
 
