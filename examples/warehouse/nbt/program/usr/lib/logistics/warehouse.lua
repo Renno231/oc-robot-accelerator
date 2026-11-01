@@ -26,7 +26,16 @@ local inFlight={}
 local pendingCatalogue={}
 -- Volatile, exact-sided observations. Physical identities are ONLY for
 -- invalidation; they never authorize reuse of another face's slot indices.
+-- A face's listing holds one shared table per distinct stack kind (name, damage,
+-- label, maxSize) and its sizes beside it, so a full chest costs two arrays;
+-- sizes exists only once the face has held a stack.
 local roleCache,pendingReads,pendingMutations,mutationCounts={},{},{},{}
+local kinds=setmetatable({},{__mode="v"})
+local function kind(i,maxSize)
+  local key=i.name.."\0"..i.damage.."\0"..(i.label or "\1").."\0"..maxSize;local k=kinds[key]
+  if not k then k={name=i.name,damage=i.damage,label=i.label,maxSize=maxSize};kinds[key]=k end
+  return k
+end
 local identityIndex=nil
 local identityGeneration,mutationEpochs=0,{}
 local function metadataChanged()
@@ -153,7 +162,7 @@ local function claim(steps)
         for _,slot in ipairs(slots) do
           local r=v.listing[slot]
           if r==nil then s.claimed=nil;break end
-          if r and matches(r,s.item) then s.claimed=s.claimed+r.size end
+          if r and matches(r,s.item) then s.claimed=s.claimed+v.sizes[slot] end
         end
       end
     end
@@ -175,7 +184,7 @@ logistics.onMutation("warehouse.role-cache",beginMutation)
 local function invalidateRead(e)
   local cached=roleCache[e.node] and roleCache[e.node][e.side]
   if not cached then return end
-  if e.slots then for _,slot in ipairs(e.slots) do cached.listing[slot]=nil end
+  if e.slots then for _,slot in ipairs(e.slots) do cached.listing[slot]=nil;if cached.sizes then cached.sizes[slot]=nil end end
   else roleCache[e.node][e.side]=nil end
 end
 local function readProvenance(endpoints)
@@ -374,20 +383,22 @@ local function observeRole(e,step)
   local cached=faces[e.side] or {listing={}};faces[e.side]=cached
   cached.ids=ids;cached.size=step.size
   -- Discard observations outside the latest reported face size.
-  for slot in pairs(cached.listing) do if slot>step.size then cached.listing[slot]=nil end end
+  for slot in pairs(cached.listing) do if slot>step.size then cached.listing[slot]=nil;if cached.sizes then cached.sizes[slot]=nil end end end
   local function slot(slot)
     if type(slot)~="number" or slot<1 or slot>step.size or slot%1~=0 then return end
     local stack=step.listing[slot]
+    if cached.sizes then cached.sizes[slot]=nil end
     if not stack then cached.listing[slot]=false;return end -- verified empty
     local ok,i=pcall(item,stack)
     if ok and type(stack.size)=="number" and stack.size>0 and stack.size%1==0
       and type(stack.maxSize)=="number" and stack.maxSize>0 and stack.maxSize<math.huge
       and stack.maxSize%1==0 and stack.size<=stack.maxSize then
-      cached.listing[slot]={name=i.name,damage=i.damage,label=i.label,size=stack.size,maxSize=stack.maxSize}
+      cached.sizes=cached.sizes or {}
+      cached.listing[slot]=kind(i,stack.maxSize);cached.sizes[slot]=stack.size
     else cached.listing[slot]=nil end
   end
   if e.slots then for _,index in ipairs(e.slots) do slot(index) end
-  else cached.listing={};for index=1,step.size do slot(index) end end
+  else cached.listing,cached.sizes={},nil;for index=1,step.size do slot(index) end end
 end
 local function observe(storage,step)
   local key=inventory(storage) or storage;if not key or not step.listing or not step.size then return end
@@ -752,8 +763,9 @@ local function observedSource(storage,i,reservedCount)
   for slot=1,cached.size do
     local stack=cached.listing[slot];if stack==nil then return end
     if stack and matches(stack,i) then
-      local skipped=math.min(reservedCount,stack.size);reservedCount=reservedCount-skipped
-      if stack.size>skipped then rows[#rows+1]={slot=slot,count=stack.size-skipped,maxSize=stack.maxSize,
+      local size=cached.sizes[slot]
+      local skipped=math.min(reservedCount,size);reservedCount=reservedCount-skipped
+      if size>skipped then rows[#rows+1]={slot=slot,count=size-skipped,maxSize=stack.maxSize,
         stackKey="stack:"..e.node..":"..e.side..":"..slot} end
     end
   end

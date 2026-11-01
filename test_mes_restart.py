@@ -529,8 +529,10 @@ class MesRestartTests(unittest.TestCase):
                       assert(M.status(id).status=='complete',M.status(id).reason)
                       assert(held('source','mod:raw')==STOCK-1 and FAKE.held==0)
                       assert(held('source',MACHINE and 'mod:metal' or 'mod:crafted')==1)
-                      local movement=saved()['done_'..id].stages[1].itemsMoved[1]
-                      assert(movement.quantity==1 and movement.moved==1 and #movement.jobs==2)
+                      local stage=saved()['done_'..id].stages[1]
+                      local movement=stage.itemsMoved[1]
+                      local fetches=0;for _,p in ipairs(stage.physicalJobs) do if p.kind=='fetch' then fetches=fetches+1 end end
+                      assert(movement.quantity==1 and movement.moved==1 and fetches==2)
                     ''')
 
     def test_lost_fetch_retry_failure_keeps_both_reasons(self):
