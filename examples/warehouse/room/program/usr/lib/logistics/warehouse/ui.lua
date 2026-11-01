@@ -41,8 +41,9 @@ function M.show(options)
   local function confirm(summary,callback)
     push({kind="confirm",title="Confirm",summary=summary,choose=callback,selected="no"})
   end
-  local function input(prompt,default,callback)
-    push({kind="input",title="Input",prompt=prompt,default=default and tostring(default) or "",choose=callback,selected="input"})
+  -- filter is a Lua pattern or function the text must match before Enter is accepted.
+  local function input(prompt,default,callback,filter)
+    push({kind="input",title="Input",prompt=prompt,default=default and tostring(default) or "",choose=callback,filter=filter,selected="input"})
   end
   local function storages(title,callback,clear)
     local rows=view.storageRows(snapshot())
@@ -70,7 +71,7 @@ function M.show(options)
         local id,err=warehouse[kind](i,n,endpoint)
         if not id then notify(err) else notify("Job "..id.." submitted") end
       end)
-    end)
+    end,function(text) return text=="all" or text:match("^%d*$") end)
   end
   local function storeItem(i,storage)
     local n=0;for _,v in pairs((warehouse.contents(storage) or {}).items or {}) do if view.identity(v.item)==view.identity(i) then n=n+v.count end end
@@ -79,7 +80,7 @@ function M.show(options)
   local function typedItem(callback)
     input("Item registry name",nil,function(name)
       assert(name~="","item name required")
-      input("Damage",0,function(damage) local n=assert(tonumber(damage),"numeric damage required");assert(n>=0 and n%1==0,"invalid damage");callback({name=name,damage=n}) end)
+      input("Damage",0,function(damage) local n=assert(tonumber(damage),"numeric damage required");assert(n>=0 and n%1==0,"invalid damage");callback({name=name,damage=n}) end,"^%d*$")
     end)
   end
   local function editRole(name,role)
@@ -113,18 +114,18 @@ function M.show(options)
     elseif a=="choose" then local fn=s.choose;back();fn(r.value)
     elseif a=="yes" then local fn=s.choose;back();fn()
     elseif a=="input" then
-      local old={tty.getViewport()};local core=require("core/cursor");local oldClear=core.vertical.clear
+      local old={tty.getViewport()}
       local readFg,readFp=gpu.getForeground();local readBg,readBp=gpu.getBackground()
       local ok,text=pcall(function()
         if options.input then return options.input(s.prompt,s.default,menu,w,h) end
-        return menu:read(1,r.y,w)
+        return menu:read(1,r.y,w,{filter=s.filter})
       end)
       if not options.input then pcall(require("io").write,"\27[0m") end
-      core.vertical.clear=oldClear;tty.setViewport(table.unpack(old))
+      tty.setViewport(table.unpack(old))
       gpu.setForeground(readFg,readFp);gpu.setBackground(readBg,readBp)
       local field=menu:getOption(r.key);if field then field:y(field:y()) end -- read writes directly over this option
       if not ok then error(text) end
-      local fn=s.choose;back();if text~=nil and running then fn(text=="" and s.default or text) end
+      local fn=s.choose;back();if text and running then fn(text=="" and s.default or text) end -- false: Ctrl+C
     elseif a=="item" then push({kind="item",item=r.value})
     elseif a=="storage" then push({kind="storage",storage=r.value})
     elseif a=="machine" then push({kind="machine",machine=r.value})
@@ -143,7 +144,8 @@ function M.show(options)
       if a=="filterAdd" then items("Filter item",add) else typedItem(add) end
     elseif a=="filterRemove" then settings(storage,function(v) table.remove(v.filter,r.value) end)
     elseif a=="filterClear" then settings(storage,function(v) v.filter=nil end)
-    elseif a=="priority" then input("Priority (empty unsets)",nil,function(text) local n=text~="" and assert(tonumber(text),"numeric priority required") or nil;settings(storage,function(v) v.priority=n end) end)
+    elseif a=="priority" then input("Priority (empty unsets)",nil,function(text) local n=text~="" and assert(tonumber(text),"numeric priority required") or nil;settings(storage,function(v) v.priority=n end) end,
+      function(text) return text=="" or tonumber(text)~=nil end)
     elseif a=="inventory" then storages("Same inventory as",function(other) settings(storage,function(v) v.inventory=other and ((warehouse.members()[other] or {}).inventory or other) or nil end) end,true)
     elseif a=="newMachine" then newMachine()
     elseif a=="editRole" then
