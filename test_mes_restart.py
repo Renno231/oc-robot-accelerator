@@ -46,7 +46,7 @@ class MesRestartTests(unittest.TestCase):
           while #child.data.handles>0 do child.data.handles[#child.data.handles]:close() end
           current=root
           persist.plan(p,{id=1,opts={}},{marker=61});p.store:flush()
-          local q,db=persist.packed('/etc/mes.state','^plan_');q.store:close()
+          local q,db=persist.packed('/etc/mes.state',{'^plan_','^sh_'});q.store:close()
           assert(db.plan_1.plan.marker==61 and closed[unrelated])
           p.store:close();assert(#root.data.handles==0)
         ''')
@@ -231,7 +231,7 @@ class MesRestartTests(unittest.TestCase):
           -- What is on disk, decoded the way MES reads it back: the packed state records
           -- and each finished run's history file.
           function saved()
-            local P=require('mes.persist');local p,out=P.packed('/etc/mes.state','^plan_')
+            local P=require('mes.persist');local p,out=P.packed('/etc/mes.state',{'^plan_','^sh_'})
             if p.store.close then p.store:close() end
             for name in pairs(disk) do
               local id=name:match('^/etc/mes%.history/done_(%d+)$')
