@@ -54,6 +54,21 @@ class NativeStoreEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'trailing bytes'):
             value(self.encode('1') + self.encode('2'))
 
+    def test_finished_logistics_job_is_read_from_its_compressed_record(self):
+        self.lua.execute(b'lz4=assert(load(...))()', Path('drone-logistics/usr/lib/lz4.lua').read_bytes())
+        job = '{id=7,state="done",steps={{taken=3,moved=3}},tripTimings={{trip=2,drone="d1"}}}'
+        packed = 'lz4.compress(cbor.encode(' + job + '))'
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'logistics.state'
+            log.write_bytes(self.encode('{k="job_7",v={z=' + packed + '}}'))
+            files = Path(directory) / 'files'; files.mkdir()
+            (files / 'job_7').write_bytes(self.encode('{z=' + packed + '}'))
+            for path in (log, files):
+                with self.subTest(path=path.name):
+                    self.assertEqual(read_store(path)['job_7'],
+                                     {'id': 7, 'state': 'done', 'steps': [{'taken': 3, 'moved': 3}],
+                                      'tripTimings': [{'trip': 2, 'drone': 'd1'}]})
+
     def test_all_five_real_native_stores_enrich_observer(self):
         with tempfile.TemporaryDirectory() as directory:
             drive = Path(directory); (drive / 'etc').mkdir()

@@ -33,9 +33,16 @@ local fleet,addresses,announcing,jobs,queue,finished={},{},{},{},{},{}
 local nextJob,nextTrip=0,0
 local state_store=require("logistics.store").open("/etc/logistics.state")
 local function saveIds() state_store:put("ids",{job=nextJob,trip=nextTrip}) end
+-- A finished job is written once and read back only on request, so its record is
+-- kept LZ4 compressed: about half the bytes in the file and in the store's copy.
 local function save(job)
   local record={};for k,v in pairs(job) do if k~="avoid" and k~="retried" then record[k]=v end end
+  if job.finished then record={z=require("lz4").compress(require("cbor").encode(record))} end
   state_store:put("job_"..job.id,record);saveIds();state_store:flush()
+end
+local function unpacked(record)
+  if record and record.z then return require("cbor").decode(require("lz4").decompress(record.z)) end
+  return record
 end
 local clockOK,clock=pcall(require,"computer")
 local function uptime() if clockOK and type(clock.uptime)=="function" then return clock.uptime() end end
@@ -113,7 +120,7 @@ end
 -- A job by id, whole: a finished one is read back from the store.
 local function whole(id)
   local job=jobs[id]
-  if job and job.stored then job=state_store:get("job_"..id);job.avoid={} end
+  if job and job.stored then job=unpacked(state_store:get("job_"..id));job.avoid={} end
   return job
 end
 local function finish(job,state,reason)
@@ -765,7 +772,7 @@ local records=state_store:load()
 if records.ids then nextJob,nextTrip=records.ids.job,records.ids.trip end
 for key,job in pairs(records) do
   if key~="ids" then
-    jobs[job.id]=job.finished and stored(job) or job;job.avoid={}
+    job=unpacked(job);jobs[job.id]=job.finished and stored(job) or job;job.avoid={}
     -- An unfinished rebuilt job is closed once drones have answered, never scheduled.
     if job.finished then finished[#finished+1]=job.id elseif not job.rebuilt then queue[#queue+1]=job.id end
     if not job.finished then

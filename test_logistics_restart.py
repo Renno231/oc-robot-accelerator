@@ -418,6 +418,21 @@ class LogisticsRestartTests(unittest.TestCase):
                   assert(lg.status(x).state=='active' and lg.status(y).state=='queued')
                 ''')
 
+    def test_finished_job_is_stored_compressed_and_reads_back(self):
+        for mode in ('log', 'files'):
+            with self.subTest(mode=mode):
+                self.start(mode).execute('''
+                  local id=fetch();finishPhysical(true)
+                  local before=lg.status(id);assert(before.state=='done',before.state)
+                  local s=require('logistics.store').open('/etc/logistics.state');local r=s:load();s:close()
+                  local row=r['job_'..id];assert(type(row.z)=='string' and row.steps==nil)
+                  local job=require('cbor').decode(require('lz4').decompress(row.z))
+                  assert(job.id==id and job.state=='done' and job.finished and job.steps)
+                  reload();answerStatus();drain()
+                  local after=lg.status(id)
+                  assert(after.state=='done' and after.moved==before.moved and after.steps~=nil)
+                ''')
+
     def test_replayed_transfer_uses_report_cargo_slots_before_ready(self):
         for mode in ('log', 'files'):
             with self.subTest(mode=mode):

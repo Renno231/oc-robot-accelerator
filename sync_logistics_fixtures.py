@@ -7,7 +7,7 @@ for case in sorted((ROOT / 'examples/logistics').iterdir()):
     if not case.is_dir() or not (case / 'scenario.json').exists():
         continue
     shutil.copyfile(ROOT / 'drone-logistics/drone/loader.lua', case / 'loader.lua')
-    for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/cbor.lua', 'usr/lib/logistics/store.lua', 'usr/bin/logistics.lua', 'usr/lib/logistics/drone/agent.lua'):
+    for path in ('usr/lib/logistics/map.lua', 'usr/lib/logistics/init.lua', 'usr/lib/cbor.lua', 'usr/lib/lz4.lua', 'usr/lib/logistics/store.lua', 'usr/bin/logistics.lua', 'usr/lib/logistics/drone/agent.lua'):
         target = case / 'program' / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'drone-logistics' / path, target)

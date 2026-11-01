@@ -7,10 +7,12 @@ from lupa.lua53 import LuaRuntime
 
 def install_store(lua, preserve_io=False):
     lua.globals().CBOR_SOURCE = Path('drone-logistics/usr/lib/cbor.lua').read_text()
+    lua.globals().LZ4_SOURCE = Path('drone-logistics/usr/lib/lz4.lua').read_text()
     lua.globals().STORE_SOURCE = Path('drone-logistics/usr/lib/logistics/store.lua').read_text()
     lua.globals().PRESERVE_IO = preserve_io
     lua.execute('''
       package.preload.cbor=function() return assert(load(CBOR_SOURCE))() end
+      package.preload.lz4=function() return assert(load(LZ4_SOURCE))() end
       package.preload["logistics.store"]=function() return assert(load(STORE_SOURCE))() end
       disk={};dirs={};calls={};renames=0;readWholeLog=false
       local function count(k) calls[k]=(calls[k] or 0)+1 end

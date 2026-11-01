@@ -142,7 +142,11 @@ def decode(stream):
     if major == 1:
         return -1 - size
     if major in (2, 3):
-        return read(size).decode('utf-8')
+        raw = read(size)
+        try:
+            return raw.decode('utf-8')
+        except UnicodeDecodeError:
+            return raw  # binary, such as a compressed record
     if major == 4:
         return [decode(stream) for _ in range(size)]
     if major == 5:
@@ -205,10 +209,18 @@ def file_value(data):
     return value(data)
 
 
+def unpacked(record):
+    """A finished logistics job is stored as {z = LZ4-compressed CBOR}."""
+    if isinstance(record, dict) and len(record) == 1 and isinstance(record.get('z'), (bytes, str)):
+        z = record['z']
+        return value(lz4_block(z.encode('utf-8') if isinstance(z, str) else z))
+    return record
+
+
 def read_store(path):
     path = Path(path)
     if path.is_dir():
-        return {unquote(entry.name, errors='strict'): file_value(entry.read_bytes())
+        return {unquote(entry.name, errors='strict'): unpacked(file_value(entry.read_bytes()))
                 for entry in sorted(path.iterdir()) if entry.is_file()}
     result = {}
     with path.open('rb') as stream:
@@ -220,7 +232,7 @@ def read_store(path):
             try:
                 record = decode(stream)
                 if 'v' in record:
-                    result[record['k']] = record['v']
+                    result[record['k']] = unpacked(record['v'])
                 else:
                     result.pop(record['k'], None)
             except (ValueError, KeyError, TypeError) as error:
