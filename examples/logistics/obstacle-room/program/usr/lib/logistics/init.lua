@@ -334,7 +334,9 @@ local function receive(_,_,sender,received,_,token,kind,id,payload)
   local d=addresses[sender];if not d or token~=d.token then return end
   d.received=(d.received or 0)+1
   if d.kind=="sensor" then if kind=="boot" then
-    local f=assert(io.open("/usr/lib/logistics/drone/sensor.lua"));send(d,"code",1,1,f:read("*a"));f:close();send(d,"start")
+    -- EVERY, the seconds between the sensor's checks of its chest, goes ahead of its program.
+    local f=assert(io.open("/usr/lib/logistics/drone/sensor.lua"))
+    send(d,"code",1,1,"local EVERY="..(registry[d.name].every or 2).."\n"..f:read("*a"));f:close();send(d,"start")
     end;event.push("logistics_sensor",d.name,kind,id);return
   end
   if kind=="boot" then
@@ -581,6 +583,10 @@ function M.register(address,name,home)
 end
 M.registerSensor=M.register
 function M.forget(name)
+  local r=registry[name]
+  if r and r.kind=="sensor" then
+    registry[name]=nil;addresses[r.address]=nil;persist();event.push("logistics_sensor",name,"forgotten");return true
+  end
   local d=fleet[name];if not d then return false end
   if d.job then return nil,"drone is active" end
   registry[name]=nil;fleet[name]=nil;addresses[d.address]=nil;persist();return true
@@ -607,6 +613,21 @@ function M.rehome(name,home)
   local id=M.job({{go=home}},{drone=name});local job=jobs[id]
   if not job.finished then job.home=home;save(job) end
   return id
+end
+-- Seconds between a sensor's checks of its chest, 1 to 60; kept, and sent again at each boot.
+function M.sensorEvery(name,seconds)
+  local r=registry[name];if not r or r.kind~="sensor" then return nil,"unknown sensor" end
+  if type(seconds)~="number" or seconds<1 or seconds>60 then return nil,"check every 1 to 60 seconds" end
+  r.every=seconds;persist();send(addresses[r.address],"every",seconds);return true
+end
+function M.sensorInfo(name)
+  local r=registry[name];if not r or r.kind~="sensor" then return nil end
+  return {name=name,every=r.every or 2}
+end
+-- The sensor reboots and downloads its program again.
+function M.restartSensor(name)
+  local r=registry[name];if not r or r.kind~="sensor" then return nil,"unknown sensor" end
+  send(addresses[r.address],"restart");return true
 end
 function M.sensors()
   local a={};for n,r in pairs(registry) do if r.kind=="sensor" then a[#a+1]=n end end

@@ -309,3 +309,41 @@ class IOChestTests(unittest.TestCase):
           assert(ic.importNow('in1'));assert(jobs()==before+1)
           finishAll();wait(60);assert(jobs()==before+1 and stock.count==4 and input.count==0)
         ''')
+
+    def test_paused_chest_waits_for_import_now_and_resumes(self):
+        self.lua.execute('''
+          local stock=chest('stock','stock',5,0);local input=chest('in1','import',10,0)
+          assert(sensor('s1','in1',1,0));local before=jobs()
+          assert(ic.configure('in1',{auto=false}));assert(record('in1').auto==false)
+          input.count=64;sensor('s1',nil,2,64);wait(120);assert(jobs()==before)
+          assert(ic.configure('in1',{auto=true}));assert(record('in1').auto==nil and jobs()==before+1)
+          finishAll();assert(stock.count==64 and input.count==0)
+          assert(ic.configure('in1',{auto=false}));input.count=3;sensor('s1',nil,SEQ.s1+1,3)
+          assert(ic.importNow('in1'));assert(jobs()==before+2)
+        ''')
+
+    def test_collect_at_a_count_and_after_a_set_wait(self):
+        self.lua.execute('''
+          chest('stock','stock',5,0);local input=chest('in1','import',10,0)
+          assert(sensor('s1','in1',1,0));local before=jobs()
+          assert(ic.configure('in1',{at=10,wait=300}))
+          input.count=9;sensor('s1',nil,2,9);wait(299);assert(jobs()==before)
+          input.count=10;sensor('s1',nil,3,10);assert(jobs()==before+1);finishAll()
+          input.count=1;sensor('s1',nil,SEQ.s1+1,1);wait(299);assert(jobs()==before+1)
+          wait(1);assert(jobs()==before+2);finishAll()
+          assert(ic.configure('in1',{at=false,wait=0}));assert(not record('in1').at and record('in1').wait==0)
+          input.count=1;sensor('s1',nil,SEQ.s1+1,1);assert(jobs()==before+3)
+          assert(not pcall(ic.configure,'in1',{wait=-1}) and not pcall(ic.configure,'in1',{at=1.5}))
+        ''')
+
+    def test_detach_and_forgotten_sensor_drop_the_count(self):
+        self.lua.execute('''
+          chest('stock','stock',5,0);local input=chest('in1','import',10,0);chest('in2','import',20,0)
+          assert(sensor('s1','in1',1,0));input.count=5;sensor('s1',nil,2,5)
+          assert(ic.detach('in1'));local r=record('in1')
+          assert(not r.sensor and not r.seq and count('in1')==0)
+          local before=jobs();input.count=7;sensor('s1',nil,3,7);wait(60);assert(jobs()==before)
+          assert(not ic.detach('in1'));assert(ic.attach('s1','in1'))
+          assert(sensor('s2','in2',1,0));emit('logistics_sensor','s2','forgotten');drain()
+          assert(not record('in2').sensor and record('in1').sensor=='s1')
+        ''')

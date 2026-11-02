@@ -1,23 +1,27 @@
-"""Native farm trickle: a feeder microcontroller drips coal into a sensor-watched In chest."""
+"""Native farm trickle: a feeder microcontroller drips coal into a sensor-watched In chest.
+
+A second phase drives the chest and sensor controls: sensor interval, pause, collect-at and restart."""
 import argparse
 import json
 from pathlib import Path
 from examples.mes.build_fixtures import build_native, write_fixture
 
 COUNT, EVERY = 48, 5
+PAUSED, RESTARTED = 6, 10
 
-# The farm: one item from its source chest into the In chest every EVERY seconds, once told to start.
+# The farm: told to start with a count and a gap, it moves that many items one at a time into the In chest.
 FEEDER = r'''
 local t=component.proxy(component.list('transposer')())
 local m=component.proxy(component.list('modem')());m.open(27199)
 local function wait(s) local d=computer.uptime()+s;repeat computer.pullSignal(d-computer.uptime()) until computer.uptime()>=d end
 local src,dst
 for side=0,5 do if t.getInventorySize(side) then if t.getSlotStackSize(side,1)>0 then src=side else dst=side end end end
-repeat local e={computer.pullSignal()} until e[1]=='modem_message' and e[4]==27199 and e[6]=='farm_start'
-for i=1,%d do wait(%d);assert(t.transferItem(src,dst,1)==1) end
-m.broadcast(27199,'farm_done')
-while true do computer.pullSignal() end
-''' % (COUNT, EVERY)
+while true do
+ local e;repeat e={computer.pullSignal()} until e[1]=='modem_message' and e[4]==27199 and e[6]=='farm_start'
+ for i=1,e[7] do wait(e[8]);assert(t.transferItem(src,dst,1)==1) end
+ m.broadcast(27199,'farm_done')
+end
+'''
 
 PROGRAM = r'''
 assert(loadfile('/home/program/install.lua'))()
@@ -50,18 +54,36 @@ assert(ic.attach('s1','in1'))
 local first=#lg.jobs()+1;local done
 event.listen('modem_message',function(_,_,_,port,_,token) if port==27199 and token=='farm_done' then done=computer.uptime() end end)
 require('component').modem.open(27199)
-local start=computer.uptime();require('component').modem.broadcast(27199,'farm_start')
+local function feed(n,every) done=nil;require('component').modem.broadcast(27199,'farm_start',n,every) end
+local function settled(n) wait(function() local r=record('in1');return wh.count(coal)==n and not next(r.pending) and not r.refresh end,180) end
+local start=computer.uptime();feed(%d,%d)
 wait(function() return done end,%d)
-wait(function() local r=record('in1');return wh.count(coal)==%d and not next(r.pending) and not r.refresh end,180)
+settled(%d)
 local result={collects=0,trips=0,items={},finished=computer.uptime()-start,lastItemWait=computer.uptime()-done}
 for _,j in ipairs(lg.jobs()) do if j.id>=first then local s=lg.status(j.id)
  assert(s.state=='done',s.reason);result.collects=result.collects+1;result.trips=result.trips+s.trips
  local n=0;for _,v in ipairs(s.steps or {}) do if v.take then n=n+(v.taken or 0) end end;result.items[#result.items+1]=n
 end end
+-- Controls: the sensor checks every 10 s; a paused chest keeps what lands in it until
+-- resumed; collect-at sends it at once; a restarted sensor boots, keeps 10 s, and imports again.
+local reports,boots={},0
+event.listen('logistics_sensor',function(_,n,kind) if kind=='report' then reports[#reports+1]=computer.uptime() elseif kind=='boot' then boots=boots+1 end end)
+assert(lg.sensorEvery('s1',10));assert(ic.configure('in1',{auto=false}))
+local jobs=#lg.jobs();feed(%d,1);wait(function() return done end,60)
+wait(function() local v=record('in1').listing['minecraft:coal:0'];return v and v.count==%d end,60)
+event.pull(30);assert(#lg.jobs()==jobs,'paused chest sent a drone')
+assert(ic.configure('in1',{auto=true,at=5}));assert(#lg.jobs()==jobs+1,'resume with collect at 5 did not send')
+settled(%d)
+assert(lg.restartSensor('s1'));wait(function() return boots>0 end,60)
+assert(ic.configure('in1',{at=false,wait=20}));feed(%d,1);wait(function() return done end,60)
+settled(%d)
+-- Report gaps after the restart: the sensor booted with the 10 s it was given.
+local gaps={};for i=2,#reports do gaps[#gaps+1]=reports[i]-reports[i-1] end
+result.controls={reportGaps=gaps,boots=boots,jobs=#lg.jobs()-jobs,every=lg.sensorInfo('s1').every,rules=record('in1').wait}
 save('/home/farm-result',result)
 print('farm passed',ser.serialize(result))
 return true
-''' % (COUNT * EVERY + 60, COUNT)
+''' % (COUNT, EVERY, COUNT * EVERY + 60, COUNT, PAUSED, PAUSED, COUNT + PAUSED, RESTARTED, COUNT + PAUSED + RESTARTED)
 
 
 def build(root):
@@ -77,7 +99,7 @@ def build(root):
     value['containers'] = [
         {'position': [0, 64, 8], 'block': 'minecraft:chest', 'slots': []},
         {'position': [2, 64, 8], 'block': 'minecraft:chest', 'slots': []},
-        {'position': [3, 64, 7], 'block': 'minecraft:chest', 'slots': [{'slot': 1, 'item': 'minecraft:coal', 'count': COUNT}]},
+        {'position': [3, 64, 7], 'block': 'minecraft:chest', 'slots': [{'slot': 1, 'item': 'minecraft:coal', 'count': COUNT + PAUSED + RESTARTED}]},
     ]
     hardware = {'tier': 2, 'cpu': 'cpu1', 'memory': ['ram1'], 'cards': ['wlancard2'], 'upgrades': ['transposer']}
     value['microcontrollers'] = [{'position': [2, 64, 9], 'eeprom': 'loader.lua', 'hardware': hardware},

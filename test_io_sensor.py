@@ -8,7 +8,8 @@ import test_logistics_restart as restart
 class SensorTests(unittest.TestCase):
     def start(self, sides=1):
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.globals().SOURCE = Path('drone-logistics/usr/lib/logistics/drone/sensor.lua').read_text()
+        # The controller puts the check interval ahead of the program it sends.
+        lua.globals().SOURCE = 'local EVERY=2' + chr(10) + Path('drone-logistics/usr/lib/logistics/drone/sensor.lua').read_text()
         lua.globals().SIDES = sides
         lua.execute('''
           TIME=0;N=4;SENT={}
@@ -16,7 +17,8 @@ class SensorTests(unittest.TestCase):
             getAllStacks=function() return {getAll=function() return {
               {name='minecraft:coal',damage=0,label='Coal',size=N}} end} end}
           component={list=function() return function() return 'tr' end end,proxy=function() return tr end}
-          computer={uptime=function() return TIME end,pullSignal=function(delay) return coroutine.yield(delay) end}
+          computer={uptime=function() return TIME end,pullSignal=function(delay) return coroutine.yield(delay) end,
+            shutdown=function(reboot) RESTARTED=reboot;coroutine.yield(0) end}
           local modem={send=function(...) SENT[#SENT+1]={...} end}
           local co=coroutine.create(function() return assert(load(SOURCE))(modem,'token','ctrl','sensor',27103) end)
           function step(dt,...)
@@ -37,6 +39,15 @@ class SensorTests(unittest.TestCase):
           assert(#SENT==2 and packet().seq==2 and packet().reply==7)
           incoming('ack',2);N=8;step(2);assert(#SENT==2);step(2)
           assert(#SENT==3 and packet().seq==3 and packet().listing[1].size==8 and not packet().reply)
+        ''')
+
+    def test_controller_sets_the_check_interval_and_restarts_it(self):
+        self.start().execute('''
+          step(2);incoming('ack',1);N=8
+          -- A new interval checks at once, then every 10 s: a change shows after two checks.
+          incoming('every',10);step(2);assert(#SENT==1);step(8);assert(#SENT==2 and packet().listing[1].size==8)
+          incoming('ack',2);N=9;step(10);step(9);assert(#SENT==2);step(1);assert(#SENT==3)
+          incoming('restart');assert(RESTARTED==true)
         ''')
 
     def test_unacked_report_resends_after_ten_seconds(self):
@@ -79,8 +90,30 @@ class SensorTransportTests(unittest.TestCase):
           emit('modem_message','local','sensoraddr',27103,0,token,'report','payload');drain()
           assert(forwarded[1]=='sensor1' and forwarded[2]=='report' and forwarded[3]=='payload')
           lg.ackSensor('sensor1',7);assert(SENT[#SENT].kind=='ack' and SENT[#SENT].id==7)
-          assert(lg.forget('sensor1')==false)
           assert(lg.found('sensor1')==nil)
           local id=fetch();assert(lg.status(id).state=='active')
+          assert(#lg.drones()==1 and lg.drones()[1].name=='d1')
+        ''')
+
+    def test_sensor_interval_restart_and_forget(self):
+        lua = restart.LogisticsRestartTests().start('log')
+        lua.execute('''
+          files['/usr/lib/logistics/drone/sensor.lua']='return true'
+          local code;local send=require('component').modem.send
+          require('component').modem.send=function(a,p,t,kind,i,n,s,...) if kind=='code' then code=s end;return send(a,p,t,kind,i,n,s,...) end
+          emit('modem_message','local','sensoraddr',27103,0,'lgx_hello','sensor');assert(lg.registerSensor('sensoraddr','sensor1'))
+          local token=require('serialization').unserialize(files['/etc/logistics.drones']).sensor1.token
+          emit('modem_message','local','sensoraddr',27103,0,token,'boot');assert(code=='local EVERY=2\\nreturn true')
+          assert(lg.sensorInfo('sensor1').every==2)
+          assert(not lg.sensorEvery('sensor1',0) and not lg.sensorEvery('nobody',5))
+          assert(lg.sensorEvery('sensor1',15));assert(SENT[#SENT].kind=='every' and SENT[#SENT].id==15)
+          assert(require('serialization').unserialize(files['/etc/logistics.drones']).sensor1.every==15)
+          emit('modem_message','local','sensoraddr',27103,0,token,'boot');assert(code=='local EVERY=15\\nreturn true')
+          assert(lg.restartSensor('sensor1'));assert(SENT[#SENT].kind=='restart')
+          local forgotten;require('event').listen('logistics_sensor',function(_,n,kind) if kind=='forgotten' then forgotten=n end end)
+          assert(lg.forget('sensor1')==true);drain()
+          assert(forgotten=='sensor1' and #lg.sensors()==0 and not lg.sensorInfo('sensor1'))
+          assert(require('serialization').unserialize(files['/etc/logistics.drones']).sensor1==nil)
+          SENT={};emit('modem_message','local','sensoraddr',27103,0,token,'boot');assert(#SENT==0)
           assert(#lg.drones()==1 and lg.drones()[1].name=='d1')
         ''')
