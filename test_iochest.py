@@ -20,6 +20,18 @@ class IOChestTests(unittest.TestCase):
             return disk
           end
           require('event').listen('io',function() IO_EVENTS=IO_EVENTS+1 end)
+          -- The IO chest's own timers run when wait() moves the clock past them.
+          TIMERS={};local timer=require('event').timer
+          package.preload["logistics.iochest"]=function() return assert(load(IOCHEST,'=iochest'))() end
+          require('event').timer=function(s,f,...)
+            if debug.getinfo(2,'S').source~='=iochest' then return timer(s,f,...) end
+            TIMERS[#TIMERS+1]={at=TIME+s,f=f};return #TIMERS
+          end
+          function wait(s)
+            TIME=TIME+s;local due={}
+            for i=#TIMERS,1,-1 do if TIMERS[i].at<=TIME then table.insert(due,1,table.remove(TIMERS,i)) end end
+            for _,t in ipairs(due) do t.f() end;drain()
+          end
           ic=require('logistics.iochest');item={name='mod:seed',damage=0}
           function chest(n,role,x,count,size)
             local key='h'..x..'_65_2:0';INV[key]={count=count or 0,size=size or 27}
@@ -104,7 +116,7 @@ class IOChestTests(unittest.TestCase):
           local stock=chest('stock','stock',5,0)
           local input=chest('in1','import',10,64)
           assert(sensor('s1','in1',1,64));drain()
-          input.count=96;sensor('s1',nil,2,96)
+          input.count=96;sensor('s1',nil,2,96);wait(60)
           local requests={};for id in pairs(record('in1').pending) do requests[#requests+1]=lg.status(id).requested end
           table.sort(requests);assert(#requests==2 and requests[1]==32 and requests[2]==64)
           finishAll();assert(input.count==0 and stock.count==96 and count('in1')==0)
@@ -115,8 +127,9 @@ class IOChestTests(unittest.TestCase):
         self.lua.execute('''
           local stock=chest('stock','stock',5,60,1)
           local input=chest('in1','import',10,44)
-          assert(sensor('s1','in1',1,44));drain();finishAll()
-          assert(input.count==40 and stock.count==64 and count('in1')==40)
+          assert(sensor('s1','in1',1,44));wait(60);finishAll()
+          -- What is left after the trip waits like any other small amount, then is retried once.
+          wait(60);assert(input.count==40 and stock.count==64 and count('in1')==40)
           assert(record('in1').reason:find('40',1,true) and record('in1').reason:find('in1',1,true))
           local n=jobs();for i=1,20 do drain() end;assert(jobs()==n)
           resetCalls();for i=1,20 do ic.list() end;assert(not calls.write)
@@ -260,6 +273,39 @@ class IOChestTests(unittest.TestCase):
           assert(sensor('s1','in1',1,64));finishHardware()
           input.count=32;sensor('s1',nil,2,32)
           local before=jobs();assert(record('in1').refresh);assert(jobs()==before)
-          fresh('s1');assert(jobs()==before+1);finishHardware();fresh('s1')
+          fresh('s1');assert(jobs()==before);wait(60);assert(jobs()==before+1);finishHardware();fresh('s1')
           assert(input.count==0 and stock.count==96 and count('in1')==0)
+        ''')
+
+    def test_trickle_waits_for_one_trip_and_a_full_stack_goes_at_once(self):
+        self.lua.execute('''
+          local stock=chest('stock','stock',5,0);local input=chest('in1','import',10,0)
+          assert(sensor('s1','in1',1,0));local before=jobs()
+          for i=1,3 do input.count=i;sensor('s1',nil,i+1,i);wait(15) end
+          assert(jobs()==before and count('in1')==3)
+          wait(15);assert(jobs()==before+1);finishAll()
+          assert(input.count==0 and stock.count==3 and count('in1')==0)
+          wait(60);assert(jobs()==before+1)
+          input.count=64;sensor('s1',nil,SEQ.s1+1,64);assert(jobs()==before+2)
+          finishAll();assert(input.count==0 and stock.count==67)
+        ''')
+
+    def test_items_taken_back_before_the_wait_ends_send_nothing(self):
+        self.lua.execute('''
+          chest('stock','stock',5,0);local input=chest('in1','import',10,0)
+          assert(sensor('s1','in1',1,0));local before=jobs()
+          input.count=5;sensor('s1',nil,2,5);wait(30)
+          input.count=0;sensor('s1',nil,3,0);wait(60)
+          assert(jobs()==before)
+          input.count=2;sensor('s1',nil,4,2);wait(59);assert(jobs()==before)
+          wait(1);assert(jobs()==before+1)
+        ''')
+
+    def test_import_all_sends_a_trickle_at_once(self):
+        self.lua.execute('''
+          local stock=chest('stock','stock',5,0);local input=chest('in1','import',10,0)
+          assert(sensor('s1','in1',1,0));local before=jobs()
+          input.count=4;sensor('s1',nil,2,4);assert(jobs()==before)
+          assert(ic.importNow('in1'));assert(jobs()==before+1)
+          finishAll();wait(60);assert(jobs()==before+1 and stock.count==4 and input.count==0)
         ''')
