@@ -130,12 +130,13 @@ local function brake(dx,dy,dz)
   local n=math.abs(dx)+math.abs(dy)+math.abs(dz)
   if (dx~=0 and 1 or 0)+(dy~=0 and 1 or 0)+(dz~=0 and 1 or 0)~=1 or n~=math.floor(n) then return end
   local p=brakes[n] or brakes[n%2==0 and 6 or 5]
-  local start=computer.uptime()
-  local last,phase,deadline,a=n,0,start+n/8+3,acceleration/20
-  while phase<3 and computer.uptime()<deadline do
+  local last,phase,a=n,0,acceleration/20
+  -- Each read costs a tick, so reads count time without trusting the clock to move.
+  for reads=1,(n/8+3)*20 do
+    if phase==3 then break end
     local off=drone.getOffset()
     if phase==0 and off<=p[1] then drone.setAcceleration(p[2]*20);a=drone.setAcceleration(0);phase=1
-    elseif phase==0 and last-off<.005 and computer.uptime()-start>.25 then break
+    elseif phase==0 and last-off<.005 and reads>5 then break
     elseif phase==1 and (off<=p[3] or last-off<.005) then a=drone.setAcceleration(p[4]*20);phase=2
     elseif phase==2 and off<.02 and drone.getVelocity()<.02 then phase=3 end
     last=off

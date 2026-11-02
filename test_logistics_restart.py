@@ -223,7 +223,8 @@ class LogisticsRestartTests(unittest.TestCase):
           local T,WAITS,REPORTS,NAV=0,{},{},nil
           local drone={inventorySize=function() return 4 end,count=function() return 0 end,
             getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
-            getOffset=function() return 0 end,getVelocity=function() return 0 end,move=function() end}
+            getOffset=function() return 0 end,getVelocity=function() return 0 end,move=function() end,
+            setAcceleration=function(v) return math.max(0,math.min(2,v)) end}
           local inv={getStackInInternalSlot=function() end,getInventorySize=function() return 27 end,
             getStackInSlot=function() end}
           component={list=function(kind) return function() return kind end end,
@@ -493,7 +494,8 @@ class AgentRestartTests(unittest.TestCase):
           local drone={inventorySize=function() return 4 end,count=function() return 0 end,
             getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
             move=function(dx) TARGET=TARGET+dx;if not BLOCKED then POSITION=TARGET end end,
-            getOffset=function() return math.abs(TARGET-POSITION) end,getVelocity=function() return 0 end}
+            getOffset=function() return math.abs(TARGET-POSITION) end,getVelocity=function() return 0 end,
+            setAcceleration=function(v) return math.max(0,math.min(2,v)) end}
           local inv={getStackInInternalSlot=function() end}
           component={list=function(kind) return function() return kind end end,
             proxy=function(kind) return kind=='drone' and drone or inv end}
