@@ -14,9 +14,9 @@ local distances={};event.listen('modem_message',function(_,_,sender,port,distanc
  if port==27103 and token=='lgx_hello' then distances[sender]=distance end
 end)
 local map=require('logistics.map');local lg=require('logistics');local wh=require('logistics.warehouse')
-for i=1,6 do local n='home'..i;map.add(n,-2,65,i+1,{charger=true});if i>1 then map.link('home'..(i-1),n) end end
-map.add('corridor2',0,65,2);map.add('corridor8',0,65,8)
-map.link('home1','corridor2');map.link('corridor2','corridor8');map.save()
+-- Drones have no hitboxes for each other: they all share one charger, as in the MES fixtures.
+map.add('home',-2,65,2,{charger=true});map.add('corridor2',0,65,2);map.add('corridor8',0,65,8)
+map.link('home','corridor2');map.link('corridor2','corridor8');map.save()
 local st=require('logistics.stations');local ic=require('logistics.iochest')
 local function wait(fn)
  local deadline=computer.uptime()+180
@@ -24,8 +24,7 @@ local function wait(fn)
  error('io native timeout')
 end
 wait(function() return #lg.pending()==6 and #lg.pendingSensors()==3 end)
-local drones=lg.pending();table.sort(drones,function(a,b) return distances[a]<distances[b] end)
-for i,a in ipairs(drones) do assert(lg.register(a,'d'..i,'home'..i)) end
+for i,a in ipairs(lg.pending()) do assert(lg.register(a,'d'..i,'home')) end
 local sensors=lg.pendingSensors();table.sort(sensors,function(a,b) return distances[a]<distances[b] end)
 for i,a in ipairs(sensors) do assert(lg.registerSensor(a,'s'..i)) end
 local reports={};event.listen('logistics_sensor',function(_,n,kind,data)
