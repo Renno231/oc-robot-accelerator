@@ -77,12 +77,36 @@ local function flightSleep(offset)
   local near=math.max(1,speed*speed/(2*math.max(acceleration,0.001)))
   return math.max(0.1,math.min(1,(offset-near)/speed))
 end
+-- Planned braking for a straight whole-block move from a hover, solved offline
+-- against the physics above: full thrust; at offset<=T one tick of acceleration
+-- a1, then 0 to coast on drag; at offset<=F, or once it stops closing, a2 onto
+-- the target. Per length {T,a1,F,a2}; beyond 6 the plans repeat by parity.
+-- Triggers sit between per-tick readings and land well inside OC's snap window.
+-- The arrival and stall predicates in fly() still decide.
+local brakes={{.95,.05,.1076,.05},{1.598,.03,.0677,.02},{2.0127,.06,.0372,.05},{2.2781,.04,.0545,.1},{2.0806,.02,.0373,.1},{2.2806,.04,.0545,.1}}
+local function brake(dx,dy,dz)
+  local n=math.abs(dx)+math.abs(dy)+math.abs(dz)
+  if (dx~=0 and 1 or 0)+(dy~=0 and 1 or 0)+(dz~=0 and 1 or 0)~=1 or n~=math.floor(n) then return end
+  local p=brakes[n] or brakes[n%2==0 and 6 or 5]
+  local start=computer.uptime()
+  local last,phase,deadline=n,0,start+n/8+3
+  while phase<3 and computer.uptime()<deadline do
+    local off=drone.getOffset()
+    if phase==0 and off<=p[1] then drone.setAcceleration(p[2]*20);drone.setAcceleration(0);phase=1
+    elseif phase==0 and last-off<.005 and computer.uptime()-start>.25 then break
+    elseif phase==1 and (off<=p[3] or last-off<.005) then drone.setAcceleration(p[4]*20);phase=2
+    elseif phase==2 and off<.02 and drone.getVelocity()<.02 then phase=3 end
+    last=off
+  end
+  drone.setAcceleration(acceleration/20)
+end
 local function fly(path)
   for _,p in ipairs(path) do
     if math.abs(p.x-x)+math.abs(p.y-y)+math.abs(p.z-z)>0.01 then
       local previous=currentPoint or path[1]
-      local offset=math.sqrt((p.x-x)^2+(p.y-y)^2+(p.z-z)^2)
       drone.move(p.x-x,p.y-y,p.z-z)
+      brake(p.x-x,p.y-y,p.z-z)
+      local offset=drone.getOffset()
       local best,progress=math.huge,computer.uptime()
       while drone.getOffset()>=0.02 or drone.getVelocity()>=0.02 do
         computer.pullSignal(flightSleep(offset))

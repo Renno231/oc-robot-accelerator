@@ -64,10 +64,16 @@ class MesAcceptanceGateTests(unittest.TestCase):
         second = {'id': 2, 'qty': 3, 'status': 'complete', 'started': 11, 'stages': later}
         store = {'done_1': first, 'done_2': second}
         self.verify_ocparts(native, store, 'ocparts-repeat')
-        for fault in ('reset stock', 'overlap', 'remade chips'):
+        # Coal a still-burning furnace did not need stays in its fuel slot.
+        parked = copy.deepcopy(native)
+        parked['containers'].append(dict(position=[10, 64, 9], slots=[dict(slot=2, item='minecraft:coal', count=1)]))
+        self.verify_ocparts(parked, store, 'ocparts-repeat')
+        for fault in ('reset stock', 'overlap', 'remade chips', 'coal outside the fuel slot'):
             with self.subTest(fault=fault):
                 bad_native, bad_store = copy.deepcopy((native, store))
                 if fault == 'reset stock': bad_native['containers'][0]['slots'][0]['count'] += 1
+                elif fault == 'coal outside the fuel slot':
+                    bad_native['containers'].append(dict(position=[10, 64, 9], slots=[dict(slot=1, item='minecraft:coal', count=1)]))
                 elif fault == 'overlap': bad_store['done_2']['started'] = 9
                 else: bad_store['done_2']['stages'][0]['outputs'].append({'item': 'opencomputers:material:7'})
                 with self.assertRaises(AssertionError):

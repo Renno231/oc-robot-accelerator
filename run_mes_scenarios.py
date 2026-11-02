@@ -35,6 +35,15 @@ def verify_case(case, runtime, chest_only=False):
         for stack in chest['slots']:
             id = stack['item'] + (':' + str(stack['metadata']) if stack.get('metadata') else '')
             totals[id] = totals.get(id, 0) + stack['count']
+    # Each load brings its own coal; one that comes while the last coal still burns stays
+    # in the fuel slot (see build_fixtures). Everything else must match exactly.
+    parked = sum(s['count'] for c in native['containers'] if c.get('position') in ([10, 64, 7], [10, 64, 9])
+                 for s in c['slots'] if s['slot'] == 2 and s['item'] == 'minecraft:coal')
+    stock = dict(totals)
+    if parked:
+        stock['minecraft:coal'] -= parked
+        if not stock['minecraft:coal']:
+            del stock['minecraft:coal']
     if case == 'concurrent-fetch':
         for z in (7, 9):
             chest = next(c for c in native['containers'] if c['position'] == [10, 64, z])
@@ -74,10 +83,7 @@ def verify_case(case, runtime, chest_only=False):
         parts = ordered[:len(ROBOT_PARTS)]
         assert [(r['item'], r['qty']) for r in parts] == list(ROBOT_PARTS.items()), 'wrong parts orders'
         assert all(a['finished'] <= b['started'] for a, b in zip(parts, parts[1:])), 'overlapping orders'
-        # Coal left unburned in a furnace (see build_fixtures) adds to the coal total.
-        final = ROBOT_EXPAND_FINAL if case == 'robot-expand' else ROBOT_PARTS_FINAL
-        assert {k: v for k, v in totals.items() if k != 'minecraft:coal'} == {k: v for k, v in final.items() if k != 'minecraft:coal'}, totals
-        assert totals['minecraft:coal'] >= final['minecraft:coal'], totals
+        assert stock == (ROBOT_EXPAND_FINAL if case == 'robot-expand' else ROBOT_PARTS_FINAL), totals
         if case == 'robot-expand':
             assert len(native['robots']) == 3
             later = ordered[len(ROBOT_PARTS):]
@@ -100,7 +106,7 @@ def verify_case(case, runtime, chest_only=False):
         first, second = sorted(runs, key=lambda r: r['id'])
         assert (first['qty'], second['qty']) == (5, 3)
         assert first['finished'] <= second['started'], 'second order did not follow the first'
-        assert totals == OCPARTS_REPEAT_FINAL, totals
+        assert stock == OCPARTS_REPEAT_FINAL, totals
         later = rows(second['stages'])
         outputs = {o['item'] for s in later for o in rows(s['outputs'])}
         assert outputs == {'minecraft:iron_nugget', 'opencomputers:material:4', 'opencomputers:component:6'}, 'surplus intermediates were remade'
