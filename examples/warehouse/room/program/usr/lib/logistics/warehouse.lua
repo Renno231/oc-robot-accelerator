@@ -407,10 +407,9 @@ local function observe(storage,step)
     local i=item(stack);local k=itemKey(i);local v=e.items[k] or {item=i,count=0,maxSize=stack.maxSize,stacks=0,room=0}
     v.count=v.count+stack.size;v.stacks=v.stacks+1;v.room=v.room+stack.maxSize-stack.size;e.items[k]=v;e.freeSlots=e.freeSlots-1
   end
-  -- Retain a seen item's real stack limit even when its last stack disappears.
-  for k,v in pairs(db[key] and db[key].items or {}) do if not e.items[k] then
-    e.items[k]={item=v.item,count=0,maxSize=v.maxSize,stacks=0,room=0}
-  end end
+  -- A read lists what is there: items gone from it leave the entry (their stack
+  -- limits are kept in limits), so a robot or buffer face does not collect every
+  -- item that ever passed through it.
   db[key]=e;observed[key]=true;saveInventory(key);return true
 end
 local endpointStorages
@@ -614,6 +613,8 @@ function M.observed(storage,counts)
   local key=inventory(storage) or storage;local touched={}
   for _,v in pairs(db[key] and db[key].items or {}) do short(storage,v.item,0,touched) end
   for _,c in ipairs(counts) do short(storage,item(c.item),c.count,touched) end
+  -- Items the read did not find leave the entry, as after a scan.
+  local e=db[key];for k,v in pairs(e and e.items or {}) do if v.count==0 then e.items[k]=nil end end
   for k in pairs(touched) do if db[k] then saveInventory(k) end end
   if next(touched) then db_store:flush();changed() end
 end

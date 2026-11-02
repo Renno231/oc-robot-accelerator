@@ -96,6 +96,21 @@ class WarehouseTakeSlotsTests(unittest.TestCase):
           end end
         ''')
 
+    def test_a_read_drops_items_that_left_and_keeps_their_stack_limit(self):
+        # A robot face sees a new mix each order; its entry lists only what a read found.
+        self.lua.execute('''
+          observe('stock',{stack('mod:coal',64),{name='mod:pearl',damage=0,size=3,maxSize=16}},2)
+          observe('stock',{stack('mod:coal',10)},2)
+          local names={};for _,v in pairs(wh.contents('stock').items) do names[#names+1]=v.item.name end
+          assert(#names==1 and names[1]=='mod:coal',table.concat(names,','))
+          assert(wh.stackSize({name='mod:pearl',damage=0})==16)
+          -- A robot reading its own buffer reports counts the same way.
+          observe('stock',{stack('mod:coal',10),{name='mod:pearl',damage=0,size=3,maxSize=16}},2)
+          wh.observed('stock',{{item={name='mod:coal',damage=0},count=4}})
+          names={};for _,v in pairs(wh.contents('stock').items) do names[#names+1]=v.item.name..'='..v.count..'/'..tostring(v.maxSize) end
+          assert(#names==1 and names[1]=='mod:coal=4/64',table.concat(names,','))
+        ''')
+
     def test_label_optional_take_does_not_reuse_one_empty_delta_twice(self):
         self.lua.execute('''
           local a=stack('mod:coal',64);a.label='A'
