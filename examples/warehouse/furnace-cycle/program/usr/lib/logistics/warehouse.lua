@@ -624,6 +624,12 @@ function M.consumed(storage,i,n)
   for key in pairs(touched) do if db[key] then saveInventory(key) end end
   if next(touched) then db_store:flush();changed() end
 end
+-- Something put n of an item into this inventory (a robot its results, in its chest).
+function M.deposited(storage,i,n)
+  local touched={};i=item(i);adjust(storage,i,n,limit(i),touched)
+  for key in pairs(touched) do if db[key] then saveInventory(key) end end
+  if next(touched) then db_store:flush();changed() end
+end
 function M.fetch(i,n,to,opts)
   i=item(i);positive(n);local candidates,total={},0
   for _,faces in pairs(entries()) do

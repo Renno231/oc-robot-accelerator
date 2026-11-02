@@ -111,6 +111,15 @@ class HeapCensusTests(unittest.TestCase):
         # make's dump already holds inner's prototype; each adds only its 32-byte closure.
         self.assertEqual(module(result, 'code')['codeBytes'], make + 2 * 32)
 
+    def test_code_is_also_totalled_by_the_file_it_came_from(self):
+        result, make = census()
+        sources = {s['source']: s['bytes'] for s in result['codeBySource']}
+        self.assertEqual(sources['=/usr/lib/code.lua'], make)
+        # The warehouse's listener is first reached through computer's handlers, so
+        # computer's code counts it; by file it is the warehouse's.
+        self.assertGreater(module(result, 'computer')['codeBytes'], sources['=machine'] + 64)
+        self.assertGreater(sources['=/usr/lib/warehouse.lua'], module(result, 'warehouse')['codeBytes'] - 4 * 40)
+
     def test_globals_kernel_and_scale(self):
         result, _ = census()
         self.assertGreaterEqual(result['globalsBytes'], 500)

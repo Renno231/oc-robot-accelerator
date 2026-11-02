@@ -56,6 +56,11 @@ def breakdown(c, limit):
     print('%-28s %6s' % ('kernel and the rest', kb(census['kernelBytes'])))
     code = sum(m['codeBytes'] for m in census['modules'])
     print('\nAll modules: %s KB code, %s KB data' % (kb(code), kb(sum(m['bytes'] for m in census['modules']) - code)))
+    if 'codeBySource' in census:
+        # A module's code above counts what it reached first; this counts each file's own.
+        print('\nfile                                code KB')
+        for s in census['codeBySource'][:limit]:
+            print('%-34s %8s' % (s['source'].lstrip('=@'), kb(s['bytes'])))
 
 
 if __name__ == '__main__':

@@ -111,6 +111,15 @@ class WarehouseTakeSlotsTests(unittest.TestCase):
           assert(#names==1 and names[1]=='mod:coal=4/64',table.concat(names,','))
         ''')
 
+    def test_a_robot_putting_its_results_in_its_chest_adds_to_what_is_there(self):
+        self.lua.execute('''
+          observe('stock',{stack('mod:coal',10),{name='mod:pearl',damage=0,size=3,maxSize=16}},4)
+          wh.deposited('stock',{name='mod:pearl',damage=0},14);wh.deposited('stock',{name='mod:clay_ball',damage=0},5)
+          local got={};for _,v in pairs(wh.contents('stock').items) do got[v.item.name]=v.count..'/'..v.stacks end
+          assert(got['mod:coal']=='10/1' and got['mod:pearl']=='17/2' and got['mod:clay_ball']=='5/1')
+          assert(wh.contents('stock').freeSlots==0 and not wh.contents('stock').capacityUnknown)
+        ''')
+
     def test_label_optional_take_does_not_reuse_one_empty_delta_twice(self):
         self.lua.execute('''
           local a=stack('mod:coal',64);a.label='A'

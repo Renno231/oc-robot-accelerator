@@ -283,11 +283,15 @@ sort(protoList, function(a, b)
   return a.bytes > b.bytes
 end)
 local outer
+local bySource, sources = {}, {}
 for _, p in ipairs(protoList) do
   if not (outer and outer.source == p.source and p.first >= outer.first and p.last <= outer.last) then
     p.owner.bytes = p.owner.bytes + p.bytes; outer = p
+    if not bySource[p.source] then bySource[p.source] = 0; sources[#sources + 1] = p.source end
+    bySource[p.source] = bySource[p.source] + p.bytes
   end
 end
+sort(sources, function(a, b) return bySource[a] > bySource[b] end)
 
 local function n(bytes) return format("%d", floor(bytes / scale + 0.5)) end
 local function q(s)
@@ -328,6 +332,9 @@ for _, mod in ipairs(modules) do
       n(mod.code.bytes) .. ',"children":[' .. concat(children, ",") .. ']}'
   end
 end
+-- Resident code by the file it was loaded from, programs included.
+local code = {}
+for i, src in ipairs(sources) do code[i] = '{"source":' .. q(src) .. ',"bytes":' .. n(bySource[src]) .. '}' end
 return '{"lua":' .. q(_VERSION) .. ',"walkedBytes":' .. n(walked) .. ',"objects":' .. objects ..
   ',"globalsBytes":' .. n(globals.bytes) .. ',"kernelBytes":' .. n(rest.bytes) ..
-  ',"modules":[' .. concat(out, ",") .. ']}'
+  ',"modules":[' .. concat(out, ",") .. '],"codeBySource":[' .. concat(code, ",") .. ']}'

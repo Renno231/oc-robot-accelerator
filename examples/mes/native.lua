@@ -145,7 +145,8 @@ else
     for i in ipairs(other.stages) do assert(mes.choose(other,i,'cpu1')) end
     local second=assert(mes.run(other))
     assert(mes.status(first).status=='running')
-    for _,s in ipairs(mes.status(second).stages) do assert(s.state=='waiting') end
+    -- The second order waits, or queues behind the first with its inputs on the way to cpu1's chest.
+    for _,s in ipairs(mes.status(second).stages) do assert(s.state=='waiting' or s.state=='fetching',s.state) end
     local shell=require('shell')
     assert(shell.execute('mes runs'))
     assert(shell.execute('mes status '..second))
