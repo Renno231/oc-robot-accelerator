@@ -10,7 +10,7 @@ from unittest.mock import patch
 from examples.mes.build_fixtures import (ALL_CASES, OCPARTS_FINAL, OCPARTS_REPEAT_FINAL,
                                         ROBOT_PARTS, ROBOT_PARTS_FINAL, ROBOT_EXPAND_FINAL, ROOT, build_native, drone_count,
                                         split_item)
-from run_mes_scenarios import trip_report, verify_case
+from run_mes_scenarios import prune, trip_report, verify_case
 import runner_scenario
 
 
@@ -243,6 +243,27 @@ class MesAcceptanceGateTests(unittest.TestCase):
     def test_wrong_token_report_is_not_completion_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             self.assertFalse(self.capture(Path(temporary), report_token='wrong')['coverageComplete'])
+
+    def test_finished_case_keeps_only_what_comparisons_read(self):
+        for keep_capture in (False, True):
+            with self.subTest(keep_capture=keep_capture), tempfile.TemporaryDirectory() as temporary:
+                case = Path(temporary)
+                runtime = case / 'jobs/j1/runtime'
+                # mes.history is a store directory.
+                kept = ['stdout.log', 'result.json', 'world/opencomputers/a/etc/mes.history/0',
+                        'world/opencomputers/b/etc/logistics.state']
+                gone = ['minecraft_server.1.12.2.jar', 'libraries/x.jar', 'mods/oc.jar', 'observations.ndjson',
+                        'world/region/r.0.0.mca', 'world/opencomputers/a/etc/rc.cfg']
+                for name in kept + gone:
+                    (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+                    (runtime / name).write_text(name)
+                for name in ('trips.json', 'host-capture.ndjson'):
+                    (case / name).write_text(name)
+                prune(case, keep_capture)
+                self.assertEqual(sorted(kept), sorted(p.relative_to(runtime).as_posix() for p in runtime.rglob('*') if p.is_file()))
+                self.assertEqual(kept[2], (runtime / kept[2]).read_text())
+                self.assertTrue((case / 'trips.json').exists())
+                self.assertEqual(keep_capture, (case / 'host-capture.ndjson').exists())
 
 
 if __name__ == '__main__':

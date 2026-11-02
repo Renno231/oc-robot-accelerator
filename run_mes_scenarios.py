@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -261,8 +262,28 @@ def run_case(case, root, installation, mode='coordinated', seconds=10, chest_onl
     # Native PASS is not a trip-walk verdict. Never label unreviewed work accepted.
     row['accepted'] = False
     (directory / 'result.json').write_text(json.dumps(row, indent=2) + '\n')
+    prune(directory, keep_capture='tripReportError' in row)
     print(json.dumps(row), flush=True)
     return row
+
+
+# What later comparisons and failure reading use; the rest of a job's runtime is a copied server.
+KEEP = ('*.log', 'result.json', 'world/opencomputers/*/etc/mes.history', 'world/opencomputers/*/etc/logistics.state')
+
+
+def prune(directory, keep_capture=False):
+    """Shrink a finished case to the files above, about 3 MB instead of 130 MB."""
+    for runtime in (directory / 'jobs').glob('*/runtime'):
+        # Stores such as mes.history are directories; move whatever matches aside, then swap.
+        keep = runtime.with_name('runtime.keep')
+        for path in [p for pattern in KEEP for p in runtime.glob(pattern)]:
+            (keep / path.relative_to(runtime)).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(keep / path.relative_to(runtime)))
+        shutil.rmtree(runtime)
+        if keep.exists():
+            keep.rename(runtime)
+    if not keep_capture:
+        (directory / 'host-capture.ndjson').unlink(missing_ok=True)
 
 
 def run(args):
