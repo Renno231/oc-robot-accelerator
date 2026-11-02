@@ -203,8 +203,9 @@ def build_native(target, case, mode='coordinated', seconds=10, chest_only=False)
                 robot = copy.deepcopy(value['robots'][0]);robot['position'] = [x, 65, rz]
                 robot['program']['directory'] = 'robot-program-2';value['robots'].append(robot)
         expected = [{'position': [x, cy, 1], 'slots': [{'slot': n, 'count': 0} for n in range(1, 28)]} for x in (8, 10)] + [
-            # Orders at once fuel a shared furnace each for their own loads: coal may stay in its fuel slot.
-            {'position': [10, 64, z], 'slots': [{'slot': n, 'count': 0} for n in ((1, 3) if scenario_case == 'load' else (1, 2, 3))]}
+            # Each load brings its own coal; one that comes while the last coal still burns
+            # leaves its own in the fuel slot.
+            {'position': [10, 64, z], 'slots': [{'slot': n, 'count': 0} for n in (1, 3)]}
             for z in (7, 9)]
     if case == 'robot-expand':
         value['containers'].append({'position': [11, 65, 3], 'block': 'minecraft:chest', 'slots': []})
