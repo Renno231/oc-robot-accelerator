@@ -18,6 +18,18 @@ public class RunnerSchedulerTest {
             catch(IllegalStateException expected) {assertEquals("worker_dispatch_failure",expected.getMessage());}
         } finally {pool.shutdownNow();}
     }
+    @Test public void timeQueuedBehindAnotherMachineDoesNotCountAgainstTheProgressLimit() throws Exception {
+        // One worker thread: b waits 3 s behind a, then runs 3 s; neither slice reaches the 5 s limit.
+        ScheduledExecutorService pool=Executors.newSingleThreadScheduledExecutor();
+        Runnable a=()->{try {Thread.sleep(3000);}catch(InterruptedException e) {Thread.currentThread().interrupt();}};
+        Runnable b=()->{try {Thread.sleep(3000);}catch(InterruptedException e) {Thread.currentThread().interrupt();}};
+        try(RunnerScheduler owner=RunnerScheduler.bind(false,()->false)) {
+            owner.attach(a);owner.attach(b);
+            ScheduledFuture<?> first=RunnerScheduler.schedule(pool,a,0,TimeUnit.MILLISECONDS),second=RunnerScheduler.schedule(pool,b,0,TimeUnit.MILLISECONDS);
+            while(!second.isDone()) {RunnerScheduler.sleep(50);owner.checkProgress();}
+            first.get();second.get();assertEquals(2,owner.workerPasses());
+        } finally {pool.shutdownNow();}
+    }
     @Test public void allAttachedWorkersPreventJumpsWhileEitherIsRunning() throws Exception {
         ScheduledExecutorService pool=Executors.newScheduledThreadPool(2);
         CountDownLatch entered=new CountDownLatch(2),release=new CountDownLatch(1);

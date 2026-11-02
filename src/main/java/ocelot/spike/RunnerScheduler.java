@@ -127,18 +127,37 @@ public final class RunnerScheduler implements AutoCloseable {
     }
     /** How long one Lua slice of a machine may run before the run fails: OC's own computer.timeout, after which OC
      *  itself stops the machine as too long without yielding. Where OC's limit is off, its default of 5 s still
-     *  bounds the wait, so a hung worker ends the run. */
+     *  bounds the wait, so a hung worker ends the run. Like OC's, the clock starts when the slice starts running on
+     *  a worker thread: time spent queued behind other machines on a busy host is not the machine's. */
     static long workerLimitNanos() {
-        double seconds=li.cil.oc.Settings.get().timeout();
+        li.cil.oc.Settings settings=li.cil.oc.Settings.get();
+        double seconds=settings==null?0:settings.timeout();
         return (long)((seconds>0?seconds:5)*1e9);
     }
     void checkProgress() {
         synchronized(LOCK) {
             if(failure!=null) throw new IllegalStateException("worker_dispatch_failure",failure);
             long at=System.nanoTime();
-            for(Ticket ticket:running) if(at-ticket.started>=workerLimitNanos())
-                throw new IllegalStateException("worker_progress_limit");
+            for(Ticket ticket:running) if(ticket.worker!=null && at-ticket.runStarted>=workerLimitNanos())
+                throw new IllegalStateException("worker_progress_limit "+describe(ticket,at));
         }
+    }
+    /** Which machine overran, what its worker thread is doing, and what else was waiting or running. */
+    private String describe(Ticket late,long at) {
+        Thread worker=late.worker;
+        StringBuilder text=new StringBuilder(machineName(late.task)).append(" running ").append((at-late.runStarted)/1000000)
+            .append("ms on ").append(worker.getName()).append(' ').append(worker.getState());
+        StackTraceElement[] frames=worker.getStackTrace();
+        for(int i=0;i<Math.min(16,frames.length);i++) text.append(" | ").append(frames[i]);
+        text.append("; others:");
+        for(Ticket ticket:running) if(ticket!=late)
+            text.append(' ').append(machineName(ticket.task)).append(ticket.worker==null?"=queued ":"=running ").append((at-ticket.started)/1000000).append("ms");
+        return text.toString();
+    }
+    private static String machineName(Runnable task) {
+        if(!(task instanceof li.cil.oc.server.machine.Machine)) return task.getClass().getSimpleName();
+        li.cil.oc.api.machine.MachineHost host=((li.cil.oc.server.machine.Machine)task).host();
+        return host.getClass().getSimpleName()+"@"+(int)Math.floor(host.xPosition())+","+(int)Math.floor(host.yPosition())+","+(int)Math.floor(host.zPosition());
     }
     long workerPasses() {synchronized(LOCK) {return workerPasses;}}
     long skippedNanos() {synchronized(LOCK) {return skippedNanos;}}
@@ -156,6 +175,8 @@ public final class RunnerScheduler implements AutoCloseable {
         final Runnable task;
         final long due;
         long started;
+        volatile long runStarted;
+        volatile Thread worker;
         ScheduledFuture<?> timer;
         Ticket(ScheduledExecutorService executor,Runnable task,long due) {super(task,null);this.executor=executor;this.task=task;this.due=due;}
         boolean reserve() {
@@ -167,6 +188,7 @@ public final class RunnerScheduler implements AutoCloseable {
             runReserved();
         }
         void runReserved() {
+            runStarted=System.nanoTime();worker=Thread.currentThread();
             try {super.run();RunnerHeapCensus.afterSlice(task);}
             finally {synchronized(LOCK) {running.remove(this);LOCK.notifyAll();}}
         }
