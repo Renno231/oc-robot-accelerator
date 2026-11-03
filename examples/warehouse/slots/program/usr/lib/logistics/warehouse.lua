@@ -955,7 +955,14 @@ function M.collect(from,requests,opts)
       -- An item never seen yet is planned at 64; the drone's report teaches the real limit.
       local i=r.item;local maximum=limit(i);local remaining=r.count
       local to=r.to and manyEndpoint(r.to)
-      for _,c in ipairs(storeTargets(stock,i,from,source,maximum,planned)) do
+      local into=type(to)=="table" and to.storage or to
+      -- A robot or buffer outside stock takes it all, like a fetch.
+      if into and not stock[inventory(into) or into] then
+        addPieces(pieces,index,i,remaining,maximum,1,{storage=from.storage,slots=r.slots or from.slots},to,
+          stock[inventory(from.storage)] and sourceReservation(from.storage,i,remaining))
+        remaining=0
+      end
+      for _,c in ipairs(remaining>0 and storeTargets(stock,i,from,source,maximum,planned) or {}) do
         if remaining==0 then break end
         if not to or sameInventory(c.storage,to) then
         local n=math.min(remaining,c.capacity)
