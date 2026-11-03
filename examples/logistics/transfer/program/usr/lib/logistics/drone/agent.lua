@@ -75,7 +75,7 @@ local function flightSleep(offset)
   local near=math.max(1,speed*speed/(2*math.max(acceleration,0.001)))
   return math.max(0.1,math.min(1,(offset-near)/speed))
 end
--- Planned braking for a straight whole-block move from a hover, solved offline
+-- Planned braking for a whole-block move from a hover, solved offline
 -- against the physics above: full thrust; at offset<=T one tick of acceleration
 -- a1, then 0 to coast on drag; at offset<=F, or once it stops closing, a2 onto
 -- the target. Per length {T,a1,F,a2}; beyond 6 the plans repeat by parity.
@@ -83,11 +83,28 @@ end
 -- True once it sees fly()'s own strict arrival test; otherwise fly()'s arrival and
 -- stall loop decides.
 local brakes={{.95,.05,.1076,.05},{1.598,.03,.0677,.02},{2.0127,.06,.0372,.05},{2.2781,.04,.0545,.1},{2.0806,.02,.0373,.1},{2.2806,.04,.0545,.1}}
+-- Two-axis whole-block moves a<=b<=13 (either axes, either signs), keyed a*100+b
+-- and solved the same way, plus a fifth number: thrust held so no axis reaches the
+-- .4 cap. The cap would bend the path off the straight line map.smooth() checked;
+-- held under it the drone stays on that line and arrives sooner. Other shapes keep
+-- fly()'s loop.
+local diagonal={[101]={1.0122,.005,.0838,.1,.1},[102]={1.6087,.05,.381,.005,.089},[103]={1.6548,0,.3727,.005,.084},[104]={1.9541,.04,.3501,.005,.082},[105]={2.2241,.07,.6535,.005,.081},[106]={2.0648,.035,.5402,.005,.081},[107]={2.3236,.075,.9142,.005,.08},[108]={2.1379,.03,.6107,.005,.08},[109]={2.3398,.075,.6854,.005,.08},[110]={2.1419,.05,.3798,.005,.08},[111]={2.3403,.07,.9165,.005,.08},[112]={2.139,.05,.2366,.005,.08},[113]={2.3367,.075,.491,.005,.08},
+  [202]={1.8411,.035,.1402,.1,.1},[203]={2.3052,.085,.9218,.005,.096},[204]={2.1542,.055,.2436,.005,.089},[205]={2.3607,.08,.4949,.005,.086},[206]={2.1754,.05,.2471,.005,.084},[207]={2.3727,.07,.9274,.005,.083},[208]={2.1861,.03,.6228,.005,.082},[209]={2.0244,.01,.7163,.005,.081},[210]={2.1974,.025,.6545,.01,.081},[211]={2.3727,.075,.6929,.005,.081},[212]={2.1454,.045,.2391,.005,.081},[213]={2.0516,.02,.7316,.005,.08},
+  [303]={2.1152,.005,.3652,.005,.1},[304]={2.4693,.055,.7114,.005,.099},[305]={2.1674,.005,.5483,.005,.093},[306]={2.3404,.035,.8943,.005,.089},[307]={2.4952,.075,.9773,.005,.087},[308]={2.2802,.06,.2533,.005,.085},[309]={2.4602,.08,.7199,.005,.084},[310]={2.2544,.06,.2566,.005,.083},[311]={2.0825,.015,.7429,.005,.082},[312]={2.2316,.06,.2509,.005,.082},[313]={2.3849,.075,.499,.005,.082},
+  [404]={2.6653,.09,.3787,.005,.1},[405]={2.4985,.03,.5052,.005,.1},[406]={2.5371,.045,.7237,.005,.096},[407]={2.2267,.01,.2401,.005,.092},[408]={2.4088,.045,.4961,.005,.089},[409]={2.1575,.01,.5491,.005,.087},[410]={2.3066,.03,.4874,.01,.086},[411]={2.4867,.075,.9726,.005,.085},[412]={2.2763,.06,.2525,.005,.084},[413]={2.1026,.015,.7453,.005,.083}}
 local function brake(dx,dy,dz)
-  local n=math.abs(dx)+math.abs(dy)+math.abs(dz)
-  if (dx~=0 and 1 or 0)+(dy~=0 and 1 or 0)+(dz~=0 and 1 or 0)~=1 or n~=math.floor(n) then return end
-  local p=brakes[n] or brakes[n%2==0 and 6 or 5]
+  local s={}
+  for _,v in ipairs({dx,dy,dz}) do
+    if v~=math.floor(v) then return end
+    if v~=0 then s[#s+1]=math.abs(v) end
+  end
+  table.sort(s)
+  local n,p
+  if #s==1 then n=s[1];p=brakes[n] or brakes[n%2==0 and 6 or 5]
+  elseif #s==2 then n=math.sqrt(s[1]^2+s[2]^2);p=diagonal[s[1]*100+s[2]] end
+  if not p then return end
   local last,phase,a=n,0,acceleration/20
+  if p[5] and p[5]<a/20 then a=drone.setAcceleration(p[5]*20) end
   -- Each read costs a tick, so reads count time without trusting the clock to move.
   for reads=1,(n/8+3)*20 do
     if phase==3 then break end

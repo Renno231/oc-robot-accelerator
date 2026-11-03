@@ -604,3 +604,78 @@ class AgentRestartTests(unittest.TestCase):
           HELD=3;command('status');local ready=decoded(1)
           assert(#SENT==1 and ready.freeMemory==32000 and ready.held==3 and ready.cargo[1].size==3)
         ''')
+
+
+class AgentFlightTests(unittest.TestCase):
+    def test_whole_block_moves_brake_onto_the_target_without_polling(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().AGENT = AGENT_PREFIX + Path('drone-logistics/usr/lib/logistics/drone/agent.lua').read_text()
+        lua.execute('''
+          -- OC entity/Drone.scala onUpdate while running; every component call takes one tick.
+          local P,V,G,A,TICK={0,0,0},{0,0,0},{0,0,0},.1,0
+          local function tick()
+            local d,dist={},0
+            for i=1,3 do d[i]=G[i]-P[i];dist=dist+d[i]^2 end
+            dist=math.sqrt(dist)
+            if dist>0 and (dist>.005 or V[1]^2+V[2]^2+V[3]^2>.005) then
+              local a=math.min(A,dist)/dist
+              for i=1,3 do V[i]=math.max(-.4,math.min(.4,V[i]+d[i]*a)) end
+            else for i=1,3 do V[i]=0;P[i]=G[i] end end
+            for i=1,3 do P[i]=P[i]+V[i];V[i]=V[i]*.8 end
+            TICK=TICK+1
+            -- How far the drone strays sideways from the line of its current leg.
+            local l=LEGS and LEGS[#LEGS]
+            if l then
+              local q,dd,t={},0,0
+              for i=1,3 do q[i]=P[i]-l.from[i];dd=dd+l.d[i]^2;t=t+q[i]*l.d[i] end
+              local side=0;for i=1,3 do side=side+(q[i]-t/dd*l.d[i])^2 end
+              l.side=math.max(l.side,math.sqrt(side))
+            end
+          end
+          local function call(f) return function(...) local r=f(...);tick();return r end end
+          local function offset() return math.sqrt((G[1]-P[1])^2+(G[2]-P[2])^2+(G[3]-P[3])^2) end
+          LEGS={}
+          local drone={inventorySize=function() return 4 end,count=function() return 0 end,
+            getAcceleration=function() return 2 end,getMaxVelocity=function() return 8 end,
+            getOffset=call(offset),getVelocity=call(function() return math.sqrt(V[1]^2+V[2]^2+V[3]^2)*20 end),
+            setAcceleration=call(function(v) A=math.max(0,math.min(.1,v/20));return A*20 end),
+            move=call(function(dx,dy,dz)
+              LEGS[#LEGS+1]={d={dx,dy,dz},from={G[1],G[2],G[3]},start=TICK,polls=0,side=0}
+              G[1],G[2],G[3]=G[1]+dx,G[2]+dy,G[3]+dz end)}
+          component={list=function(kind) return function() return kind end end,
+            proxy=function(kind) return kind=='drone' and drone or {getStackInInternalSlot=function() end} end}
+          computer={energy=function() return 5000 end,freeMemory=function() return 32000 end,uptime=function() return TICK/20 end,
+            pullSignal=function(timeout)
+              if not timeout or offset()==0 then return coroutine.yield() end
+              LEGS[#LEGS].polls=LEGS[#LEGS].polls+1
+              for _=1,math.max(1,math.floor(timeout*20+.5)) do tick() end
+            end}
+          local modem={send=function(_,_,_,kind) if kind=='report' then for _,l in ipairs(LEGS) do l.done=l.done or TICK end end end}
+          -- Straight, two-axis in the solved range, and one two-axis shape past it.
+          local route,at={{name='home',x=0,y=0,z=0}},{0,0,0}
+          for i,d in ipairs({{0,1,1},{8,-1,0},{0,3,-2},{1,0,0},{-4,0,-13},{0,0,-7},{2,0,2},{0,5,20}}) do
+            for k=1,3 do at[k]=at[k]+d[k] end
+            route[#route+1]={name='p'..i,x=at[1],y=at[2],z=at[3]}
+          end
+          local function text(r) local out={} for _,p in ipairs(r) do out[#out+1]=string.format('{name="%s",x=%d,y=%d,z=%d}',p.name,p.x,p.y,p.z) end return '{'..table.concat(out,',')..'}' end
+          local agent=coroutine.create(assert(load(AGENT)))
+          assert(coroutine.resume(agent,modem,'token','controller','d1',27103,0,0,0))
+          local last=route[#route]
+          assert(coroutine.resume(agent,'modem_message','local','controller',27103,0,'token','trip',1,
+            '{action={kind="test"},reserve=0,routes={take={{name="home",x=0,y=0,z=0}},candidate='..text(route)..
+            ',back={'..string.format('{name="%s",x=%d,y=%d,z=%d}',last.name,last.x,last.y,last.z)..'},home={'..
+            string.format('{name="%s",x=%d,y=%d,z=%d}',last.name,last.x,last.y,last.z)..'}}}'))
+          assert(#LEGS==8,#LEGS)
+          for i=1,3 do assert(P[i]==G[i] and P[i]==at[i]) end
+          -- Every solved shape lands by its plan: no polling, in the planned ticks, and
+          -- on the straight line between its points that the map checked clear.
+          local ticks={15,32,19,12,44,30,16}
+          for i=1,7 do
+            local l=LEGS[i];local stop=(LEGS[i+1] and LEGS[i+1].start or l.done)
+            assert(l.polls==0,('leg %d polled'):format(i))
+            assert(stop-l.start<=ticks[i],('leg %d took %d ticks'):format(i,stop-l.start))
+            assert(l.side<.01,('leg %d strayed %.3f'):format(i,l.side))
+          end
+          -- Outside the table it still arrives through the polling loop.
+          assert(LEGS[8].polls>0)
+        ''')
