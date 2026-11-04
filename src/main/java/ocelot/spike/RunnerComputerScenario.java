@@ -3,7 +3,7 @@ package ocelot.spike;
 import com.google.gson.*;
 import java.util.*;
 
-/** Normalized finite-powered computer and single-block placement boundary. */
+/** Normalized computer (case or rack) and single-block placement boundary. */
 final class RunnerComputerScenario {
     static double number(JsonElement e,String label) {
         if(e==null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) throw RunnerScenario.bad(label);
@@ -19,7 +19,7 @@ final class RunnerComputerScenario {
             if(!kind.equals("case") && !kind.equals("rack")) throw RunnerScenario.bad("controller kind");
             boolean rack=kind.equals("rack");
             JsonObject h=RunnerScenario.object(computer.get("hardware"),"tier,cpu,memory,cards,storage,bootDrive"+(rack?",buses":""));
-            RunnerScenario.integer(h.get("tier"),1,3);RunnerScenario.componentName(h.get("cpu"));
+            if(rack || !new JsonPrimitive("creative").equals(h.get("tier"))) RunnerScenario.integer(h.get("tier"),1,3);RunnerScenario.componentName(h.get("cpu"));
             for(String key:new String[]{"memory","cards","storage"}) {
                 JsonArray a=RunnerScenario.array(h.get(key),rack?4:key.equals("cards")?3:2);
                 if(!key.equals("cards") && a.size()==0) throw RunnerScenario.bad("computer memory/storage");

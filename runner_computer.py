@@ -1,4 +1,4 @@
-"""Shape-only contract for a finite-powered v4 OpenOS case and placed OC blocks."""
+"""Shape-only contract for a v4 OpenOS case or rack and placed OC blocks."""
 import math
 
 
@@ -16,7 +16,9 @@ def normalize(value, region, directory='program'):
     rack = kind == 'rack'
     h = _object(value['hardware'], ['tier', 'cpu', 'memory', 'cards', 'storage', 'bootDrive'] + (['buses'] if rack else []),
                 ['tier', 'cpu', 'memory', 'storage', 'bootDrive'])
-    hardware = {'tier': _integer(h['tier'], 1, 3), 'cpu': _component_name(h['cpu'])}
+    # A case may be creative (OC's own infinite power); a rack server has no creative tier.
+    tier = 'creative' if h['tier'] == 'creative' and not rack else _integer(h['tier'], 1, 3)
+    hardware = {'tier': tier, 'cpu': _component_name(h['cpu'])}
     for key, limit in [('memory', 4 if rack else 2), ('cards', 4 if rack else 3), ('storage', 4 if rack else 2)] + ([('buses', 3)] if rack else []):
         hardware[key] = [_component_name(n) for n in _array(h.get(key, []), limit)]
     if not hardware['memory'] or not hardware['storage']: raise ValueError('computer requires memory and storage')

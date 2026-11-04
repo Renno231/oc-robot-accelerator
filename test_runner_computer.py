@@ -32,6 +32,8 @@ class ComputerScenarioTests(unittest.TestCase):
             (root/'scenario.json').write_text(json.dumps(v))
             spec=scenario.load(root/'scenario.json');scenario.freeze(spec,Path(t)/'inputs')
             self.assertEqual((Path(t)/'inputs/program/main.lua').read_text(),'return true')
+        bad=copy.deepcopy(v);bad['controller']['hardware']['tier']='creative'
+        with self.assertRaises(ValueError): scenario.normalize(bad)
         bad=copy.deepcopy(v);bad['computer']=old
         with self.assertRaises(ValueError): scenario.normalize(bad)
         for key,raw in [('kind','creative'),('kind','unknown')]:
@@ -96,7 +98,7 @@ class ComputerScenarioTests(unittest.TestCase):
         v['drones'] = []; self.assertEqual(scenario.normalize(v)['drones'], [])
 
     def test_new_fields_reject_bad_shapes_and_bounds(self):
-        cases = [(['computer'], []), (['computer', 'hardware', 'tier'], 'creative'),
+        cases = [(['computer'], []), (['computer', 'hardware', 'tier'], 'Creative'),
                  (['computer', 'hardware', 'tier'], True), (['computer', 'hardware', 'tier'], 4),
                  (['computer', 'hardware', 'memory'], []), (['computer', 'hardware', 'storage'], []),
                  (['computer', 'hardware', 'bootDrive'], 1), (['computer', 'hardware', 'cards'], ['wlancard2'] * 4),
@@ -117,6 +119,9 @@ class ComputerScenarioTests(unittest.TestCase):
                 for key in path[:-1]: target = target[key]
                 target[path[-1]] = replacement
                 with self.assertRaises(ValueError): scenario.normalize(v)
+        v = valid(); v['computer']['hardware']['tier'] = 'creative'
+        n = scenario.normalize(v); self.assertEqual(n['computer']['hardware']['tier'], 'creative')
+        self.assertEqual(n, scenario.normalize(n))
         for field in ('position', 'hardware', 'program'):
             v = valid(); del v['computer'][field]
             with self.assertRaises(ValueError): scenario.normalize(v)

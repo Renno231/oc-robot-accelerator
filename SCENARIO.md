@@ -268,11 +268,13 @@ A schema-4 `computer` has a position, a native case recipe and its own program t
 "blocks": [{"position": [-4,65,2], "block": "opencomputers:capacitor", "energy": 1600}]
 ```
 
-Case tier is 1–3 (finite power only), memory is 1–2 modules, cards up to three,
+Case tier is 1–3 (finite power, fed by placed blocks such as the capacitor above) or
+`"creative"`, OC's creative case, which powers itself and its network; a rack is
+tier 1–3 only. Memory is 1–2 modules, cards up to three,
 storage is 1–2 HDDs, and `bootDrive` is a zero-based storage index. CPU, memory,
 storage and bootDrive are required. The case's own host-aware native slot validator
 checks component kinds/tiers; the real machine checks CPU, RAM and component limits.
-No upgrades, robot containers, presets or creative power case are added for computers.
+No upgrades, robot containers or presets are added for computers.
 The pinned BIOS/OpenOS, frozen program paths and entry wrapper are exactly the robot
 program mechanism, including `require`, console capture, return/error status and
 shutdown. Program remains nested inside `computer`; there is no root-level `program`

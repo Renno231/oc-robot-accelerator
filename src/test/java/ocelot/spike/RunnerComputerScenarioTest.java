@@ -30,6 +30,7 @@ public class RunnerComputerScenarioTest {
         c.addProperty("unexpected",true);rejects(v);c.remove("unexpected");
         c.addProperty("kind","creative");rejects(v);
         c.addProperty("kind","case");rejects(v);
+        c.addProperty("kind","rack");h.addProperty("tier","creative");rejects(v);
     }
     @Test public void secondComputerHasSeparateProgramAndPosition() throws Exception {
         JsonObject v=fixture();JsonObject second=new JsonParser().parse(v.get("computer").toString()).getAsJsonObject();
@@ -39,8 +40,10 @@ public class RunnerComputerScenarioTest {
         second.getAsJsonObject("program").addProperty("directory","second-program");second.add("position",v.getAsJsonObject("computer").get("position"));rejects(v);
         second.add("position",new JsonParser().parse("[-1,65,0]"));v.remove("computer");rejects(v);
     }
-    @Test public void finiteHardwareAndBaselineOnly() throws Exception {
-        JsonObject v=fixture();v.getAsJsonObject("computer").getAsJsonObject("hardware").addProperty("tier","creative");rejects(v);
+    @Test public void hardwareAndBaselineOnly() throws Exception {
+        JsonObject v=fixture();v.getAsJsonObject("computer").getAsJsonObject("hardware").addProperty("tier","creative");
+        assertEquals("creative",RunnerScenario.parse(v.toString()).v4.computer.getAsJsonObject("hardware").get("tier").getAsString());
+        v.getAsJsonObject("computer").getAsJsonObject("hardware").addProperty("tier","Creative");rejects(v);
         v=fixture();v.getAsJsonObject("execution").addProperty("mode","coordinated");assertEquals("coordinated",RunnerScenario.parse(v.toString()).mode);
         v=fixture();v.getAsJsonObject("computer").getAsJsonObject("program").addProperty("entry","../main.lua");rejects(v);
         v=fixture();v.getAsJsonObject("computer").getAsJsonObject("hardware").addProperty("bootDrive",1);rejects(v);

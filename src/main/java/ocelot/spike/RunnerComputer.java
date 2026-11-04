@@ -17,7 +17,7 @@ import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
 
-/** Native finite-powered case slots and the existing OpenOS wrapper/outcome mechanism. */
+/** Native case or rack slots and the existing OpenOS wrapper/outcome mechanism. */
 final class RunnerComputer {
     boolean storageRoomChestRequested() {return program.storageRoomChestRequested();}
     void storageRoomChestPlaced() {machine.signal("storage_room_chest_placed");}
@@ -100,6 +100,11 @@ final class RunnerComputer {
     boolean prepare(long tick) throws Exception {
         if(started) return true;
         if(tick<3 || machine.node().network()==null) return false;
+        // A creative case fills its network on OC's power tick, every tickFrequency ticks of world time.
+        // Make that fill now, as the case itself does, so the run starts on the same tick as any case
+        // (drones are off until then and fall).
+        if(!isRack() && spec.getAsJsonObject("hardware").get("tier").getAsString().equals("creative"))
+            ((Connector)machine.node()).changeBuffer(Double.POSITIVE_INFINITY);
         IInventory inventory=(IInventory)host;
         // Borrow the actual configured HDD environment, exactly like RunnerProgram's robot observer.
         scala.Option<?>[] components=(scala.Option<?>[])host.getClass().getMethod("components").invoke(host);
