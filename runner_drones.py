@@ -173,7 +173,7 @@ def normalize(value):
         devices = [(d, True) for d in _array(value.get('drones', []), MAX_DRONES)]
         devices += [(d, False) for d in _array(value.get('microcontrollers', []), 16)]
         for d, is_drone in devices:
-            _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy'] + (['inventory'] if is_drone else []),
+            _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy'] + (['inventory', 'off'] if is_drone else []),
                     ['position', 'hardware', 'eeprom'])
             h = _object(d['hardware'], ['tier', 'cpu', 'memory', 'cards', 'upgrades'], ['tier', 'cpu', 'memory'])
             hardware = {'tier': 'creative' if h['tier'] == 'creative' else _integer(h['tier'], 1, 2),
@@ -189,6 +189,10 @@ def normalize(value):
             entry = {'position': _inside(d['position'], region), 'hardware': hardware,
                      'eeprom': eeprom, 'eepromData': data}
             if is_drone: entry['inventory'] = slots(d.get('inventory', []), True, 8)
+            if d.get('off', False) is not False:
+                # A drone that starts powered off, as one not yet placed; a start_drone action starts it.
+                if d['off'] is not True: raise ValueError('drone off must be true or false')
+                entry['off'] = True
             relative(entry['eeprom'])
             if 'energy' in d:
                 energy = d['energy']
@@ -271,16 +275,21 @@ def normalize(value):
         if not drone_mode: raise ValueError('drone actions require drone mode')
         result['droneActions'] = []
         for action in _array(value['droneActions'], 64):
-            _object(action, ['action', 'drone', 'to', 'request'], ['action', 'drone', 'to', 'request'])
-            if action['action'] != 'move_drone': raise ValueError('unknown drone action')
+            # move_drone carries a drone to a place; stop_drone powers one off (as running out of energy,
+            # or a player taking it), start_drone powers one on.
+            kind = action.get('action')
+            if kind not in ('move_drone', 'stop_drone', 'start_drone'): raise ValueError('unknown drone action')
+            move = kind == 'move_drone'
+            _object(action, ['action', 'drone', 'request'] + (['to'] if move else []),
+                    ['action', 'drone', 'request'] + (['to'] if move else []))
             req = _object(action['request'], ['computer', 'marker', 'signal'], ['computer', 'marker', 'signal'])
             index = _integer(req['computer'], 0, 1)
             if ('computer' if index == 0 else 'secondComputer') not in value: raise ValueError('drone action computer absent')
-            result['droneActions'].append({'action': 'move_drone',
-                'drone': _integer(action['drone'], 0, len(drones) - 1),
-                'to': _inside(action['to'], region),
-                'request': {'computer': index, 'marker': relative(req['marker']),
-                            'signal': _text(req['signal'], PROPERTY, 64)}})
+            entry = {'action': kind, 'drone': _integer(action['drone'], 0, len(drones) - 1)}
+            if move: entry['to'] = _inside(action['to'], region)
+            entry['request'] = {'computer': index, 'marker': relative(req['marker']),
+                                'signal': _text(req['signal'], PROPERTY, 64)}
+            result['droneActions'].append(entry)
     result['expect']['containers'] = []
     assembly_positions = [b['position'] for r in result.get('robots', []) if 'assembly' in r for b in r['assembly']['blocks']]
     for c in _array(extended.get('containers', []), 128):

@@ -152,6 +152,10 @@ final class RunnerDrones {
         for(JsonElement e:spec.v4.microcontrollers) {RunnerMicrocontrollers sensor=new RunnerMicrocontrollers(e.getAsJsonObject(),world,root);microcontrollers.add(sensor);sensor.setup();}
         if(Files.isRegularFile(root.resolve("program/route-metrics-enabled"))) routeMetrics=new RunnerRouteMetrics(root);
     }
+    private boolean off(int index) {
+        JsonObject d=spec.v4.drones.get(index).getAsJsonObject();
+        return d.has("off") && d.get("off").getAsBoolean();
+    }
     static String state(Drone drone) throws Exception {
         Field field=drone.machine().getClass().getDeclaredField("state");field.setAccessible(true);
         Object stack=field.get(drone.machine());synchronized(stack) {return String.valueOf(stack.getClass().getMethod("top").invoke(stack));}
@@ -182,6 +186,11 @@ final class RunnerDrones {
                 // Authorized placement equivalent: preserve inventory/EEPROM and reset the public target.
                 drone.setTarget(new Vec3d(x,y,z));
             }
+            public void power(int index,boolean on) {
+                Drone drone=drones.get(index);
+                if(on) {if(!drone.start()) throw new IllegalStateException("drone "+index+" would not start: "+drone.machine().lastError());}
+                else drone.machine().stop();
+            }
             public void signal(int index,String name) {controller(index).signal(name);}
         });
         if(!started) {
@@ -200,7 +209,7 @@ final class RunnerDrones {
                 }
             }
             recording=new RunnerRecording(root,spec.maxBytes,spec.onFull);sample("initial",tick);
-            for(int i=0;i<drones.size();i++) if(!drones.get(i).start())
+            for(int i=0;i<drones.size();i++) if(!off(i) && !drones.get(i).start())
                 throw new IllegalStateException("drone "+i+" would not start: "+drones.get(i).machine().lastError());
             started=true;
         } else {

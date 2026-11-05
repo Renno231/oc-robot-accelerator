@@ -45,6 +45,17 @@ class DroneScenarioTests(unittest.TestCase):
         with self.assertRaises(ValueError): scenario.normalize(invalid)
         invalid = copy.deepcopy(value); invalid['droneActions'][0]['request']['marker'] = '../escape'
         with self.assertRaises(ValueError): scenario.normalize(invalid)
+        # stop_drone and start_drone take no place; a drone may start off.
+        power = copy.deepcopy(value); power['drones'][0]['off'] = True
+        power['droneActions'] = [{'action': kind, 'drone': 0,
+            'request': {'computer': 0, 'marker': 'home/' + kind, 'signal': kind}} for kind in ('start_drone', 'stop_drone')]
+        normalized = scenario.normalize(power)
+        self.assertEqual(normalized, scenario.normalize(normalized))
+        self.assertTrue(normalized['drones'][0]['off'])
+        invalid = copy.deepcopy(power); invalid['droneActions'][0]['to'] = [0, 65, 0]
+        with self.assertRaises(ValueError): scenario.normalize(invalid)
+        invalid = copy.deepcopy(power); invalid['drones'][0]['off'] = 'yes'
+        with self.assertRaises(ValueError): scenario.normalize(invalid)
 
     def test_six_and_sixteen_drones_and_expected_rows(self):
         for count in (6, 16):

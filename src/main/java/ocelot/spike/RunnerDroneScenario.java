@@ -110,7 +110,8 @@ final class RunnerDroneScenario {
         }
         for(JsonElement e:devices) {
             JsonObject d=e.getAsJsonObject();
-            RunnerScenario.fields(d,d.has("energy")?"position,hardware,eeprom,eepromData,inventory,energy":"position,hardware,eeprom,eepromData,inventory");
+            RunnerScenario.fields(d,"position,hardware,eeprom,eepromData,inventory"+(d.has("energy")?",energy":"")+(d.has("off")?",off":""));
+            if(d.has("off") && !(d.get("off").isJsonPrimitive() && d.get("off").getAsJsonPrimitive().isBoolean())) throw RunnerScenario.bad("drone off");
             spec.inside(RunnerScenario.position(d.get("position")));
             RunnerScenario.path(RunnerScenario.string(d.get("eeprom")));
             if(!d.get("eeprom").getAsString().endsWith(".lua")) throw RunnerScenario.bad("EEPROM Lua path");
@@ -169,10 +170,13 @@ final class RunnerDroneScenario {
             }
         }
         for(JsonElement e:droneActions) {
-            JsonObject action=RunnerScenario.object(e,"action,drone,to,request");
-            if(!"move_drone".equals(RunnerScenario.string(action.get("action")))) throw RunnerScenario.bad("unknown drone action");
+            JsonElement named=e.isJsonObject()?e.getAsJsonObject().get("action"):null;
+            boolean move=named!=null && named.isJsonPrimitive() && "move_drone".equals(named.getAsString());
+            JsonObject action=RunnerScenario.object(e,move?"action,drone,to,request":"action,drone,request");
+            String kind=RunnerScenario.string(action.get("action"));
+            if(!kind.equals("move_drone") && !kind.equals("stop_drone") && !kind.equals("start_drone")) throw RunnerScenario.bad("unknown drone action");
             RunnerScenario.integer(action.get("drone"),0,drones.size()-1);
-            spec.inside(RunnerScenario.position(action.get("to")));
+            if(move) spec.inside(RunnerScenario.position(action.get("to")));
             JsonObject request=RunnerScenario.object(action.get("request"),"computer,marker,signal");
             int index=RunnerScenario.integer(request.get("computer"),0,1);
             if((index==0?computer:secondComputer)==null) throw RunnerScenario.bad("drone action computer absent");
