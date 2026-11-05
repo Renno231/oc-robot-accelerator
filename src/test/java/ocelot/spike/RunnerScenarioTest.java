@@ -135,7 +135,7 @@ public class RunnerScenarioTest {
         JsonObject value = fixture(); value.addProperty("unexpected", 1); rejects(value);
         value = fixture(); value.getAsJsonObject("execution").addProperty("maxTicks", true); rejects(value);
         value = fixture(); value.getAsJsonObject("program").addProperty("entry", "../main.lua"); rejects(value);
-        value = fixture(); value.getAsJsonObject("world").getAsJsonObject("region").add("max", new JsonParser().parse("[100,68,100]")); rejects(value);
+        value = fixture(); value.getAsJsonObject("world").getAsJsonObject("region").add("max", new JsonParser().parse("[600,68,100]")); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").addProperty("energy", "NaN"); rejects(value);
         value = fixture(); value.getAsJsonObject("observations").addProperty("everyTicks", 0); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").getAsJsonArray("inventory").add(new JsonParser().parse("{\"slot\":1,\"item\":\"minecraft:stone\",\"count\":65,\"metadata\":0,\"nbt\":\"{}\"}")); rejects(value);

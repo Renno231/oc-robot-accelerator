@@ -181,10 +181,10 @@ def normalize(value):
     bounds = _object(world['region'], ['min', 'max'], ['min', 'max'])
     region = {key: _position(bounds[key]) for key in ('min', 'max')}
     dimensions = [b - a + 1 for a, b in zip(region['min'], region['max'])]
-    if any(d <= 0 for d in dimensions) or math.prod(dimensions) > 32768:
+    if any(d <= 0 for d in dimensions) or math.prod(dimensions) > 65536:
         raise ValueError('region cell bound exceeded or inverted region')
     if ((region['max'][0] // 16 - region['min'][0] // 16 + 1) *
-            (region['max'][2] // 16 - region['min'][2] // 16 + 1)) > 64:
+            (region['max'][2] // 16 - region['min'][2] // 16 + 1)) > 256:
         raise ValueError('region chunk bound exceeded')
     blocks = []
     for block in _array(world.get('blocks', []), 128):

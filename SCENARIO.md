@@ -368,7 +368,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 | `id` | Scenario name matching `[a-z][a-z0-9-]{0,62}`. Required. Each job also gets its own generated ID. |
 | `program.directory` | Folder with your Lua program, inside the scenario folder. Required. |
 | `program.entry` | `.lua` file to run, relative to that folder. Default `main.lua`. |
-| `world.region` | Box (`min`/`max`, inclusive) that's set up and recorded. Required. X and Z within ±1,000,000, Y from 1 to 254. At most 32,768 blocks and 64 chunks. |
+| `world.region` | Box (`min`/`max`, inclusive) that's set up and recorded. Required. X and Z within ±1,000,000, Y from 1 to 254. At most 65,536 blocks, so the first observation, which lists every block of the region, stays within its 8 MiB line limit; at most 256 chunks, forced 16 to a Forge ticket. |
 | `world.source` | Optional folder with a world (`level.dat`) to start from. It's copied first. Omit to start from a fresh world. |
 | `world.blocks` | Up to 128 `{min,max,block,properties?}` fills inside the region, applied in order. |
 | `robot.position` | Starting position inside the region. Must be air after setup. Required. |

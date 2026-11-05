@@ -66,9 +66,9 @@ final class RunnerScenario {
             workspace(position(fullBuild.get("chest")));
             if(fullBuild.has("extraChests"))for(JsonElement e:fullBuild.getAsJsonArray("extraChests"))workspace(position(e.getAsJsonObject().get("position")));
         }
-        if (regionCells() > 32768 || regionCells() < 1 ||
+        if (regionCells() > 65536 || regionCells() < 1 ||
             ((long)Math.floorDiv(max[0],16)-Math.floorDiv(min[0],16)+1) *
-            ((long)Math.floorDiv(max[2],16)-Math.floorDiv(min[2],16)+1) > 64) throw bad("region bounds");
+            ((long)Math.floorDiv(max[2],16)-Math.floorDiv(min[2],16)+1) > 256) throw bad("region bounds");
         blocks = array(world.get("blocks"),128);
         for (JsonElement element : blocks) {
             JsonObject block = object(element,"min,max,block,properties");

@@ -43,7 +43,7 @@ public final class RobotSpike {
     private Robot robot;
     private EEPROM eeprom;
     private ForgeChunkManager.Ticket ticket;
-    private final java.util.List<ForgeChunkManager.Ticket> buildTickets=new java.util.ArrayList<>();
+    private final java.util.List<ForgeChunkManager.Ticket> runnerTickets=new java.util.ArrayList<>();
     private ItemStack firmware;
     private ItemStack initialTool;
     private long started, tickStarted, ticks, maxTicks, timeoutNanos, cpuTickNanos, taskStarted;
@@ -181,23 +181,25 @@ public final class RobotSpike {
         }
     }
 
+    // Forces the chunks over x0..x1, z0..z1 (block coordinates). Forge holds at most 25 chunks a
+    // ticket by default and drops the first ones forced past that, so each ticket takes 16.
+    private void forceChunks(int x0,int z0,int x1,int z1) {
+        ForgeChunkManager.Ticket current=null;int count=0;
+        for(int x=Math.floorDiv(x0,16);x<=Math.floorDiv(x1,16);x++)
+            for(int z=Math.floorDiv(z0,16);z<=Math.floorDiv(z1,16);z++) {
+                if(count++%16==0){current=ForgeChunkManager.requestTicket(this,world,ForgeChunkManager.Type.NORMAL);if(current==null)throw new IllegalStateException("Chunk ticket unavailable");runnerTickets.add(current);}
+                ForgeChunkManager.forceChunk(current,new net.minecraft.util.math.ChunkPos(x,z));
+            }
+    }
+
     private void setup() throws Exception {
         if (runner != null) {
-            if(ticket==null) {
-            ticket = ForgeChunkManager.requestTicket(this, world, ForgeChunkManager.Type.NORMAL);
-            if (ticket == null) throw new IllegalStateException("Chunk ticket unavailable");
-            for (int x = Math.floorDiv(runnerScenario.min[0], 16); x <= Math.floorDiv(runnerScenario.max[0], 16); x++)
-                for (int z = Math.floorDiv(runnerScenario.min[2], 16); z <= Math.floorDiv(runnerScenario.max[2], 16); z++)
-                    ForgeChunkManager.forceChunk(ticket, new net.minecraft.util.math.ChunkPos(x, z));
-            if(runnerScenario.fullBuild!=null) {
-                int[] lo=RunnerScenario.position(runnerScenario.fullBuild.get("min")),hi=RunnerScenario.position(runnerScenario.fullBuild.get("max"));
-                ForgeChunkManager.Ticket current=null;int count=0;
-                for(int x=Math.floorDiv(lo[0]-1,16);x<=Math.floorDiv(hi[0]+1,16);x++)
-                    for(int z=Math.floorDiv(lo[2]-1,16);z<=Math.floorDiv(hi[2]+1,16);z++) {
-                        if(count%16==0){current=ForgeChunkManager.requestTicket(this,world,ForgeChunkManager.Type.NORMAL);if(current==null)throw new IllegalStateException("Full build chunk ticket unavailable");buildTickets.add(current);}
-                        ForgeChunkManager.forceChunk(current,new net.minecraft.util.math.ChunkPos(x,z));count++;
-                    }
-            }
+            if(runnerTickets.isEmpty()) {
+                forceChunks(runnerScenario.min[0],runnerScenario.min[2],runnerScenario.max[0],runnerScenario.max[2]);
+                if(runnerScenario.fullBuild!=null) {
+                    int[] lo=RunnerScenario.position(runnerScenario.fullBuild.get("min")),hi=RunnerScenario.position(runnerScenario.fullBuild.get("max"));
+                    forceChunks(lo[0]-1,lo[2]-1,hi[0]+1,hi[2]+1);
+                }
             }
             runner.setup(); return;
         }
@@ -380,8 +382,8 @@ public final class RobotSpike {
         } catch (Exception e) { e.printStackTrace(); }
         finally {
             if (ticket != null) { ForgeChunkManager.releaseTicket(ticket); ticket = null; }
-            for(ForgeChunkManager.Ticket extra:buildTickets)ForgeChunkManager.releaseTicket(extra);
-            buildTickets.clear();
+            for(ForgeChunkManager.Ticket extra:runnerTickets)ForgeChunkManager.releaseTicket(extra);
+            runnerTickets.clear();
             int hold = runnerScenario == null ? 0 : runnerScenario.viewerHoldSeconds;
             if (hold == 0) server.initiateShutdown();
             else {   // keep the finished world up for the camera players

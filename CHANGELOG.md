@@ -7,6 +7,7 @@
 - Up to eight robots in a schema-4 scenario (was four).
 - Robot upgrades from other mods by registry name (`modid:item[:metadata]`), such as Computronics' chat upgrade, with the mod supplied through `ROBOT_RUNNER_EXTRA_MODS`.
 - A schema-4 controller case can be creative (`"tier": "creative"`), OC's self-powered case.
+- Regions up to 65,536 blocks and 256 chunks (was 32,768 and 64). Chunks are forced 16 to a Forge ticket, since Forge drops the first chunks forced past 25 on one ticket.
 - Background chunk reads and OC saves are never refused. A cap of 4,096 used to kick a viewer that rejoined at view distance 32 ("Internal server error") and could leave a chunk loading forever.
 
 ## 0.1.0-rc.2 (not published)
