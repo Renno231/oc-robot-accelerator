@@ -146,7 +146,7 @@ public class RunnerScenarioTest {
     @Test public void rejectsDuplicateKeysAndOversized() throws Exception {
         try { RunnerScenario.parse("{\"schemaVersion\":1,\"schemaVersion\":1}"); fail(); }
         catch (IllegalArgumentException expected) { }
-        try { RunnerScenario.parse(new String(new char[128 * 1024 + 1]).replace('\0', 'x')); fail(); }
+        try { RunnerScenario.parse(new String(new char[512 * 1024 + 1]).replace('\0', 'x')); fail(); }
         catch (IllegalArgumentException expected) { }
     }
 }

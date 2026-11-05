@@ -148,7 +148,7 @@ final class RunnerProgram implements AutoCloseable {
                 if(Files.isDirectory(child)) {mkdir(disk,target);copyProgram(base,child,disk,entries,bytes);}
                 else if(Files.isRegularFile(child)) {
                     long size=Files.size(child); bytes[0]+=size;
-                    if(size>1024*1024 || bytes[0]>4*1024*1024) throw new IOException("Program byte limit");
+                    if(bytes[0]>4*1024*1024) throw new IOException("Program byte limit");
                     write(disk,target,Files.readAllBytes(child));
                 } else throw new IOException("Invalid program entry");
             }

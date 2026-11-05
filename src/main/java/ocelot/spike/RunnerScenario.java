@@ -156,7 +156,7 @@ final class RunnerScenario {
         }
     }
     static RunnerScenario parse(String json) {
-        if (json.getBytes(StandardCharsets.UTF_8).length > 128*1024) throw bad("manifest bytes");
+        if (json.getBytes(StandardCharsets.UTF_8).length > 512*1024) throw bad("manifest bytes");
         try {
             JsonReader reader = new JsonReader(new StringReader(json)); reader.setLenient(false);
             JsonElement element = unique(reader,0);

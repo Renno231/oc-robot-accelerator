@@ -42,7 +42,7 @@ For builder workloads, `"hardware": "builder-max"` selects a native survival tie
 }
 ```
 
-Each override replaces the whole field (arrays aren't merged), and `[]` empties an optional list. A preset is a complete hardware object like the one above; presets can't reference other presets. The file must be a regular file (not a link) inside the scenario folder, at most 128 KiB.
+Each override replaces the whole field (arrays aren't merged), and `[]` empties an optional list. A preset is a complete hardware object like the one above; presets can't reference other presets. The file must be a regular file (not a link) inside the scenario folder, at most 512 KiB.
 
 Each job saves a copy of the preset and the final resolved hardware in its `inputs/` folder, so editing a preset later only affects new jobs. Presets go through exactly the same checks as a hand-written recipe.
 
@@ -294,7 +294,7 @@ An optional `secondComputer` uses the same recipe and native power/boot/observat
 checks as `computer`. It requires a primary computer and a different position.
 Give it a separate scenario-local program directory (for example `client`);
 the two program sources and any source world must not overlap. Each program tree
-has the usual 4 MiB/256-entry/1 MiB-per-file bounds and is frozen independently.
+has the usual 4 MiB/256-entry bounds and is frozen independently.
 The second source is normalized to `second-program`; on each independent native
 HDD its entry still runs from `/home/program`. With two computers, success waits
 for **both** entries to return; an error on either fails the run. Results and samples
@@ -388,8 +388,8 @@ Registry IDs are up to 128 bytes, and item metadata is 0–32767. NBT is SNBT te
 
 Paths use `/`, stay inside the scenario folder, and can't be links, absolute paths, `..`, Windows reserved names, or names that differ only by case. The program, world, and output folders can't overlap.
 
-- Scenario file: 128 KiB, both as written and after the runner normalizes it.
-- Program folder: 4 MiB total, 256 entries, 1 MiB per file. Empty folders are kept.
+- Scenario file: 512 KiB, both as written and after the runner normalizes it.
+- Program folder: 4 MiB total and 256 entries; one file may take all of it. Empty folders are kept.
 - Source world: 256 MiB, 10,000 entries.
 
 Only use worlds you trust; the runner doesn't defend against malicious world files. Loaded computers, racks, and drones in the world fail setup, apart from the empty creative cases above. Schema 1/2 reserve the world path `opencomputers/robot-runner-disk`. Schema 3 always creates a fresh HDD.
