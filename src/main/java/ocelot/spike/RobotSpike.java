@@ -125,6 +125,7 @@ public final class RobotSpike {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST) public void startTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.START || !initialized || finished || !viewersJoined()) return;
+        freeViewers();
         tickStarted = System.nanoTime();
         Trace.tick = ++ticks;
     }
@@ -330,6 +331,23 @@ public final class RobotSpike {
         }
         return value;
     }
+
+    /** A camera moves as far in one of its own frames as an accelerated server runs ticks, which vanilla's
+     *  "moved too quickly" check rejects: it put the camera back where it last stood. That check is skipped for a
+     *  player just through a portal; mark every camera player so, each tick (a teleport confirmation clears it). */
+    private void freeViewers() {
+        if (runnerScenario == null) return;
+        for (String name : runnerScenario.viewers) {
+            net.minecraft.entity.player.EntityPlayerMP p = server.getPlayerList().getPlayerByUsername(name);
+            if (p == null) continue;
+            try {
+                if (invulnerable == null) invulnerable = net.minecraftforge.fml.common.ObfuscationReflectionHelper.findField(
+                    net.minecraft.entity.player.EntityPlayerMP.class, "field_184851_cj");
+                invulnerable.setBoolean(p, true);
+            } catch (IllegalAccessException e) { throw new IllegalStateException(e); }
+        }
+    }
+    private Field invulnerable;
 
     /** With execution.viewer, nothing is set up or run until every camera player has joined; the clock starts then. */
     private boolean viewersJoined() {
