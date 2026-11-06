@@ -95,6 +95,12 @@ public final class RobotSpike {
     }
 
     @Mod.EventHandler public void started(FMLServerStartedEvent event) throws Exception {
+        // OC registers drones to be sent to players within 80 blocks, so a camera farther out never saw them.
+        // Send them as far as players get chunks: EntityTracker caps a tracking range at the view distance.
+        net.minecraftforge.fml.common.registry.EntityRegistry.EntityRegistration drone =
+            net.minecraftforge.fml.common.registry.EntityRegistry.instance().lookupModSpawn(li.cil.oc.common.entity.Drone.class, false);
+        Field range = drone.getClass().getDeclaredField("trackingRange");
+        range.setAccessible(true); range.setInt(drone, Integer.MAX_VALUE);
         server = net.minecraftforge.fml.common.FMLCommonHandler.instance().getMinecraftServerInstance();
         world = server.getWorld(0);
         mode = Pacing.mode();
@@ -127,9 +133,6 @@ public final class RobotSpike {
         if (event.phase != TickEvent.Phase.END || !initialized || finished || !watched) return;
         try {
             if (System.nanoTime() - started > timeoutNanos) { finish(false, "wall_limit"); return; }
-            int chunks = 0;
-            for (WorldServer dimension : server.worlds) chunks += dimension.getChunkProvider().getLoadedChunkCount();
-            if (chunks > maxChunks()) { finish(false, "chunk_limit:" + chunks); return; }
             if (runner != null) {
                 if (!runner.ready()) setup();
                 else {
@@ -168,6 +171,8 @@ public final class RobotSpike {
                 }
             }
             if (scenario.trace) {
+                int chunks = 0;
+                for (WorldServer dimension : server.worlds) chunks += dimension.getChunkProvider().getLoadedChunkCount();
                 JsonObject observation = snapshot();
                 observation.addProperty("kind", "tick"); observation.addProperty("loadedChunks", chunks);
                 observation.addProperty("tickWorkNanos", System.nanoTime() - tickStarted);
@@ -326,11 +331,6 @@ public final class RobotSpike {
         return value;
     }
 
-    /** Camera players load their own view (32 chunks each way at the viewer server's view distance) on top of the run's 2048. */
-    private int maxChunks() {
-        return 2048 + (runnerScenario == null ? 0 : runnerScenario.viewers.size() * 65 * 65);
-    }
-
     /** With execution.viewer, nothing is set up or run until every camera player has joined; the clock starts then. */
     private boolean viewersJoined() {
         if (watched) return true;
@@ -365,7 +365,6 @@ public final class RobotSpike {
             }
             result.addProperty("traceEnabled", runner == null && scenario.trace);
             result.addProperty("executionDelayMillis", li.cil.oc.Settings.get().executionDelay());
-            result.addProperty("maxLoadedChunks", maxChunks());
             result.addProperty("workerProgressLimitMillis", RunnerScheduler.workerLimitNanos() / 1000000L);
             if (runner == null && initialTool != null) {
                 result.addProperty("initialTool", initialTool.serializeNBT().toString());

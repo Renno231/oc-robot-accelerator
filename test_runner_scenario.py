@@ -94,8 +94,9 @@ class ScenarioContract(unittest.TestCase):
             with self.subTest(energy=energy), self.assertRaises(ValueError): self.load(data)
 
     def test_region_volumes_and_expectations_are_bounded(self):
-        for region in [{'min': [0, 64, 0], 'max': [100, 100, 100]},
-                       {'min': [0, 0, 0], 'max': [0, 64, 0]},
+        data = minimal(); data['world']['region'] = {'min': [-2000, 1, -2000], 'max': [2000, 254, 2000]}
+        self.load(data)   # any size: no cell or chunk limit
+        for region in [{'min': [0, 0, 0], 'max': [0, 64, 0]},
                        {'min': [2, 65, 2], 'max': [0, 64, 0]}]:
             data = minimal(); data['world']['region'] = region
             with self.subTest(region=region), self.assertRaises(ValueError): self.load(data)

@@ -67,9 +67,12 @@ public class RunnerScenarioTest {
         assertEquals(1728000, maximum(publicFixture, "maxTicks", 1728000).maxTicks);
         assertEquals(90000, maximum(publicFixture, "timeoutSeconds", 90000).timeoutSeconds);
         assertEquals(1728000, maximum(publicFixture, "stallTicks", 1728000).stallTicks);
-        assertEquals(33554432, spec.maxBytes);
+        assertEquals(Long.MAX_VALUE, spec.maxBytes);   // no limit unless set
         assertEquals("stop", spec.onFull);
-        JsonObject invalid = copy(publicFixture); invalid.getAsJsonObject("observations").addProperty("maxBytes", 1048575); rejects(invalid);
+        JsonObject invalid = copy(publicFixture); invalid.getAsJsonObject("observations").addProperty("maxBytes", 0); rejects(invalid);
+        JsonObject large = copy(publicFixture); large.getAsJsonObject("observations").addProperty("everyTicks", 6000);
+        large.getAsJsonObject("world").getAsJsonObject("region").add("max", new JsonParser().parse("[2000, 200, 2000]"));
+        assertEquals(6000, RunnerScenario.parse(large.toString()).everyTicks);
         invalid = copy(publicFixture); invalid.getAsJsonObject("observations").addProperty("onFull", true); rejects(invalid);
         invalid = copy(publicFixture); invalid.getAsJsonObject("execution").addProperty("maxTicks", 1728001); rejects(invalid);
         invalid = fixture(); invalid.getAsJsonObject("observations").addProperty("maxBytes", 33554432); rejects(invalid);
@@ -135,7 +138,6 @@ public class RunnerScenarioTest {
         JsonObject value = fixture(); value.addProperty("unexpected", 1); rejects(value);
         value = fixture(); value.getAsJsonObject("execution").addProperty("maxTicks", true); rejects(value);
         value = fixture(); value.getAsJsonObject("program").addProperty("entry", "../main.lua"); rejects(value);
-        value = fixture(); value.getAsJsonObject("world").getAsJsonObject("region").add("max", new JsonParser().parse("[600,68,100]")); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").addProperty("energy", "NaN"); rejects(value);
         value = fixture(); value.getAsJsonObject("observations").addProperty("everyTicks", 0); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").getAsJsonArray("inventory").add(new JsonParser().parse("{\"slot\":1,\"item\":\"minecraft:stone\",\"count\":65,\"metadata\":0,\"nbt\":\"{}\"}")); rejects(value);

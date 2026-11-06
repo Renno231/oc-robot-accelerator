@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -17,7 +18,6 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
 COPY_BYTES_LIMIT = 1024 * 1024 * 1024
 COPY_FILES_LIMIT = 10000
-RUNTIME_BYTES_LIMIT = 2 * 1024 * 1024 * 1024
 RUNTIME_FILES_LIMIT = 20000
 TRACE_LIMIT = 32 * 1024 * 1024
 LOG_LIMIT = 8 * 1024 * 1024
@@ -350,8 +350,8 @@ def execute(args, *, root=None, start=None, deadline=None, check=lambda: None,
             check()
             if overflow.is_set():
                 raise ValueError('output log byte bound exceeded')
-            _inventory(root, RUNTIME_BYTES_LIMIT, RUNTIME_FILES_LIMIT, deadline, live=True, check=check)
-            for name, cap in (('trace.ndjson', TRACE_LIMIT), ('observations.ndjson', 32 * 1024 * 1024),
+            _inventory(root, math.inf, RUNTIME_FILES_LIMIT, deadline, live=True, check=check)
+            for name, cap in (('trace.ndjson', TRACE_LIMIT),
                               ('program.log', RESULT_LIMIT), ('program-inputs.json', RESULT_LIMIT),
                               ('second-program.log',RESULT_LIMIT), ('second-program-inputs.json',RESULT_LIMIT),
                               ('observations-status.json', 64 * 1024), ('.observations-status.json.tmp', 64 * 1024),

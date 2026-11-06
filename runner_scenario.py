@@ -11,7 +11,6 @@ from supervisor import _inventory, _no_link
 
 MAX_TICKS = 1728000  # 24 simulated hours at 20 TPS; v1 retains its smaller limits.
 MAX_TIMEOUT_SECONDS = 90000
-OBSERVATION_BYTES = 32 * 1024 * 1024
 MANIFEST_BYTES = 512 * 1024
 PROGRAM_BYTES = 4 * 1024 * 1024
 PROGRAM_FILE_BYTES = 4 * 1024 * 1024
@@ -181,11 +180,7 @@ def normalize(value):
     bounds = _object(world['region'], ['min', 'max'], ['min', 'max'])
     region = {key: _position(bounds[key]) for key in ('min', 'max')}
     dimensions = [b - a + 1 for a, b in zip(region['min'], region['max'])]
-    if any(d <= 0 for d in dimensions) or math.prod(dimensions) > 65536:
-        raise ValueError('region cell bound exceeded or inverted region')
-    if ((region['max'][0] // 16 - region['min'][0] // 16 + 1) *
-            (region['max'][2] // 16 - region['min'][2] // 16 + 1)) > 256:
-        raise ValueError('region chunk bound exceeded')
+    if any(d <= 0 for d in dimensions): raise ValueError('inverted region')
     blocks = []
     for block in _array(world.get('blocks', []), 128):
         _object(block, ['min', 'max', 'block', 'properties'], ['min', 'max', 'block'])
@@ -282,12 +277,13 @@ def normalize(value):
                              'holdSeconds':_integer(viewer.get('holdSeconds',0),0,600)}
     observations = _object(value.get('observations', {}),
                            ['everyTicks'] if version == 1 else ['everyTicks', 'maxBytes', 'onFull'])
-    normalized_observations = {'everyTicks': _integer(observations.get('everyTicks', 20), 1, 200)}
+    normalized_observations = {'everyTicks': _integer(observations.get('everyTicks', 20), 1, 2**31 - 1)}
     if version >= 2:
         policy = observations.get('onFull', 'stop')
         if policy not in ('stop', 'fail'): raise ValueError('unsupported observation onFull policy')
-        normalized_observations.update(maxBytes=_integer(observations.get('maxBytes', OBSERVATION_BYTES),
-                                                        1024 * 1024, OBSERVATION_BYTES), onFull=policy)
+        normalized_observations['onFull'] = policy
+    if 'maxBytes' in observations:   # no limit unless the scenario sets one
+        normalized_observations['maxBytes'] = _integer(observations['maxBytes'], 1, 2**31 - 1)
     expect = _object(value.get('expect', {}), ['position', 'blocks', 'inventory'])
     expected_blocks = []
     for block in _array(expect.get('blocks', []), 256):

@@ -9,6 +9,6 @@
     "tool": {"item": "minecraft:diamond_pickaxe", "metadata": 0, "nbt": "{}"}
   },
   "execution": {"mode": "baseline", "maxTicks": 10000, "timeoutSeconds": 600, "executionDelayMillis": 12, "stallTicks": 0},
-  "observations": {"everyTicks": 20, "maxBytes": 33554432, "onFull": "stop"},
+  "observations": {"everyTicks": 20, "onFull": "stop"},
   "expect": {"blocks": [], "inventory": []}
 }

@@ -37,6 +37,13 @@ public class RunnerRecordingTest {
         assertEquals(1048576,Files.size(root().resolve("observations.ndjson")));
         assertFalse(Files.exists(root().resolve(".observations-status.json.tmp")));
     }
+    @Test public void noLimitTakesAnyLineSize() throws Exception {
+        try(RunnerRecording recorder=new RunnerRecording(root(),Long.MAX_VALUE,"stop")) {
+            assertTrue(recorder.record(line(9*1024*1024),"initial",0));
+            assertTrue(recorder.record("x","sample",20));
+        }
+        assertEquals(9*1024*1024+3,Files.size(root().resolve("observations.ndjson")));
+    }
     @Test public void initialOverflowAndFailPolicyNeverRetainOverCap() throws Exception {
         try(RunnerRecording recorder=new RunnerRecording(root(),1048576,"stop")) {
             try {recorder.record(line(1048576),"initial",3);fail();}
@@ -54,14 +61,13 @@ public class RunnerRecordingTest {
         }
         assertFalse(status(other).get("recordingStopped").getAsBoolean());
     }
-    @Test public void finalCanTriggerStopAndNoResumptionOrOversizedSampleAfterStop() throws Exception {
+    @Test public void finalCanTriggerStopAndNoResumptionAfterStop() throws Exception {
         try(RunnerRecording recorder=new RunnerRecording(root(),1048576,"stop")) {
             assertTrue(recorder.record(line(1048575),"initial",3));
             assertFalse(recorder.record("x","final",4));
-            try {recorder.record(line(8*1024*1024),"sample",5);fail();}
-            catch(IOException expected) {assertEquals("observation_limit",expected.getMessage());}
+            assertFalse(recorder.record(line(8*1024*1024),"sample",5));
         }
-        assertEquals(4,status(root()).get("lastObservedTick").getAsInt());
+        assertEquals(1,status(root()).get("recordsWritten").getAsInt());
     }
     @Test public void observedRobotAndRegionStillAdvanceStallAfterRecordingStops() throws Exception {
         RunnerObservations.StallClock clock=new RunnerObservations.StallClock();

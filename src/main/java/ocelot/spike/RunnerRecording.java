@@ -9,25 +9,25 @@ import java.nio.file.*;
 final class RunnerRecording implements Closeable {
     interface Publisher {void move(Path source,Path target) throws IOException;}
     interface StatusWriter {void write(OutputStream stream,byte[] payload) throws IOException;}
-    private static final int STATUS_LIMIT=64*1024, LINE_LIMIT=8*1024*1024;
+    private static final int STATUS_LIMIT=64*1024;
     private static final long RETRY_DELAY_MILLIS=25;
     private final Path root;
     private final OutputStream output;
     private final Publisher publisher;
     private final StatusWriter statusWriter;
-    private final int maxBytes;
+    private final long maxBytes;
     private final String policy;
     private long bytesWritten, recordsWritten, lastRecordedTick=-1, lastObservedTick=-1;
     private boolean stopped, finalRecorded, closed, failed;
 
-    RunnerRecording(Path root,int maxBytes,String policy) throws IOException {
+    RunnerRecording(Path root,long maxBytes,String policy) throws IOException {
         this(root,maxBytes,policy,(source,target)->Files.move(source,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING));
     }
-    RunnerRecording(Path root,int maxBytes,String policy,Publisher publisher) throws IOException {
+    RunnerRecording(Path root,long maxBytes,String policy,Publisher publisher) throws IOException {
         this(root,maxBytes,policy,publisher,(stream,payload)->stream.write(payload));
     }
-    RunnerRecording(Path root,int maxBytes,String policy,Publisher publisher,StatusWriter statusWriter) throws IOException {
-        if(maxBytes<1048576 || maxBytes>33554432 || !(policy.equals("stop") || policy.equals("fail")))
+    RunnerRecording(Path root,long maxBytes,String policy,Publisher publisher,StatusWriter statusWriter) throws IOException {
+        if(maxBytes<1 || !(policy.equals("stop") || policy.equals("fail")))
             throw new IllegalArgumentException("recording policy");
         this.root=root;this.maxBytes=maxBytes;this.policy=policy;this.publisher=publisher;this.statusWriter=statusWriter;
         output=Files.newOutputStream(root.resolve("observations.ndjson"),StandardOpenOption.CREATE_NEW);
@@ -42,7 +42,7 @@ final class RunnerRecording implements Closeable {
         if(closed || failed) throw new IOException("recording_closed");
         try {
             byte[] wire=RunnerObservations.wireLine(line);
-            if(tick<0 || wire.length>LINE_LIMIT) throw new IOException("observation_limit");
+            if(tick<0) throw new IOException("observation_limit");
             if(stopped) {lastObservedTick=tick;return false;}
             if(bytesWritten+wire.length>maxBytes) {
                 if(policy.equals("fail") || recordsWritten==0 || kind.equals("initial")) throw new IOException("observation_limit");

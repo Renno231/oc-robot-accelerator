@@ -34,7 +34,7 @@ class PublicScenarioContract(unittest.TestCase):
         self.assertEqual(value['schemaVersion'], 2)
         self.assertEqual(value['execution'], {'mode': 'baseline', 'maxTicks': 10000,
             'timeoutSeconds': 600, 'executionDelayMillis': 12, 'stallTicks': 0})
-        self.assertEqual(value['observations'], {'everyTicks': 20, 'maxBytes': 33554432, 'onFull': 'stop'})
+        self.assertEqual(value['observations'], {'everyTicks': 20, 'onFull': 'stop'})
         self.assertEqual(value, json.loads(Path('fixtures/runner-public-normalized.json').read_text()))
 
     def test_long_budget_inclusive_limits_and_explicit_modes(self):
@@ -59,14 +59,14 @@ class PublicScenarioContract(unittest.TestCase):
             value = public(); value['schemaVersion'] = version
             with self.subTest(version=version), self.assertRaises(ValueError): scenario.normalize(value)
 
-    def test_recording_policies_are_bounded_and_explicit(self):
-        for cap in [1048576, 33554432]:
+    def test_recording_has_no_size_or_cadence_ceiling(self):
+        for cap in [1, 1048575, 33554433, 2**31 - 1]:
             for policy in ['stop', 'fail']:
-                value = public(); value['observations'] = {'everyTicks': 200, 'maxBytes': cap, 'onFull': policy}
+                value = public(); value['observations'] = {'everyTicks': 6000, 'maxBytes': cap, 'onFull': policy}
                 self.assertEqual(scenario.normalize(value)['observations'], value['observations'])
-        for patch in [{'maxBytes': 1048575}, {'maxBytes': 33554433}, {'maxBytes': True},
+        for patch in [{'maxBytes': 0}, {'maxBytes': True},
                       {'maxBytes': 1048576.0}, {'onFull': 'rotate'}, {'onFull': None},
-                      {'everyTicks': 201}, {'unknown': 'stop'}]:
+                      {'everyTicks': 0}, {'unknown': 'stop'}]:
             value = public(); value['observations'] = patch
             with self.subTest(patch=patch), self.assertRaises(ValueError): scenario.normalize(value)
 

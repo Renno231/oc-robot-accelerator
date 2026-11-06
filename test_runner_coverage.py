@@ -81,7 +81,7 @@ class Coverage(unittest.TestCase):
 
     def test_invalid_status_does_not_discard_valid_recording(self):
         self.stream()
-        invalid = [dict(recordsWritten=True),dict(bytesWritten=-1),dict(maxBytes=33554433),dict(maxBytes=1048575),
+        invalid = [dict(recordsWritten=True),dict(bytesWritten=-1),dict(maxBytes=0),dict(maxBytes=1),
                    dict(lastObservedTick=0),dict(recordingStopped=True),dict(stopReason='byte_limit'),
                    dict(policy='unknown'),dict(schemaVersion=2),dict(finalRecorded=1),
                    dict(recordsWritten=0,bytesWritten=1,lastRecordedTick=None,finalRecorded=False)]

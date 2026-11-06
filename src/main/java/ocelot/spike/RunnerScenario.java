@@ -17,7 +17,8 @@ final class RunnerScenario {
     final String facing;
     final double energy;
     final Integer randomSeed;
-    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, maxBytes, autosaveWallSeconds, viewerHoldSeconds;
+    final int maxTicks, timeoutSeconds, delay, stallTicks, everyTicks, autosaveWallSeconds, viewerHoldSeconds;
+    final long maxBytes;   // the observation log's size limit, if the scenario sets one
     final List<String> viewers = new ArrayList<>();   // camera players the run waits for (execution.viewer)
     final boolean source;
     final RunnerDroneScenario v4;
@@ -66,9 +67,7 @@ final class RunnerScenario {
             workspace(position(fullBuild.get("chest")));
             if(fullBuild.has("extraChests"))for(JsonElement e:fullBuild.getAsJsonArray("extraChests"))workspace(position(e.getAsJsonObject().get("position")));
         }
-        if (regionCells() > 65536 || regionCells() < 1 ||
-            ((long)Math.floorDiv(max[0],16)-Math.floorDiv(min[0],16)+1) *
-            ((long)Math.floorDiv(max[2],16)-Math.floorDiv(min[2],16)+1) > 256) throw bad("region bounds");
+        if (regionCells() < 1) throw bad("region bounds");
         blocks = array(world.get("blocks"),128);
         for (JsonElement element : blocks) {
             JsonObject block = object(element,"min,max,block,properties");
@@ -119,8 +118,8 @@ final class RunnerScenario {
         if (delay!=0 && delay!=12) throw bad("delay");
         stallTicks=integer(execution.get("stallTicks"),0,version==1?10000:1728000);
         JsonObject observations=object(root.get("observations"),version==1?"everyTicks":"everyTicks,maxBytes,onFull");
-        everyTicks=integer(observations.get("everyTicks"),1,200);
-        maxBytes=version==1?33554432:integer(observations.get("maxBytes"),1048576,33554432);
+        everyTicks=integer(observations.get("everyTicks"),1,Integer.MAX_VALUE);
+        maxBytes=observations.has("maxBytes")?integer(observations.get("maxBytes"),1,Integer.MAX_VALUE):Long.MAX_VALUE;
         onFull=version==1?"fail":string(observations.get("onFull"));
         if(!onFull.equals("stop") && !onFull.equals("fail")) throw bad("onFull");
         expect=object(root.get("expect"),"position,blocks,inventory");
@@ -135,10 +134,10 @@ final class RunnerScenario {
         }
         if(v4!=null) v4.validate(this);
     }
-    int regionCells() {
+    long regionCells() {
         long volume=1;
         for(int i=0;i<3;i++) volume*=((long)max[i]-min[i]+1);
-        return volume<0 || volume>Integer.MAX_VALUE ? -1 : (int)volume;
+        return volume;
     }
     void inside(int[] p) { for(int i=0;i<3;i++) if(p[i]<min[i] || p[i]>max[i]) throw bad("outside region"); }
     /** Full-build robots and chests: inside the region, or in the work space or its one-cell rim. */
@@ -191,7 +190,7 @@ final class RunnerScenario {
             if (!allowed.equals(present)) {
                 // Optional fields stay absent rather than gaining implicit values.
                 Set<String> missing=new HashSet<>(allowed); missing.removeAll(present);
-                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","extraChests","metadata","autosaveWallSeconds","viewer").containsAll(missing)) throw bad("object fields: "+keys);
+                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","extraChests","metadata","autosaveWallSeconds","viewer","maxBytes").containsAll(missing)) throw bad("object fields: "+keys);
             }
         }
     }

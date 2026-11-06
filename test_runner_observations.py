@@ -57,10 +57,6 @@ class Observations(unittest.TestCase):
             if mutation=='duplicate-key': self.path.write_text('{"schemaVersion":1,"schemaVersion":1}\n')
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): obs.reconstruct(self.path)
 
-    def test_byte_and_line_bounds(self):
-        self.store(records())
-        with self.assertRaises(ValueError): obs.reconstruct(self.path,max_bytes=5)
-        with self.assertRaises(ValueError): obs.reconstruct(self.path,max_line=5)
 
 
 if __name__=='__main__': unittest.main()

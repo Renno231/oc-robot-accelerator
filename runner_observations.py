@@ -3,8 +3,6 @@ from pathlib import Path
 import runner_scenario as scenario
 import supervisor
 
-MAX_BYTES=32*1024*1024
-MAX_LINE=8*1024*1024
 STATUS_BYTES=64*1024
 
 
@@ -33,7 +31,7 @@ def _coverage(path):
         for key in ('recordingStopped','finalRecorded'):
             if type(value[key])!=bool: raise ValueError('coverage flag invalid')
         if (value['schemaVersion']!=1 or value['policy'] not in ('stop','fail') or
-                not 1048576<=value['maxBytes']<=MAX_BYTES or
+                value['maxBytes']<1 or
                 not value['recordsWritten']<=value['bytesWritten']<=value['maxBytes']):
             raise ValueError('coverage schema/policy/bytes invalid')
         recorded,observed=value['lastRecordedTick'],value['lastObservedTick']
@@ -65,7 +63,7 @@ def _position(value):
     return tuple(value)
 
 
-def reconstruct(path, *, max_bytes=MAX_BYTES, max_line=MAX_LINE, on_record=None):
+def reconstruct(path, *, on_record=None):
     path=Path(path)
     checkpoint,coverage_status=_coverage(path)
     info={'available':False,'path':str(path.absolute()),'records':0,'truncatedLastLine':False,'finalRecorded':False,
@@ -76,14 +74,13 @@ def reconstruct(path, *, max_bytes=MAX_BYTES, max_line=MAX_LINE, on_record=None)
     result={'summary':info,'blocks':{},'last':None}
     if not path.exists(): return result
     path=supervisor._no_link(path)
-    if not path.is_file() or path.stat().st_size>max_bytes: raise ValueError('observation file byte bound exceeded')
+    if not path.is_file(): raise ValueError('observation file is not a regular file')
     total=0; region=None; previous_tick=-1
     with path.open('rb') as stream:
         while True:
-            raw=stream.readline(max_line+1)
+            raw=stream.readline()
             if not raw: break
             total+=len(raw)
-            if total>max_bytes or len(raw)>max_line: raise ValueError('observation file/line byte bound exceeded')
             if not raw.endswith(b'\n'):
                 info['truncatedLastLine']=True; break
             record=scenario._decode_json(raw)

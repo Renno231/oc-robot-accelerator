@@ -354,7 +354,7 @@ the run, solely to direct the reboot's reply when the waking packet is not visib
     }
   },
   "execution": {"mode": "coordinated", "maxTicks": 10000, "timeoutSeconds": 600},
-  "observations": {"everyTicks": 20, "maxBytes": 33554432, "onFull": "stop"}
+  "observations": {"everyTicks": 20, "onFull": "stop"}
 }
 ```
 
@@ -368,7 +368,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 | `id` | Scenario name matching `[a-z][a-z0-9-]{0,62}`. Required. Each job also gets its own generated ID. |
 | `program.directory` | Folder with your Lua program, inside the scenario folder. Required. |
 | `program.entry` | `.lua` file to run, relative to that folder. Default `main.lua`. |
-| `world.region` | Box (`min`/`max`, inclusive) that's set up and recorded. Required. X and Z within ±1,000,000, Y from 1 to 254. At most 65,536 blocks, so the first observation, which lists every block of the region, stays within its 8 MiB line limit; at most 256 chunks, forced 16 to a Forge ticket. |
+| `world.region` | Box (`min`/`max`, inclusive) that's set up and recorded. Required. X and Z within ±1,000,000, Y from 1 to 254. Any size; its chunks are forced 16 to a Forge ticket. The first observation lists every block of the region, so a big region makes a big first record. |
 | `world.source` | Optional folder with a world (`level.dat`) to start from. It's copied first. Omit to start from a fresh world. |
 | `world.blocks` | Up to 128 `{min,max,block,properties?}` fills inside the region, applied in order. |
 | `robot.position` | Starting position inside the region. Must be air after setup. Required. |
@@ -422,14 +422,14 @@ The time limit starts before input copying, and the tick limit includes server s
 
 ### Observation recording
 
-- `observations.everyTicks`: how often to sample, 1–200 ticks. Default 20.
-- `observations.maxBytes` (schema 2/3): recording size limit, 1–32 MiB. Default 32 MiB.
-- `observations.onFull` (schema 2/3): `stop` (default) keeps what was recorded and lets the job continue; `fail` fails the job with `observation_limit`. Schema 1 always fails at 32 MiB.
+- `observations.everyTicks`: how often to sample, in ticks (1 or more). Default 20.
+- `observations.maxBytes` (schema 2/3): optional recording size limit in bytes. No limit unless set.
+- `observations.onFull` (schema 2/3): `stop` (default) keeps what was recorded and lets the job continue; `fail` fails the job with `observation_limit`. Both apply only with `maxBytes`.
 
-The first record holds the whole region plus the robot's state; later ones hold only changes. Once recording stops, it never restarts, so the replay never skips over missing time. A first record that's too big, any single record over 8 MiB, or a disk error fails the job either way. Stall detection keeps working after recording stops.
+The first record holds the whole region plus the robot's state; later ones hold only changes. Once recording stops, it never restarts, so the replay never skips over missing time. A first record over `maxBytes` or a disk error fails the job either way. Stall detection keeps working after recording stops.
 
 `observations-status.json` is a progress summary that may lag behind the recording itself; CLI summaries label it `missing`, `invalid`, `stale`, `consistent`, or `ahead`. The recording is the source of truth, and an incomplete last line is ignored. Results include the final `observationCoverage`.
 
 The replay viewer shows only what was recorded. It handles up to 100,000 records and 500,000 block changes, writes at most 64 MiB, and gives up after 30 seconds. It keeps the last 128 KiB of console output. Samples come from the server thread, so they don't include entities, block-entity NBT, anything between samples, or anything outside the region. The region doesn't limit where the robot can go.
 
-Other limits: runtime folder 2 GiB and 20,000 entries; two process logs at 8 MiB each; program console and result 1 MiB each; 2,048 loaded chunks; diagnostics input 40 MiB; and cleanup deletes at most 4 GiB and 40,000 entries. These limits are checked periodically; they aren't enforced by the OS. Failed runs keep their files for you to inspect.
+Other limits: runtime folder 20,000 entries; two process logs at 8 MiB each; program console and result 1 MiB each; diagnostics input 40 MiB; and cleanup deletes at most 4 GiB and 40,000 entries. These limits are checked periodically; they aren't enforced by the OS. Failed runs keep their files for you to inspect.
