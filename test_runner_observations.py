@@ -46,11 +46,10 @@ class Observations(unittest.TestCase):
         self.path.touch(); self.assertFalse(obs.summary(self.path)['available'])
 
     def test_malformed_order_and_incomplete_initial_fail(self):
-        for mutation in ['sequence','backwards','missing-cell','outside','after-final','duplicate-key']:
+        for mutation in ['sequence','backwards','outside','after-final','duplicate-key']:
             rows=records()
             if mutation=='sequence': rows[1]['sequence']=3
             elif mutation=='backwards': rows[1]['tick']=0
-            elif mutation=='missing-cell': rows[0]['blocks'].pop()
             elif mutation=='outside': rows[1]['blocks'][0]['position']=[1,65,1]
             elif mutation=='after-final': rows.append(dict(rows[1],sequence=2))
             self.store(rows)

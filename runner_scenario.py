@@ -11,10 +11,11 @@ from supervisor import _inventory, _no_link
 
 MAX_TICKS = 1728000  # 24 simulated hours at 20 TPS; v1 retains its smaller limits.
 MAX_TIMEOUT_SECONDS = 90000
-MANIFEST_BYTES = 512 * 1024
-PROGRAM_BYTES = 4 * 1024 * 1024
-PROGRAM_FILE_BYTES = 4 * 1024 * 1024
-PROGRAM_ENTRIES = 256
+MANIFEST_BYTES = 64 * 1024 * 1024
+PROGRAM_BYTES = 64 * 1024 * 1024
+PROGRAM_FILE_BYTES = 64 * 1024 * 1024
+PROGRAM_ENTRIES = 4096
+MANY = 2**31 - 1   # list counts the game itself does not bound
 WORLD_BYTES = 256 * 1024 * 1024
 WORLD_ENTRIES = 10000
 REGISTRY = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+\Z')
@@ -109,7 +110,7 @@ def _item(value, inventory=False, slots=16):
     result = {'item': _text(value['item'], REGISTRY, 128),
               'metadata': _integer(value.get('metadata', 0), 0, 32767), 'nbt': _nbt(value.get('nbt', '{}'))}
     if inventory:
-        result.update(slot=_integer(value['slot'], 1, slots), count=_integer(value['count'], 1, 64))
+        result.update(slot=_integer(value['slot'], 1, slots), count=_integer(value['count'], 1, MANY))   # the slot's native stack limit applies
     return result
 
 
@@ -182,7 +183,7 @@ def normalize(value):
     dimensions = [b - a + 1 for a, b in zip(region['min'], region['max'])]
     if any(d <= 0 for d in dimensions): raise ValueError('inverted region')
     blocks = []
-    for block in _array(world.get('blocks', []), 128):
+    for block in _array(world.get('blocks', []), MANY):
         _object(block, ['min', 'max', 'block', 'properties'], ['min', 'max', 'block'])
         low, high = _inside(block['min'], region), _inside(block['max'], region)
         if any(a > b for a, b in zip(low, high)): raise ValueError('inverted block volume')
@@ -286,7 +287,7 @@ def normalize(value):
         normalized_observations['maxBytes'] = _integer(observations['maxBytes'], 1, 2**31 - 1)
     expect = _object(value.get('expect', {}), ['position', 'blocks', 'inventory'])
     expected_blocks = []
-    for block in _array(expect.get('blocks', []), 256):
+    for block in _array(expect.get('blocks', []), MANY):
         _object(block, ['position', 'block'], ['position', 'block'])
         expected_blocks.append({'position': _inside(block['position'], region), 'block': _text(block['block'], REGISTRY, 128)})
     expected_inventory = []

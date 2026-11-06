@@ -35,7 +35,7 @@ final class RunnerDrones {
     private long sequence;
     private boolean started,storageRoomChestPlaced;
     private RunnerComputer computer,secondComputer;
-    private final Map<net.minecraft.util.math.BlockPos,net.minecraft.block.state.IBlockState> previous=new HashMap<>();
+    private RegionChanges region;
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
     RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;containerEdits=new RunnerContainerEdits(spec.v4.containerEdits);droneActions=new RunnerDroneActions(spec.v4.droneActions);}
     boolean owns(net.minecraft.entity.Entity entity) {return drones.contains(entity);}
@@ -296,10 +296,8 @@ final class RunnerDrones {
         JsonObject value=new JsonObject();value.addProperty("schemaVersion",1);value.addProperty("sequence",sequence);value.addProperty("tick",tick);value.addProperty("kind",kind);
         value.addProperty("wallNanos",System.nanoTime());
         if(kind.equals("initial")) {JsonObject region=new JsonObject();region.add("min",RunnerObservations.coords(RunnerObservations.pos(spec.min)));region.add("max",RunnerObservations.coords(RunnerObservations.pos(spec.max)));value.add("region",region);value.addProperty("everyTicks",spec.everyTicks);}
-        JsonArray changes=new JsonArray();
-        for(int x=spec.min[0];x<=spec.max[0];x++) for(int y=spec.min[1];y<=spec.max[1];y++) for(int z=spec.min[2];z<=spec.max[2];z++) {
-            net.minecraft.util.math.BlockPos p=new net.minecraft.util.math.BlockPos(x,y,z);JsonObject changed=RunnerObservations.changedBlock(previous,p,world.getBlockState(p));if(changed!=null) changes.add(changed);
-        }
+        if(region==null) region=new RegionChanges(world,spec.min,spec.max);
+        JsonArray changes=region.drain();
         value.add("blocks",changes);JsonArray state=states();value.add("drones",state);
         if(!robots.isEmpty()) value.add("robots",robotStates());
         if(!microcontrollers.isEmpty()) value.add("microcontrollers",microcontrollerStates());
@@ -321,6 +319,7 @@ final class RunnerDrones {
             for(RunnerRobot robot:robots) try {robot.close();}
             catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         }
+        if(region!=null) region.close();
         try {if(recording!=null) {recording.close();result.add("observationCoverage",recording.coverage());}}
         catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         if(computer!=null) {

@@ -36,9 +36,9 @@ def normalize(value, region, directory='program'):
 
 
 def blocks(values, region):
-    from runner_scenario import _object, _array, _inside, _text, REGISTRY, PROPERTY
+    from runner_scenario import _object, _array, _inside, _text, REGISTRY, PROPERTY, MANY
     result = []
-    for b in _array(values, 128):
+    for b in _array(values, MANY):
         _object(b, ['position', 'block', 'properties', 'energy'], ['position', 'block'])
         props = b.get('properties', {})
         if not isinstance(props, dict) or len(props) > 16: raise ValueError('properties bound')

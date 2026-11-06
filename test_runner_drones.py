@@ -65,17 +65,22 @@ class DroneScenarioTests(unittest.TestCase):
                 self.assertEqual([d['index'] for d in normalized['expect']['drones']], list(range(count)))
                 self.assertEqual(scenario.normalize(normalized), normalized)
 
-    def test_seventeen_drones_or_expected_rows_rejected(self):
-        for normalized in (False, True):
-            for field in ('drones', 'expectedDrones'):
-                with self.subTest(normalized=normalized, field=field):
-                    value = fleet(16)
-                    if normalized:
-                        value = scenario.normalize(value)
-                    rows = value['drones'] if field == 'drones' else value['expect']['drones']
-                    rows.append(copy.deepcopy(rows[0]))
-                    with self.assertRaises(ValueError):
-                        scenario.normalize(value)
+    def test_fleet_size_is_not_capped(self):
+        value = scenario.normalize(fleet(40))
+        self.assertEqual(len(value['drones']), 40)
+        self.assertEqual(value, scenario.normalize(value))
+
+    def test_container_stock_any_amount(self):
+        v = valid(); v['containers'][0].pop('slots')
+        v['containers'][0]['stock'] = [{'item': 'minecraft:stone', 'count': 4096}, {'item': 'minecraft:wool', 'metadata': 14, 'count': 3}]
+        n = scenario.normalize(v)
+        self.assertEqual(n['containers'][0]['slots'], [])
+        self.assertEqual(n['containers'][0]['stock'], [{'item': 'minecraft:stone', 'metadata': 0, 'nbt': '{}', 'count': 4096},
+                                                       {'item': 'minecraft:wool', 'metadata': 14, 'nbt': '{}', 'count': 3}])
+        self.assertEqual(n, scenario.normalize(n))
+        for bad in ({'item': 'minecraft:stone', 'count': 0}, {'item': 'stone', 'count': 1}, {'count': 1}, {'item': 'minecraft:stone', 'count': 1, 'slot': 1}):
+            v['containers'][0]['stock'] = [bad]
+            with self.subTest(bad=bad), self.assertRaises(ValueError): scenario.normalize(v)
 
     def test_placed_blocks_default_to_baseline_without_changing_plain_robot_default(self):
         v=valid();v.pop('drones');v['robot']={'position':[0,65,0],'hardware':{'tier':3,'cpu':'cpu3','memory':['ram6'],'storage':['hdd3'],'bootDrive':0}}
@@ -97,7 +102,7 @@ class DroneScenarioTests(unittest.TestCase):
             self.assertEqual(len(scenario.normalize(v)['drones']), 4)
 
     def test_rejections(self):
-        cases = [(['drones'], []), (['drones'], valid()['drones'] * 17),
+        cases = [(['drones'], []),
                  (['robot'], {}), (['program'], {'directory': 'program'}),
                  (['execution'], {'mode': 'paced'}),
                  (['drones', 0, 'hardware', 'tier'], 3), (['drones', 0, 'hardware', 'tier'], True),
@@ -115,7 +120,7 @@ class DroneScenarioTests(unittest.TestCase):
                  (['containers'], valid()['containers'] * 2),
                  (['containers', 0, 'position'], [99, 65, 0]),
                  (['containers', 0, 'slots'], [{'slot': 1, 'item': 'minecraft:stone', 'count': 0}]),
-                 (['containers', 0, 'slots'], [{'slot': 1, 'item': 'minecraft:stone', 'count': 65}]),
+                 (['containers', 0, 'slots'], [{'slot': 1, 'item': 'minecraft:stone', 'count': 0}]),
                  (['expect', 'containers', 0, 'position'], [1, 64, 0]),
                  (['expect', 'drones', 0, 'index'], 1),
                  (['expect', 'drones', 0, 'blockPosition'], [99, 65, 0]),
@@ -218,15 +223,12 @@ class DroneScenarioTests(unittest.TestCase):
 
     def test_fleet_observation_bounds(self):
         from runner_drones import observation
-        for count in (6, 16, 17):
+        for count in (6, 16, 40):
             record = {'drones': [{'index': i, 'position': [0.5, 65.0, 0.5],
                                  'blockPosition': [0, 65, 0], 'energy': 5000.0}
                                 for i in range(count)]}
-            with self.subTest(count=count):
-                if count <= 16:
-                    observation(record)
-                else:
-                    with self.assertRaises(ValueError): observation(record)
+            with self.subTest(count=count): observation(record)
+        with self.assertRaises(ValueError): observation({'drones': []})
 
 
 if __name__ == '__main__': unittest.main()

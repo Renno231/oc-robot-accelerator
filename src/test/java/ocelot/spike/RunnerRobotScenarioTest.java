@@ -94,18 +94,17 @@ public class RunnerRobotScenarioTest {
         root=fixture();root.getAsJsonArray("containerEdits").get(0).getAsJsonObject().add("request",new JsonParser().parse("{\"computer\":0,\"marker\":\"home/a\",\"signal\":\"done\"}"));rejects(root);
         root=fixture();JsonObject edit=root.getAsJsonArray("containerEdits").get(0).getAsJsonObject();edit.remove("atTick");edit.add("request",new JsonParser().parse("{\"computer\":0,\"marker\":\"home/a\",\"signal\":\"done\"}"));rejects(root);
     }
-    @Test public void containerBound128() throws Exception {
+    @Test public void containersNotCapped() throws Exception {
         JsonObject root=fixture();root.add("containerEdits",new JsonArray());
-        root.getAsJsonObject("world").getAsJsonObject("region").add("max",new JsonParser().parse("[127,67,2]"));
+        root.getAsJsonObject("world").getAsJsonObject("region").add("max",new JsonParser().parse("[299,67,2]"));
         root.getAsJsonObject("world").add("blocks",new JsonArray());
         JsonArray containers=new JsonArray(),expected=new JsonArray();
-        for(int x=0;x<128;x++) {
+        for(int x=0;x<300;x++) {
             JsonObject c=new JsonObject();c.add("position",new JsonParser().parse("["+x+",65,0]"));c.addProperty("block","minecraft:chest");c.add("slots",new JsonArray());containers.add(c);
             JsonObject e=new JsonObject();e.add("position",c.get("position"));e.add("slots",new JsonArray());expected.add(e);
         }
         root.add("containers",containers);root.getAsJsonObject("expect").add("containers",expected);
-        assertEquals(128,RunnerScenario.parse(root.toString()).v4.containers.size());
-        containers.add(containers.get(0));rejects(root);containers.remove(128);
-        expected.add(expected.get(0));rejects(root);
+        assertEquals(300,RunnerScenario.parse(root.toString()).v4.containers.size());
+        containers.add(containers.get(0));rejects(root);   // a duplicate position still is
     }
 }

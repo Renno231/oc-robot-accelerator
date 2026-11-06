@@ -6,6 +6,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.WorldServer;
+import net.minecraftforge.items.CapabilityItemHandler;
+import net.minecraftforge.items.IItemHandler;
 
 /** Declared block inventories, using physical tile slots rather than merged chest views. */
 final class RunnerContainers {
@@ -31,13 +33,46 @@ final class RunnerContainers {
         for(JsonElement e:spec.v4.containers) {
             JsonObject c=e.getAsJsonObject();JsonObject block=new JsonObject();block.add("block",c.get("block"));block.add("properties",c.has("properties")?c.get("properties"):new JsonObject());
             world.setBlockState(pos(c),RunnerRuntime.blockState(block),3);
-            IInventory inventory=inventory(world,pos(c));inventory.clear();fill(inventory,c.getAsJsonArray("slots"),"container "+pos(c));
+            JsonArray slots=c.getAsJsonArray("slots");
+            if(slots.size()>0 || world.getTileEntity(pos(c)) instanceof IInventory) {IInventory inventory=inventory(world,pos(c));inventory.clear();fill(inventory,slots,"container "+pos(c));}
+            if(c.has("stock")) stock(world,pos(c),c.getAsJsonArray("stock"));
         }
+    }
+    /** The block's own item handler: a drawer's, or a chest's slots. */
+    static IItemHandler handler(WorldServer world,BlockPos p) {
+        TileEntity tile=world.getTileEntity(p);
+        IItemHandler handler=tile==null?null:tile.getCapability(CapabilityItemHandler.ITEM_HANDLER_CAPABILITY,null);
+        if(handler==null) throw new IllegalArgumentException("container has no item handler: "+p);
+        return handler;
+    }
+    /** Puts each stock entry into the block as a player's hopper would, a stack at a time, in any amount. */
+    static void stock(WorldServer world,BlockPos p,JsonArray stock) throws Exception {
+        IItemHandler handler=handler(world,p);
+        for(JsonElement e:stock) {
+            JsonObject entry=e.getAsJsonObject();
+            for(int left=entry.get("count").getAsInt();left>0;) {
+                ItemStack rest=RunnerRuntime.item(entry,1);rest.setCount(Math.min(left,rest.getMaxStackSize()));
+                int offered=rest.getCount();
+                for(int s=0;s<handler.getSlots() && !rest.isEmpty();s++) rest=handler.insertItem(s,rest,false);
+                if(rest.getCount()==offered) throw new IllegalArgumentException("container "+p+" is full with "+left+" of "+entry.get("item").getAsString()+" left");
+                left-=offered-rest.getCount();
+            }
+        }
+        world.getTileEntity(p).markDirty();
     }
     static JsonArray contents(IInventory inventory) {
         JsonArray result=new JsonArray();
         for(int s=0;s<inventory.getSizeInventory();s++) {
             ItemStack stack=inventory.getStackInSlot(s);if(stack.isEmpty()) continue;
+            JsonObject item=new JsonObject();item.addProperty("slot",s+1);item.addProperty("item",String.valueOf(stack.getItem().getRegistryName()));
+            item.addProperty("count",stack.getCount());item.addProperty("metadata",stack.getItemDamage());item.addProperty("nbt",stack.hasTagCompound()?stack.getTagCompound().toString():"{}");result.add(item);
+        }
+        return result;
+    }
+    static JsonArray contents(IItemHandler handler) {
+        JsonArray result=new JsonArray();
+        for(int s=0;s<handler.getSlots();s++) {
+            ItemStack stack=handler.getStackInSlot(s);if(stack.isEmpty()) continue;
             JsonObject item=new JsonObject();item.addProperty("slot",s+1);item.addProperty("item",String.valueOf(stack.getItem().getRegistryName()));
             item.addProperty("count",stack.getCount());item.addProperty("metadata",stack.getItemDamage());item.addProperty("nbt",stack.hasTagCompound()?stack.getTagCompound().toString():"{}");result.add(item);
         }
@@ -76,7 +111,7 @@ final class RunnerContainers {
         for(JsonElement e:observed) {
             JsonObject c=e.getAsJsonObject(),value=new JsonObject();BlockPos p=pos(c);
             value.add("position",RunnerObservations.coords(p));value.addProperty("block",String.valueOf(world.getBlockState(p).getBlock().getRegistryName()));
-            try {value.add("slots",contents(inventory(world,p)));} catch(IllegalArgumentException ex) {value.addProperty("error",ex.getMessage());}
+            try {value.add("slots",world.getTileEntity(p) instanceof IInventory?contents(inventory(world,p)):contents(handler(world,p)));} catch(IllegalArgumentException ex) {value.addProperty("error",ex.getMessage());}
             result.add(value);
         }
         return result;

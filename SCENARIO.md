@@ -102,13 +102,13 @@ An empty creative case is the one exception to the "no other computers" rule, an
 
 Schema 4 uses either `robot`, or `drones` with an optional `computer` (never a robot
 and computer together). A computer may have zero drones; without a computer,
-`drones` must contain 1–16 entries (or may be empty when `robots` are present). Robot scenarios keep the schema-3
+`drones` must contain at least one entry (or may be empty when `robots` are present). Robot scenarios keep the schema-3
 hardware, program, defaults and execution semantics. Drone scenarios omit `program`:
 each drone boots its own EEPROM directly, without OpenOS or a disk.
 Drone/computer scenarios accept `baseline` (the default) and `coordinated`;
 `paced` is not accepted for these scenarios.
 
-`drones` contains 1–16 entries:
+`drones` contains one or more entries:
 
 ```json
 "drones": [{
@@ -141,7 +141,7 @@ actual spawn, final exact and final block-containing positions. Drones finish wh
 all native machines reach `Stopped`; clean `computer.shutdown()` is success, while
 any machine error or tick/time limit is failure.
 
-Both kinds of v4 scenarios can declare up to 128 block inventories:
+Both kinds of v4 scenarios can declare any number of block inventories:
 
 ```json
 "containers": [{"position": [0,64,0], "block": "minecraft:chest",
@@ -156,8 +156,14 @@ Both kinds of v4 scenarios can declare up to 128 block inventories:
 Container positions must be unique and inside the region. Setup places the block,
 using optional `properties` (for example, `{"facing":"south"}`),
 clears its physical tile inventory and fills the listed slots (same metadata/NBT
-shape as robot inventory). Slots are one-based, bounded to 64, and checked against
-the native block inventory. Results include all declared containers' final contents.
+shape as robot inventory). Slots are one-based and checked against the native block
+inventory, and a slot's count against its native stack limit. `slots` may be left out.
+
+`stock` puts items in through the block's own item handler instead, in any amount, as
+a hopper would: `[{"item": "minecraft:stone", "count": 4096}]` fills a Storage Drawers
+drawer, and spreads over a chest's slots. A block that can't take it all fails setup.
+Results include all declared containers' final contents, read through the item handler
+for blocks without a plain inventory (drawers).
 Container expectations must reference a declared container. Listed expected slots
 match item ID and count exactly; count 0 means empty, with or without an item ID.
 A positive count requires an item ID. Unlisted slots are unconstrained.
@@ -244,7 +250,7 @@ server startup), or `request`. Computer index 0 selects `computer`, 1 selects
 `secondComputer`; that controller must exist. It requests removal by creating
 the relative `marker` file on its OpenOS disk (the example is
 `/home/warehouse-remove-items`). The runner signals the named event after removal.
-`slot` is 1–64, `count` is 1–64, and optional `expectedCount` is `count`–64.
+`slot` and `count` are 1 or more, and optional `expectedCount` is at least `count`; the native slot decides what fits.
 Insufficient items, an expected-count mismatch, or exceeding native slot capacity
 fails the run. No stack is removed twice. Reload capture/resume explicitly rejects
 scenarios with robots or nonempty container edits; their reload state is not yet
@@ -294,7 +300,7 @@ An optional `secondComputer` uses the same recipe and native power/boot/observat
 checks as `computer`. It requires a primary computer and a different position.
 Give it a separate scenario-local program directory (for example `client`);
 the two program sources and any source world must not overlap. Each program tree
-has the usual 4 MiB/256-entry bounds and is frozen independently.
+has the usual 64 MiB/4,096-entry bounds and is frozen independently.
 The second source is normalized to `second-program`; on each independent native
 HDD its entry still runs from `/home/program`. With two computers, success waits
 for **both** entries to return; an error on either fails the run. Results and samples
@@ -302,7 +308,7 @@ include `secondComputer`, including its program status; its host console and inp
 manifest are `second-program.log` and `second-program-inputs.json`.
 `examples/mapping/service` and `examples/mapping/actions` exercise this layout.
 
-Top-level `blocks` is separate from `world.blocks` volumes: up to 128 single-block
+Top-level `blocks` is separate from `world.blocks` volumes: any number of single-block
 placements `{position,block,properties?,energy?}` inside the region, applied after
 world volumes and before containers/hosts. Duplicate positions within this list are
 rejected. Properties use the existing bounded block-state shape. This new placement
@@ -370,7 +376,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 | `program.entry` | `.lua` file to run, relative to that folder. Default `main.lua`. |
 | `world.region` | Box (`min`/`max`, inclusive) that's set up and recorded. Required. X and Z within ±1,000,000, Y from 1 to 254. Any size; its chunks are forced 16 to a Forge ticket. The first observation lists every block of the region, so a big region makes a big first record. |
 | `world.source` | Optional folder with a world (`level.dat`) to start from. It's copied first. Omit to start from a fresh world. |
-| `world.blocks` | Up to 128 `{min,max,block,properties?}` fills inside the region, applied in order. |
+| `world.blocks` | `{min,max,block,properties?}` fills inside the region, applied in order. |
 | `robot.position` | Starting position inside the region. Must be air after setup. Required. |
 | `robot.facing` | `north` (default), `south`, `east`, or `west`. |
 | `robot.hardware` | Schema 3: a recipe, preset reference, or `"builder-max"` profile described above. Required. Schema 1/2: only `tier3`, a fixed CPU3, RAM6, inventory upgrade, and OpenOS floppy. |
@@ -379,7 +385,7 @@ Put your program in `program/main.lua`. It runs on normal OpenOS, and `require` 
 | `robot.tool` | `{item,metadata?,nbt?}`. Default: a diamond pickaxe. |
 | `robot.inventory` | `{slot,item,count,metadata?,nbt?}` entries, one per slot, count 1–64. Schema 3: up to 64 entries in slots 1–64, but only slots the robot actually has. Schema 1/2: up to 16. |
 | `expect.position` | Optional final position the robot must be at. |
-| `expect.blocks` | Up to 256 `{position,block}` checks on final blocks. |
+| `expect.blocks` | `{position,block}` checks on final blocks, any number. |
 | `expect.inventory` | Up to 64 `{item,minCount}` checks on final inventory totals (minCount 0–1024). |
 
 Registry IDs are up to 128 bytes, and item metadata is 0–32767. NBT is SNBT text, up to 4,096 bytes and 16 levels deep. Block `properties` is up to 16 name/value pairs, such as `{"facing":"north"}`. Block checks compare IDs only, not properties or NBT. Inventory checks add up all stacks of an item regardless of metadata or NBT.
@@ -388,8 +394,8 @@ Registry IDs are up to 128 bytes, and item metadata is 0–32767. NBT is SNBT te
 
 Paths use `/`, stay inside the scenario folder, and can't be links, absolute paths, `..`, Windows reserved names, or names that differ only by case. The program, world, and output folders can't overlap.
 
-- Scenario file: 512 KiB, both as written and after the runner normalizes it.
-- Program folder: 4 MiB total and 256 entries; one file may take all of it. Empty folders are kept.
+- Scenario file: 64 MiB, both as written and after the runner normalizes it.
+- Program folder: 64 MiB total and 4,096 entries; one file may take all of it. Empty folders are kept.
 - Source world: 256 MiB, 10,000 entries.
 
 Only use worlds you trust; the runner doesn't defend against malicious world files. Loaded computers, racks, and drones in the world fail setup, apart from the empty creative cases above. Schema 1/2 reserve the world path `opencomputers/robot-runner-disk`. Schema 3 always creates a fresh HDD.
@@ -426,7 +432,7 @@ The time limit starts before input copying, and the tick limit includes server s
 - `observations.maxBytes` (schema 2/3): optional recording size limit in bytes. No limit unless set.
 - `observations.onFull` (schema 2/3): `stop` (default) keeps what was recorded and lets the job continue; `fail` fails the job with `observation_limit`. Both apply only with `maxBytes`.
 
-The first record holds the whole region plus the robot's state; later ones hold only changes. Once recording stops, it never restarts, so the replay never skips over missing time. A first record over `maxBytes` or a disk error fails the job either way. Stall detection keeps working after recording stops.
+The first record holds every cell of the region that isn't air (air is implied) plus the robot's state; later ones hold only the cells that changed, taken from the world's own block updates rather than a scan, so a sample costs what changed, however big the region. Once recording stops, it never restarts, so the replay never skips over missing time. A first record over `maxBytes` or a disk error fails the job either way. Stall detection keeps working after recording stops.
 
 `observations-status.json` is a progress summary that may lag behind the recording itself; CLI summaries label it `missing`, `invalid`, `stale`, `consistent`, or `ahead`. The recording is the source of truth, and an incomplete last line is ignored. Results include the final `observationCoverage`.
 

@@ -19,18 +19,18 @@ public class RunnerObservationsTest {
         BlockPos first=new BlockPos(0,65,0),second=new BlockPos(1,65,0);
         IBlockState north=Blocks.CHEST.getDefaultState().withProperty(BlockChest.FACING,EnumFacing.NORTH);
         IBlockState south=north.withProperty(BlockChest.FACING,EnumFacing.SOUTH);
-        JsonObject initial=RunnerObservations.changedBlock(previous,first,north);
+        JsonObject initial=RegionChanges.changed(previous,first,north);
         assertEquals("minecraft:chest",initial.get("block").getAsString());
         assertEquals("north",initial.getAsJsonObject("properties").get("facing").getAsString());
-        assertNull(RunnerObservations.changedBlock(previous,new BlockPos(0,65,0),north));
-        assertEquals("south",RunnerObservations.changedBlock(previous,first,south)
+        assertNull(RegionChanges.changed(previous,new BlockPos(0,65,0),north));
+        assertEquals("south",RegionChanges.changed(previous,first,south)
                 .getAsJsonObject("properties").get("facing").getAsString());
-        assertEquals(initial,RunnerObservations.changedBlock(previous,first,north));
-        assertNotNull(RunnerObservations.changedBlock(previous,second,north));
-        assertEquals("minecraft:air",RunnerObservations.changedBlock(previous,first,Blocks.AIR.getDefaultState())
+        assertEquals(initial,RegionChanges.changed(previous,first,north));
+        assertNotNull(RegionChanges.changed(previous,second,north));
+        assertEquals("minecraft:air",RegionChanges.changed(previous,first,Blocks.AIR.getDefaultState())
                 .get("block").getAsString());
-        assertNull(RunnerObservations.changedBlock(previous,first,Blocks.AIR.getDefaultState()));
-        assertEquals(2,previous.size());
+        assertNull(RegionChanges.changed(previous,first,Blocks.AIR.getDefaultState()));
+        assertEquals(1,previous.size());   // air is implied, not held
         // Emitted snapshots do not change when the cached state is replaced.
         assertEquals("north",initial.getAsJsonObject("properties").get("facing").getAsString());
     }

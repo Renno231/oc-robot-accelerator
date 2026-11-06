@@ -5,7 +5,7 @@ import java.util.*;
 
 /** Additional normalized v4 fields, isolated from the legacy robot contract. */
 final class RunnerDroneScenario {
-    private static final int MAX_DRONES = 16;
+    private static final int MANY = Integer.MAX_VALUE;   // list counts the game itself does not bound
     final JsonArray drones, microcontrollers, containers, expectedDrones, expectedContainers;
     final JsonObject computer,secondComputer;
     final JsonArray placedBlocks;
@@ -28,22 +28,22 @@ final class RunnerDroneScenario {
         RunnerScenario.fields(root,keys+(computer!=null?",computer":"")+(secondComputer!=null?",secondComputer":"")+(root.has("blocks")?",blocks":"")+
             (root.has("robots")?",robots":"")+(root.has("containerEdits")?",containerEdits":"")+(root.has("droneActions")?",droneActions":"")+(root.has("microcontrollers")?",microcontrollers":""));
         if(computer!=null && !drone) throw RunnerScenario.bad("computer requires drones array (may be empty)");
-        placedBlocks=root.has("blocks")?RunnerScenario.array(root.get("blocks"),128):new JsonArray();
-        drones=drone?RunnerScenario.array(root.get("drones"),MAX_DRONES):new JsonArray();
+        placedBlocks=root.has("blocks")?RunnerScenario.array(root.get("blocks"),MANY):new JsonArray();
+        drones=drone?RunnerScenario.array(root.get("drones"),MANY):new JsonArray();
         microcontrollers=root.has("microcontrollers")?RunnerScenario.array(root.get("microcontrollers"),16):new JsonArray();
         if(root.has("microcontrollers") && (!drone || computer==null)) throw RunnerScenario.bad("microcontrollers require controller computer");
         robots=root.has("robots")?RunnerScenario.array(root.get("robots"),8):new JsonArray();
         if(root.has("robots") && (!drone || robots.size()==0)) throw RunnerScenario.bad("robots require drone mode and count 1..8");
-        if(drone && drones.size()==0 && computer==null && robots.size()==0) throw RunnerScenario.bad("drones count 1..16");
-        containerEdits=root.has("containerEdits")?RunnerScenario.array(root.get("containerEdits"),64):new JsonArray();
+        if(drone && drones.size()==0 && computer==null && robots.size()==0) throw RunnerScenario.bad("drones count at least 1");
+        containerEdits=root.has("containerEdits")?RunnerScenario.array(root.get("containerEdits"),MANY):new JsonArray();
         if(root.has("containerEdits") && !drone) throw RunnerScenario.bad("container edits require drone mode");
-        droneActions=root.has("droneActions")?RunnerScenario.array(root.get("droneActions"),64):new JsonArray();
+        droneActions=root.has("droneActions")?RunnerScenario.array(root.get("droneActions"),MANY):new JsonArray();
         if(root.has("droneActions") && !drone) throw RunnerScenario.bad("drone actions require drone mode");
-        containers=RunnerScenario.array(root.get("containers"),128);
+        containers=RunnerScenario.array(root.get("containers"),MANY);
         JsonObject expect=RunnerScenario.object(root.get("expect"),(drone?"blocks,containers,drones":"blocks,inventory,position,containers")+(root.has("robots")?",robots":""));
         expectedRobots=root.has("robots")?RunnerScenario.array(expect.get("robots"),8):new JsonArray();
-        expectedDrones=drone?RunnerScenario.array(expect.get("drones"),MAX_DRONES):new JsonArray();
-        expectedContainers=RunnerScenario.array(expect.get("containers"),128);
+        expectedDrones=drone?RunnerScenario.array(expect.get("drones"),MANY):new JsonArray();
+        expectedContainers=RunnerScenario.array(expect.get("containers"),MANY);
     }
     JsonObject common() {
         JsonObject root=new JsonParser().parse(original.toString()).getAsJsonObject(); root.remove("containers");root.remove("drones");
@@ -134,7 +134,7 @@ final class RunnerDroneScenario {
         }
         Set<String> positions=new HashSet<>();
         for(JsonElement e:containers) {
-            JsonObject c=RunnerScenario.object(e,"position,block,slots"+(e.isJsonObject() && e.getAsJsonObject().has("properties")?",properties":""));spec.inside(RunnerScenario.position(c.get("position")));
+            JsonObject c=RunnerScenario.object(e,"position,block,slots"+(e.isJsonObject() && e.getAsJsonObject().has("properties")?",properties":"")+(e.isJsonObject() && e.getAsJsonObject().has("stock")?",stock":""));spec.inside(RunnerScenario.position(c.get("position")));
             if(c.has("properties")) {
                 JsonObject props=RunnerScenario.object(c.get("properties"),"*");
                 if(props.entrySet().size()>16) throw RunnerScenario.bad("properties count");
@@ -142,7 +142,11 @@ final class RunnerDroneScenario {
                     if(!prop.getKey().matches("[A-Za-z0-9_.+-]{1,64}") || !RunnerScenario.string(prop.getValue()).matches("[A-Za-z0-9_.+-]{1,64}")) throw RunnerScenario.bad("property");
             }
             if(!positions.add(c.get("position").toString())) throw RunnerScenario.bad("duplicate container position");
-            RunnerScenario.registry(c.get("block"));initialSlots(c.get("slots"),64);
+            RunnerScenario.registry(c.get("block"));initialSlots(c.get("slots"),MANY);
+            if(c.has("stock")) for(JsonElement s:RunnerScenario.array(c.get("stock"),MANY)) {
+                JsonObject item=new JsonParser().parse(RunnerScenario.object(s,"item,metadata,nbt,count").toString()).getAsJsonObject();
+                RunnerScenario.integer(item.remove("count"),1,MANY);RunnerScenario.item(item,false);
+            }
         }
         for(JsonElement r:robots) if(r.getAsJsonObject().has("assembly"))
             for(JsonElement b:r.getAsJsonObject().getAsJsonObject("assembly").getAsJsonArray("blocks"))
@@ -150,15 +154,15 @@ final class RunnerDroneScenario {
         for(JsonElement e:expectedContainers) {
             JsonObject c=RunnerScenario.object(e,"position,slots");spec.inside(RunnerScenario.position(c.get("position")));
             if(!positions.contains(c.get("position").toString())) throw RunnerScenario.bad("expect container must be declared");
-            expectedSlots(c.get("slots"),64);
+            expectedSlots(c.get("slots"),MANY);
         }
         for(JsonElement e:containerEdits) {
             JsonObject edit=e.getAsJsonObject();RunnerScenario.fields(edit,"position,slot,count"+
                 (edit.has("atTick")?",atTick":"")+(edit.has("request")?",request":"")+(edit.has("expectedCount")?",expectedCount":""));
             spec.inside(RunnerScenario.position(edit.get("position")));
             if(!positions.contains(edit.get("position").toString())) throw RunnerScenario.bad("container edit target must be declared");
-            RunnerScenario.integer(edit.get("slot"),1,64);int count=RunnerScenario.integer(edit.get("count"),1,64);
-            if(edit.has("expectedCount")) RunnerScenario.integer(edit.get("expectedCount"),count,64);
+            RunnerScenario.integer(edit.get("slot"),1,MANY);int count=RunnerScenario.integer(edit.get("count"),1,MANY);
+            if(edit.has("expectedCount")) RunnerScenario.integer(edit.get("expectedCount"),count,MANY);
             if(edit.has("atTick")==edit.has("request")) throw RunnerScenario.bad("container edit requires exactly one trigger");
             if(edit.has("atTick")) RunnerScenario.integer(edit.get("atTick"),0,spec.maxTicks);
             else {
@@ -204,7 +208,7 @@ final class RunnerDroneScenario {
         for(JsonElement e:RunnerScenario.array(value,limit)) {
             JsonObject i=e.getAsJsonObject();RunnerScenario.fields(i,i.has("item")?"slot,item,count":"slot,count");
             if(!seen.add(RunnerScenario.integer(i.get("slot"),1,limit))) throw RunnerScenario.bad("duplicate slot");
-            int count=RunnerScenario.integer(i.get("count"),0,64);
+            int count=RunnerScenario.integer(i.get("count"),0,MANY);
             if(i.has("item")) RunnerScenario.registry(i.get("item"));
             else if(count>0) throw RunnerScenario.bad("nonempty slot requires item");
         }

@@ -69,7 +69,7 @@ class RobotScenarioTests(unittest.TestCase):
         for edit in ({'atTick': 0}, {'request': {'computer': 0, 'marker': 'home/a', 'signal': 'a_done'}}):
             v = valid(); v['containerEdits'] = [dict(position=[4, 64, 0], slot=1, count=1, **edit)]
             self.assertEqual(scenario.normalize(v), scenario.normalize(scenario.normalize(v)))
-        for change in ({'count': 0}, {'slot': 65}, {'expectedCount': 1}, {'atTick': 4},
+        for change in ({'count': 0}, {'slot': 0}, {'expectedCount': 1}, {'atTick': 4},
                        {'request': {'computer': 1, 'marker': 'home/a', 'signal': 'done'}},
                        {'request': {'computer': 0, 'marker': '../escape', 'signal': 'done'}},
                        {'request': {'computer': 0, 'marker': 'home/a', 'signal': 'bad signal'}},
@@ -79,17 +79,14 @@ class RobotScenarioTests(unittest.TestCase):
         v = valid(); v['containerEdits'][0].pop('request')
         with self.assertRaises(ValueError): scenario.normalize(v)
 
-    def test_container_bound_128(self):
-        v = valid(); v['world']['region'] = {'min': [0, 63, 0], 'max': [127, 67, 2]}
+    def test_containers_not_capped(self):
+        v = valid(); v['world']['region'] = {'min': [0, 63, 0], 'max': [299, 67, 2]}
         v['world']['blocks'] = []; v['containerEdits'] = []
-        v['containers'] = [{'position': [x, 64, 0], 'block': 'minecraft:chest', 'slots': []} for x in range(128)]
+        v['containers'] = [{'position': [x, 64, 0], 'block': 'minecraft:chest', 'slots': []} for x in range(300)]
         v['expect']['containers'] = [{'position': c['position'], 'slots': []} for c in v['containers']]
-        n = scenario.normalize(v); self.assertEqual(len(n['containers']), 128)
-        for key in ('containers', 'expect'):
-            bad = copy.deepcopy(v)
-            if key == 'containers': bad[key].append(copy.deepcopy(bad[key][-1]))
-            else: bad[key]['containers'].append(copy.deepcopy(bad[key]['containers'][-1]))
-            with self.assertRaises(ValueError): scenario.normalize(bad)
+        n = scenario.normalize(v); self.assertEqual(len(n['containers']), 300)
+        bad = copy.deepcopy(v); bad['containers'].append(copy.deepcopy(bad['containers'][-1]))
+        with self.assertRaises(ValueError): scenario.normalize(bad)   # a duplicate position still is
 
     def test_frozen_robot_trees_and_install_hash_drift(self):
         spec = scenario.load('examples/robots/crafting-smoke/scenario.json')

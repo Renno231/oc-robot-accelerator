@@ -15,18 +15,19 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.WorldServer;
 
-/** END tick samples: initial full region, later changed cells, capped UTF-8 NDJSON. */
+/** END tick samples: initial cells other than air, later changed cells, capped UTF-8 NDJSON. */
 final class RunnerObservations implements Closeable {
     private final RunnerScenario spec;
     private final WorldServer world;
     private final Robot robot;
     private final RunnerRecording recording;
-    private final Map<BlockPos,IBlockState> previous=new HashMap<>();
+    private final RegionChanges region;
     private long sequence;
     private final StallClock stallClock=new StallClock();
     RunnerObservations(RunnerScenario spec,WorldServer world,Robot robot,Path root) throws IOException {
         this.spec=spec;this.world=world;this.robot=robot;
         recording=new RunnerRecording(root,spec.maxBytes,spec.onFull);
+        region=new RegionChanges(world,spec.min,spec.max);
     }
     JsonObject robot(String state) {
         JsonObject value=new JsonObject();BlockPos p=((TileEntity)robot).getPos();
@@ -62,10 +63,7 @@ final class RunnerObservations implements Closeable {
     }
     static JsonArray coords(BlockPos pos) {JsonArray a=new JsonArray();a.add(pos.getX());a.add(pos.getY());a.add(pos.getZ());return a;}
     static BlockPos pos(int[] p) {return new BlockPos(p[0],p[1],p[2]);}
-    static JsonObject changedBlock(Map<BlockPos,IBlockState> previous,BlockPos pos,IBlockState state) {
-        // Native block states are immutable. Compare before constructing JSON for
-        // the overwhelmingly common unchanged cell; wire content is identical.
-        if(state.equals(previous.put(pos,state))) return null;
+    static JsonObject cell(BlockPos pos,IBlockState state) {
         JsonObject value=new JsonObject();value.add("position",coords(pos));
         value.addProperty("block",String.valueOf(state.getBlock().getRegistryName()));JsonObject properties=new JsonObject();
         for(Map.Entry<IProperty<?>,Comparable<?>> e:state.getProperties().entrySet()) properties.addProperty(e.getKey().getName(),property(e.getKey(),e.getValue()));
@@ -79,11 +77,7 @@ final class RunnerObservations implements Closeable {
             JsonObject bounds=new JsonObject();bounds.add("min",coords(pos(spec.min)));bounds.add("max",coords(pos(spec.max)));
             value.add("region",bounds);value.addProperty("everyTicks",spec.everyTicks);
         }
-        JsonArray changes=new JsonArray();
-        for(int x=spec.min[0];x<=spec.max[0];x++) for(int y=spec.min[1];y<=spec.max[1];y++) for(int z=spec.min[2];z<=spec.max[2];z++) {
-            BlockPos p=new BlockPos(x,y,z);JsonObject changed=changedBlock(previous,p,world.getBlockState(p));
-            if(changed!=null) changes.add(changed);
-        }
+        JsonArray changes=region.drain();
         value.add("blocks",changes);JsonObject r=robot(state);value.add("robot",r);
         // The engine still scans the region and robot after the retained prefix stops.
         if(recording.record(value.toString(),kind,tick)) sequence++;
@@ -107,5 +101,5 @@ final class RunnerObservations implements Closeable {
     }
     boolean stalled(long tick) {return spec.stallTicks>0 && tick-stallClock.lastChangeTick()>=spec.stallTicks;}
     JsonObject coverage() {return recording.coverage();}
-    @Override public void close() throws IOException {recording.close();}
+    @Override public void close() throws IOException {region.close();recording.close();}
 }

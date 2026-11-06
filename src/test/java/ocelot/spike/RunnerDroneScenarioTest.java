@@ -40,13 +40,18 @@ public class RunnerDroneScenarioTest {
             for(int i=0;i<count;i++) assertEquals(i,spec.v4.expectedDrones.get(i).getAsJsonObject().get("index").getAsInt());
         }
     }
-    @Test public void seventeenDronesOrExpectedRowsRejected() throws Exception {
-        JsonObject value=fleet(16);
-        value.getAsJsonArray("drones").add(new JsonParser().parse(value.getAsJsonArray("drones").get(0).toString()));
-        rejects(value);
-        value=fleet(16);
-        JsonArray expected=value.getAsJsonObject("expect").getAsJsonArray("drones");
-        expected.add(new JsonParser().parse(expected.get(0).toString()));rejects(value);
+    @Test public void fleetSizeIsNotCapped() throws Exception {
+        assertEquals(40,RunnerScenario.parse(fleet(40).toString()).v4.drones.size());
+        JsonObject value=fleet(40);
+        value.getAsJsonObject("expect").getAsJsonArray("drones").get(0).getAsJsonObject().addProperty("index",40);rejects(value);
+    }
+    @Test public void containerStockAnyAmount() throws Exception {
+        JsonObject value=fixture();JsonObject container=value.getAsJsonArray("containers").get(0).getAsJsonObject();
+        container.add("stock",new JsonParser().parse("[{\"item\":\"minecraft:stone\",\"metadata\":0,\"nbt\":\"{}\",\"count\":4096},{\"item\":\"minecraft:wool\",\"metadata\":14,\"nbt\":\"{}\",\"count\":3}]"));
+        assertEquals(2,RunnerScenario.parse(value.toString()).v4.containers.get(0).getAsJsonObject().getAsJsonArray("stock").size());
+        for(String bad:new String[]{"{\"item\":\"minecraft:stone\",\"metadata\":0,\"nbt\":\"{}\",\"count\":0}","{\"item\":\"stone\",\"metadata\":0,\"nbt\":\"{}\",\"count\":1}","{\"metadata\":0,\"nbt\":\"{}\",\"count\":1}","{\"item\":\"minecraft:stone\",\"metadata\":0,\"nbt\":\"{}\",\"count\":1,\"slot\":1}"}) {
+            container.add("stock",new JsonParser().parse("["+bad+"]"));rejects(value);
+        }
     }
     @Test public void fixtureRelocationIsStrictAndRequiresExistingDroneAndController() throws Exception {
         JsonObject value=fixture();

@@ -143,12 +143,12 @@ final class RunnerProgram implements AutoCloseable {
             for(Path child:stream) {
                 if(Files.isSymbolicLink(child) || !child.toRealPath().startsWith(base.toRealPath())) throw new IOException("Program link/escape");
                 String name=base.relativize(child).toString().replace('\\','/'); RunnerScenario.path(name);
-                if(++entries[0]>256) throw new IOException("Program entry limit");
+                if(++entries[0]>4096) throw new IOException("Program entry limit");
                 String target="home/program/"+name;
                 if(Files.isDirectory(child)) {mkdir(disk,target);copyProgram(base,child,disk,entries,bytes);}
                 else if(Files.isRegularFile(child)) {
                     long size=Files.size(child); bytes[0]+=size;
-                    if(bytes[0]>4*1024*1024) throw new IOException("Program byte limit");
+                    if(bytes[0]>64L*1024*1024) throw new IOException("Program byte limit");
                     write(disk,target,Files.readAllBytes(child));
                 } else throw new IOException("Invalid program entry");
             }

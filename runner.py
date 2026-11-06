@@ -120,8 +120,6 @@ def main(argv=None):
         data=json.dumps({'status':'error','error':'KeyboardInterrupt','message':'interrupted; inspect jobs root for retained owner'}); code=130
     except (ValueError,TypeError,OSError,TimeoutError,RuntimeError,subprocess.SubprocessError) as exc:
         data=json.dumps({'status':'error','error':type(exc).__name__,'message':str(exc)[:4096]}); code=1
-    if len(data.encode('utf-8'))>256*1024:
-        data=json.dumps({'status':'error','message':'CLI JSON output bound exceeded; inspect owned artifact files'}); code=1
     print(data)
     return code
 

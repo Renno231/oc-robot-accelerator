@@ -140,7 +140,7 @@ public class RunnerScenarioTest {
         value = fixture(); value.getAsJsonObject("program").addProperty("entry", "../main.lua"); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").addProperty("energy", "NaN"); rejects(value);
         value = fixture(); value.getAsJsonObject("observations").addProperty("everyTicks", 0); rejects(value);
-        value = fixture(); value.getAsJsonObject("robot").getAsJsonArray("inventory").add(new JsonParser().parse("{\"slot\":1,\"item\":\"minecraft:stone\",\"count\":65,\"metadata\":0,\"nbt\":\"{}\"}")); rejects(value);
+        value = fixture(); value.getAsJsonObject("robot").getAsJsonArray("inventory").add(new JsonParser().parse("{\"slot\":1,\"item\":\"minecraft:stone\",\"count\":0,\"metadata\":0,\"nbt\":\"{}\"}")); rejects(value);
         value = fixture(); value.getAsJsonObject("world").getAsJsonArray("blocks").add(new JsonParser().parse("{\"min\":[0,65,0],\"max\":[0,65,0],\"block\":\"minecraft:stone\",\"properties\":{\"unsafe key\":\"a\"}}")); rejects(value);
         value = fixture(); value.getAsJsonObject("robot").getAsJsonObject("tool").addProperty("nbt", "{a:" + new String(new char[17]).replace('\0', '{') + new String(new char[17]).replace('\0', '}') + "}"); rejects(value);
         value = fixture(); value.getAsJsonObject("world").addProperty("source", "../world"); rejects(value);

@@ -99,13 +99,12 @@ def reconstruct(path, *, on_record=None):
                 for lo,hi in zip(low,high):
                     if lo>hi: raise ValueError('invalid region')
                     volume*=hi-lo+1
-                if volume>32768: raise ValueError('region bound exceeded')
                 cadence=record.get('everyTicks')
                 if type(cadence)!=int or not 1<=cadence<=200: raise ValueError('invalid sample cadence')
                 info.update(region=region,everyTicks=cadence,firstTick=record['tick'])
             elif record['kind']=='initial': raise ValueError('duplicate initial record')
             cells=record.get('blocks')
-            if not isinstance(cells,list) or len(cells)>volume: raise ValueError('invalid block samples')
+            if not isinstance(cells,list) or len(cells)>volume: raise ValueError('invalid block samples')   # the initial record lists cells other than air
             updates={}
             for cell in cells:
                 if not isinstance(cell,dict): raise ValueError('invalid block sample')
@@ -115,7 +114,6 @@ def reconstruct(path, *, on_record=None):
                 if not isinstance(cell.get('block'),str) or not isinstance(cell.get('properties'),dict):
                     raise ValueError('invalid block state')
                 updates[position]=cell
-            if sequence==0 and len(updates)!=volume: raise ValueError('initial record does not cover region')
             robot=record.get('robot')
             if 'drones' in record:
                 from runner_drones import observation

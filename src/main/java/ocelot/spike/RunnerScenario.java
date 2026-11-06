@@ -68,7 +68,7 @@ final class RunnerScenario {
             if(fullBuild.has("extraChests"))for(JsonElement e:fullBuild.getAsJsonArray("extraChests"))workspace(position(e.getAsJsonObject().get("position")));
         }
         if (regionCells() < 1) throw bad("region bounds");
-        blocks = array(world.get("blocks"),128);
+        blocks = array(world.get("blocks"),Integer.MAX_VALUE);
         for (JsonElement element : blocks) {
             JsonObject block = object(element,"min,max,block,properties");
             int[] low = position(block.get("min")), high = position(block.get("max"));
@@ -124,7 +124,7 @@ final class RunnerScenario {
         if(!onFull.equals("stop") && !onFull.equals("fail")) throw bad("onFull");
         expect=object(root.get("expect"),"position,blocks,inventory");
         if (expect.has("position")) inside(position(expect.get("position")));
-        expectedBlocks=array(expect.get("blocks"),256);
+        expectedBlocks=array(expect.get("blocks"),Integer.MAX_VALUE);
         for (JsonElement element:expectedBlocks) {
             JsonObject b=object(element,"position,block"); inside(position(b.get("position"))); registry(b.get("block"));
         }
@@ -155,7 +155,7 @@ final class RunnerScenario {
         }
     }
     static RunnerScenario parse(String json) {
-        if (json.getBytes(StandardCharsets.UTF_8).length > 512*1024) throw bad("manifest bytes");
+        if (json.getBytes(StandardCharsets.UTF_8).length > 64*1024*1024) throw bad("manifest bytes");
         try {
             JsonReader reader = new JsonReader(new StringReader(json)); reader.setLenient(false);
             JsonElement element = unique(reader,0);
@@ -256,7 +256,7 @@ final class RunnerScenario {
     static JsonObject item(JsonElement e,boolean inventory,int slots) {
         JsonObject o=object(e,inventory?"slot,item,count,metadata,nbt":"item,metadata,nbt");
         registry(o.get("item")); integer(o.get("metadata"),0,32767);
-        if(inventory) {integer(o.get("slot"),1,slots);integer(o.get("count"),1,64);}
+        if(inventory) {integer(o.get("slot"),1,slots);integer(o.get("count"),1,Integer.MAX_VALUE);}   // the native stack limit applies
         String nbt=string(o.get("nbt")); if(nbt.getBytes(StandardCharsets.UTF_8).length>4096) throw bad("NBT bytes");
         int depth=0; char quote=0; boolean escape=false;
         for(char c:nbt.toCharArray()) {

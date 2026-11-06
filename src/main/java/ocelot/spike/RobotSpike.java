@@ -62,7 +62,7 @@ public final class RobotSpike {
         RuntimeLogging.verify(root, System.getProperty("robotrunner.runtimeProfile"));
         Path runnerFile = root.resolve("runner-scenario.json");
         if (Files.exists(runnerFile)) {
-            if (Files.isSymbolicLink(runnerFile) || Files.size(runnerFile) > 512 * 1024) throw new IllegalArgumentException("Runner scenario file bound");
+            if (Files.isSymbolicLink(runnerFile) || Files.size(runnerFile) > 64 * 1024 * 1024) throw new IllegalArgumentException("Runner scenario file bound");
             runnerScenario = RunnerScenario.parse(new String(Files.readAllBytes(runnerFile), StandardCharsets.UTF_8));
             RunnerAutosave.configure(runnerScenario.autosaveWallSeconds);
             MinecraftForge.EVENT_BUS.register(this);
@@ -393,7 +393,7 @@ public final class RobotSpike {
             Trace.close();
             Path temporary = root.resolve("result.json.tmp");
             byte[] payload = result.toString().getBytes(StandardCharsets.UTF_8);
-            if (payload.length > 1024 * 1024) throw new IOException("result_limit");
+            if (payload.length > 64 * 1024 * 1024) throw new IOException("result_limit");
             Files.write(temporary, payload, StandardOpenOption.CREATE_NEW);
             Files.move(temporary, root.resolve("result.json"), StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception e) { e.printStackTrace(); }

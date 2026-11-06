@@ -2,7 +2,6 @@
 import math
 from copy import deepcopy
 
-MAX_DRONES = 16
 
 
 def eeprom_inputs(root, drones, check):
@@ -70,7 +69,7 @@ def completed_result(value, scenario_id, count, computer_present=False, second_p
 def observation(record):
     from runner_observations import _position
     drones = record['drones']
-    if not isinstance(drones, list) or not (0 if 'computer' in record or 'robots' in record else 1) <= len(drones) <= MAX_DRONES:
+    if not isinstance(drones, list) or not (0 if 'computer' in record or 'robots' in record else 1) <= len(drones):
         raise ValueError('invalid drone observation count')
     for i, d in enumerate(drones):
         if not isinstance(d, dict) or type(d.get('index')) is not int or d['index'] != i:
@@ -107,14 +106,14 @@ def observation(record):
 
 
 def slots(values, initial=False, limit=64):
-    from runner_scenario import _array, _object, _integer, _text, REGISTRY, _item
+    from runner_scenario import _array, _object, _integer, _text, REGISTRY, _item, MANY
     result = []
     for value in _array(values, limit):
         if initial:
             entry = _item(value, True, limit)
         else:
             _object(value, ['slot', 'item', 'count'], ['slot', 'count'])
-            entry = {'slot': _integer(value['slot'], 1, limit), 'count': _integer(value['count'], 0, 64)}
+            entry = {'slot': _integer(value['slot'], 1, limit), 'count': _integer(value['count'], 0, MANY)}
             if 'item' in value: entry['item'] = _text(value['item'], REGISTRY, 128)
             if entry['count'] and 'item' not in entry: raise ValueError('nonempty slot requires item')
         result.append(entry)
@@ -125,7 +124,7 @@ def slots(values, initial=False, limit=64):
 def normalize(value):
     from runner_computer import normalize as computer, blocks as placed_blocks, expectation
     from runner_scenario import (_object, _array, _inside, _integer, _text, REGISTRY, PROPERTY,
-                                 _component_name, relative, normalize as old, normalized_bytes)
+                                 _component_name, relative, normalize as old, normalized_bytes, MANY, _item)
     if isinstance(value, dict) and 'controller' in value:
         if 'computer' in value: raise ValueError('use controller or computer, not both')
         _object(value['controller'], ['kind', 'position', 'hardware', 'program'], ['kind', 'position', 'hardware', 'program'])
@@ -170,7 +169,7 @@ def normalize(value):
     microcontrollers = []
     if drone_mode:
         del result['robot']; del result['program']
-        devices = [(d, True) for d in _array(value.get('drones', []), MAX_DRONES)]
+        devices = [(d, True) for d in _array(value.get('drones', []), MANY)]
         devices += [(d, False) for d in _array(value.get('microcontrollers', []), 16)]
         for d, is_drone in devices:
             _object(d, ['position', 'hardware', 'eeprom', 'eepromData', 'energy'] + (['inventory', 'off'] if is_drone else []),
@@ -200,7 +199,7 @@ def normalize(value):
                     raise ValueError('drone energy must be finite and positive')
                 entry['energy'] = energy
             (drones if is_drone else microcontrollers).append(entry)
-        if not drones and 'computer' not in value and 'robots' not in value: raise ValueError('drones must contain 1..16 entries')
+        if not drones and 'computer' not in value and 'robots' not in value: raise ValueError('drones must contain at least one entry')
         result['drones'] = drones
         if 'microcontrollers' in value: result['microcontrollers'] = microcontrollers
     if 'robots' in value:
@@ -242,10 +241,17 @@ def normalize(value):
         if result['secondComputer']['position']==result['computer']['position']: raise ValueError('duplicate computer position')
     if 'blocks' in value: result['blocks'] = placed_blocks(value['blocks'], region)
     containers = []
-    for c in _array(value.get('containers', []), 128):
-        _object(c, ['position', 'block', 'slots', 'properties'], ['position', 'block', 'slots'])
+    for c in _array(value.get('containers', []), MANY):
+        _object(c, ['position', 'block', 'slots', 'stock', 'properties'], ['position', 'block'])
         containers.append({'position': _inside(c['position'], region), 'block': _text(c['block'], REGISTRY, 128),
-                           'slots': slots(c['slots'], True)})
+                           'slots': slots(c.get('slots', []), True, MANY)})
+        if 'stock' in c:
+            # Items the block takes in through its own item handler, in any amount (drawers hold thousands).
+            stock = []
+            for s in _array(c['stock'], MANY):
+                _object(s, ['item', 'metadata', 'nbt', 'count'], ['item', 'count'])
+                stock.append(dict(_item({k: v for k, v in s.items() if k != 'count'}), count=_integer(s['count'], 1, MANY)))
+            containers[-1]['stock'] = stock
         if 'properties' in c:
             props=c['properties']
             if not isinstance(props,dict) or len(props)>16: raise ValueError('properties bound')
@@ -255,14 +261,14 @@ def normalize(value):
     if 'containerEdits' in value:
         if not drone_mode: raise ValueError('container edits require drones/computer scenario')
         result['containerEdits'] = []
-        for edit in _array(value['containerEdits'], 64):
+        for edit in _array(value['containerEdits'], MANY):
             _object(edit, ['position', 'slot', 'count', 'atTick', 'request', 'expectedCount'], ['position', 'slot', 'count'])
             if ('atTick' in edit) == ('request' in edit): raise ValueError('container edit requires exactly one trigger')
             p = _inside(edit['position'], region)
             if p not in [c['position'] for c in containers]: raise ValueError('container edit target must be declared')
-            entry = {'position': p, 'slot': _integer(edit['slot'], 1, 64), 'count': _integer(edit['count'], 1, 64)}
+            entry = {'position': p, 'slot': _integer(edit['slot'], 1, MANY), 'count': _integer(edit['count'], 1, MANY)}
             if 'expectedCount' in edit:
-                entry['expectedCount'] = _integer(edit['expectedCount'], entry['count'], 64)
+                entry['expectedCount'] = _integer(edit['expectedCount'], entry['count'], MANY)
             if 'atTick' in edit: entry['atTick'] = _integer(edit['atTick'], 0, result['execution']['maxTicks'])
             else:
                 req = _object(edit['request'], ['computer', 'marker', 'signal'], ['computer', 'marker', 'signal'])
@@ -274,7 +280,7 @@ def normalize(value):
     if 'droneActions' in value:
         if not drone_mode: raise ValueError('drone actions require drone mode')
         result['droneActions'] = []
-        for action in _array(value['droneActions'], 64):
+        for action in _array(value['droneActions'], MANY):
             # move_drone carries a drone to a place; stop_drone powers one off (as running out of energy,
             # or a player taking it), start_drone powers one on.
             kind = action.get('action')
@@ -292,15 +298,15 @@ def normalize(value):
             result['droneActions'].append(entry)
     result['expect']['containers'] = []
     assembly_positions = [b['position'] for r in result.get('robots', []) if 'assembly' in r for b in r['assembly']['blocks']]
-    for c in _array(extended.get('containers', []), 128):
+    for c in _array(extended.get('containers', []), MANY):
         _object(c, ['position', 'slots'], ['position', 'slots'])
         p = _inside(c['position'], region)
         if p not in [c['position'] for c in containers] + assembly_positions: raise ValueError('expect container must be declared')
-        result['expect']['containers'].append({'position': p, 'slots': slots(c['slots'])})
+        result['expect']['containers'].append({'position': p, 'slots': slots(c['slots'], limit=MANY)})
     if drone_mode:
         result['expect'].pop('inventory', None)
         result['expect']['drones'] = []
-        for d in _array(extended.get('drones', []), MAX_DRONES):
+        for d in _array(extended.get('drones', []), MANY):
             _object(d, ['index', 'blockPosition', 'inventory', 'minEnergy', 'running'], ['index'])
             entry = {'index': _integer(d['index'], 0, len(drones) - 1)}
             if 'blockPosition' in d: entry['blockPosition'] = _inside(d['blockPosition'], region)
