@@ -242,7 +242,7 @@ def normalize(value):
     if 'blocks' in value: result['blocks'] = placed_blocks(value['blocks'], region)
     containers = []
     for c in _array(value.get('containers', []), MANY):
-        _object(c, ['position', 'block', 'slots', 'stock', 'properties'], ['position', 'block'])
+        _object(c, ['position', 'block', 'slots', 'stock', 'upgrades', 'properties'], ['position', 'block'])
         containers.append({'position': _inside(c['position'], region), 'block': _text(c['block'], REGISTRY, 128),
                            'slots': slots(c.get('slots', []), True, MANY)})
         if 'stock' in c:
@@ -252,6 +252,13 @@ def normalize(value):
                 _object(s, ['item', 'metadata', 'nbt', 'count'], ['item', 'count'])
                 stock.append(dict(_item({k: v for k, v in s.items() if k != 'count'}), count=_integer(s['count'], 1, MANY)))
             containers[-1]['stock'] = stock
+        if 'upgrades' in c:
+            # Storage Drawers upgrades, one item each; the drawer's own upgrade slots bound them.
+            upgrades = []
+            for u in _array(c['upgrades'], MANY):
+                _object(u, ['item', 'metadata', 'nbt'], ['item'])
+                upgrades.append(_item(u))
+            containers[-1]['upgrades'] = upgrades
         if 'properties' in c:
             props=c['properties']
             if not isinstance(props,dict) or len(props)>16: raise ValueError('properties bound')

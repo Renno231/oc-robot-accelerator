@@ -162,6 +162,10 @@ inventory, and a slot's count against its native stack limit. `slots` may be lef
 `stock` puts items in through the block's own item handler instead, in any amount, as
 a hopper would: `[{"item": "minecraft:stone", "count": 4096}]` fills a Storage Drawers
 drawer, and spreads over a chest's slots. A block that can't take it all fails setup.
+`upgrades` puts items into a Storage Drawers drawer's upgrade slots after the stock goes
+in: `[{"item": "storagedrawers:upgrade_creative", "metadata": 1}]` is the creative
+vending upgrade, so a drawer stocked with one item hands that item out without end.
+A block without upgrade slots, or one that refuses an upgrade, fails setup.
 Results include all declared containers' final contents, read through the item handler
 for blocks without a plain inventory (drawers).
 Container expectations must reference a declared container. Listed expected slots

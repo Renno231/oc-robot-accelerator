@@ -134,7 +134,7 @@ final class RunnerDroneScenario {
         }
         Set<String> positions=new HashSet<>();
         for(JsonElement e:containers) {
-            JsonObject c=RunnerScenario.object(e,"position,block,slots"+(e.isJsonObject() && e.getAsJsonObject().has("properties")?",properties":"")+(e.isJsonObject() && e.getAsJsonObject().has("stock")?",stock":""));spec.inside(RunnerScenario.position(c.get("position")));
+            JsonObject c=RunnerScenario.object(e,"position,block,slots"+(e.isJsonObject() && e.getAsJsonObject().has("properties")?",properties":"")+(e.isJsonObject() && e.getAsJsonObject().has("stock")?",stock":"")+(e.isJsonObject() && e.getAsJsonObject().has("upgrades")?",upgrades":""));spec.inside(RunnerScenario.position(c.get("position")));
             if(c.has("properties")) {
                 JsonObject props=RunnerScenario.object(c.get("properties"),"*");
                 if(props.entrySet().size()>16) throw RunnerScenario.bad("properties count");
@@ -147,6 +147,7 @@ final class RunnerDroneScenario {
                 JsonObject item=new JsonParser().parse(RunnerScenario.object(s,"item,metadata,nbt,count").toString()).getAsJsonObject();
                 RunnerScenario.integer(item.remove("count"),1,MANY);RunnerScenario.item(item,false);
             }
+            if(c.has("upgrades")) for(JsonElement u:RunnerScenario.array(c.get("upgrades"),MANY)) RunnerScenario.item(u,false);
         }
         for(JsonElement r:robots) if(r.getAsJsonObject().has("assembly"))
             for(JsonElement b:r.getAsJsonObject().getAsJsonObject("assembly").getAsJsonArray("blocks"))

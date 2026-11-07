@@ -53,6 +53,14 @@ public class RunnerDroneScenarioTest {
             container.add("stock",new JsonParser().parse("["+bad+"]"));rejects(value);
         }
     }
+    @Test public void containerUpgrades() throws Exception {
+        JsonObject value=fixture();JsonObject container=value.getAsJsonArray("containers").get(0).getAsJsonObject();
+        container.add("upgrades",new JsonParser().parse("[{\"item\":\"storagedrawers:upgrade_creative\",\"metadata\":1,\"nbt\":\"{}\"}]"));
+        assertEquals(1,RunnerScenario.parse(value.toString()).v4.containers.get(0).getAsJsonObject().getAsJsonArray("upgrades").size());
+        for(String bad:new String[]{"{\"item\":\"upgrade_creative\",\"metadata\":1,\"nbt\":\"{}\"}","{\"item\":\"storagedrawers:upgrade_creative\",\"metadata\":1,\"nbt\":\"{}\",\"count\":1}"}) {
+            container.add("upgrades",new JsonParser().parse("["+bad+"]"));rejects(value);
+        }
+    }
     @Test public void fixtureRelocationIsStrictAndRequiresExistingDroneAndController() throws Exception {
         JsonObject value=fixture();
         JsonObject computer=new JsonParser().parse("{\"position\":[-1,65,0],\"hardware\":{\"tier\":3,\"cpu\":\"cpu3\",\"memory\":[\"ram6\"],\"cards\":[\"wlancard2\"],\"storage\":[\"hdd3\"],\"bootDrive\":0},\"program\":{\"directory\":\"program\",\"entry\":\"main.lua\"}}").getAsJsonObject();

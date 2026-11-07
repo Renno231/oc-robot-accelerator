@@ -36,6 +36,7 @@ final class RunnerContainers {
             JsonArray slots=c.getAsJsonArray("slots");
             if(slots.size()>0 || world.getTileEntity(pos(c)) instanceof IInventory) {IInventory inventory=inventory(world,pos(c));inventory.clear();fill(inventory,slots,"container "+pos(c));}
             if(c.has("stock")) stock(world,pos(c),c.getAsJsonArray("stock"));
+            if(c.has("upgrades")) upgrade(world,pos(c),c.getAsJsonArray("upgrades"));
         }
     }
     /** The block's own item handler: a drawer's, or a chest's slots. */
@@ -59,6 +60,22 @@ final class RunnerContainers {
             }
         }
         world.getTileEntity(p).markDirty();
+    }
+    /**
+     * Puts each upgrade into a Storage Drawers drawer's upgrade slots as a player would. It runs after
+     * stock, so a creative vending drawer keeps the item it was stocked with and hands it out forever.
+     * Storage Drawers is optional at build time, so its upgrade slots are reached by name.
+     */
+    static void upgrade(WorldServer world,BlockPos p,JsonArray upgrades) throws Exception {
+        TileEntity tile=world.getTileEntity(p);Object slots;
+        try {if(tile==null) throw new NoSuchMethodException();slots=tile.getClass().getMethod("upgrades").invoke(tile);}
+        catch(NoSuchMethodException ex) {throw new IllegalArgumentException("container has no drawer upgrade slots: "+p);}
+        java.lang.reflect.Method add=slots.getClass().getMethod("addUpgrade",ItemStack.class);
+        for(JsonElement e:upgrades) {
+            JsonObject u=e.getAsJsonObject();
+            if(!(Boolean)add.invoke(slots,RunnerRuntime.item(u,1))) throw new IllegalArgumentException("container "+p+" refuses upgrade "+u.get("item").getAsString()+"@"+u.get("metadata").getAsInt());
+        }
+        tile.markDirty();
     }
     static JsonArray contents(IInventory inventory) {
         JsonArray result=new JsonArray();

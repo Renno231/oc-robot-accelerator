@@ -82,6 +82,15 @@ class DroneScenarioTests(unittest.TestCase):
             v['containers'][0]['stock'] = [bad]
             with self.subTest(bad=bad), self.assertRaises(ValueError): scenario.normalize(v)
 
+    def test_container_upgrades(self):
+        v = valid(); v['containers'][0]['upgrades'] = [{'item': 'storagedrawers:upgrade_creative', 'metadata': 1}]
+        n = scenario.normalize(v)
+        self.assertEqual(n['containers'][0]['upgrades'], [{'item': 'storagedrawers:upgrade_creative', 'metadata': 1, 'nbt': '{}'}])
+        self.assertEqual(n, scenario.normalize(n))
+        for bad in ({'item': 'upgrade_creative'}, {'metadata': 1}, {'item': 'storagedrawers:upgrade_creative', 'count': 1}):
+            v['containers'][0]['upgrades'] = [bad]
+            with self.subTest(bad=bad), self.assertRaises(ValueError): scenario.normalize(v)
+
     def test_placed_blocks_default_to_baseline_without_changing_plain_robot_default(self):
         v=valid();v.pop('drones');v['robot']={'position':[0,65,0],'hardware':{'tier':3,'cpu':'cpu3','memory':['ram6'],'storage':['hdd3'],'bootDrive':0}}
         v['program']={'directory':'program'};v['expect']={};v.pop('execution',None);v['blocks']=[]
