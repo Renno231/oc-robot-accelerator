@@ -122,7 +122,7 @@ def _prepare(template, jar, root, deadline, check=lambda: None, runner=False):
         reserved = ('world', 'program', 'runner-scenario.json', 'observations.ndjson',
                     'second-program', 'second-program-inputs.json', 'second-program.log',
                     'program-inputs.json', 'program.log', 'observations-status.json',
-                    '.observations-status.json.tmp', 'runtime-logging.json')
+                    '.observations-status.json.tmp', 'runtime-logging.json', 'film.ndjson')
         if any((template / name).exists() for name in reserved):
             raise ValueError('runner template contains reserved scenario/output path')
         if any(name.startswith('mods/') and name != 'mods/OpenComputers.jar' for name in names):

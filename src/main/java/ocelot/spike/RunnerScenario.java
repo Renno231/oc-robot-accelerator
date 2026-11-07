@@ -21,6 +21,7 @@ final class RunnerScenario {
     final long maxBytes;   // the observation log's size limit, if the scenario sets one
     final List<String> viewers = new ArrayList<>();   // camera players the run waits for (execution.viewer)
     final boolean source;
+    final boolean film;   // observations.film: the per-tick film track for the offline renderer
     final RunnerDroneScenario v4;
     private RunnerScenario(JsonObject root) {
         v4=integer(root.get("schemaVersion"),1,4)==4?new RunnerDroneScenario(root):null;
@@ -117,7 +118,8 @@ final class RunnerScenario {
         delay=integer(execution.get("executionDelayMillis"),0,12);
         if (delay!=0 && delay!=12) throw bad("delay");
         stallTicks=integer(execution.get("stallTicks"),0,version==1?10000:1728000);
-        JsonObject observations=object(root.get("observations"),version==1?"everyTicks":"everyTicks,maxBytes,onFull");
+        JsonObject observations=object(root.get("observations"),version==1?"everyTicks":"everyTicks,maxBytes,onFull,film");
+        film=observations.has("film") && observations.get("film").getAsBoolean();
         everyTicks=integer(observations.get("everyTicks"),1,Integer.MAX_VALUE);
         maxBytes=observations.has("maxBytes")?integer(observations.get("maxBytes"),1,Integer.MAX_VALUE):Long.MAX_VALUE;
         onFull=version==1?"fail":string(observations.get("onFull"));
@@ -190,7 +192,7 @@ final class RunnerScenario {
             if (!allowed.equals(present)) {
                 // Optional fields stay absent rather than gaining implicit values.
                 Set<String> missing=new HashSet<>(allowed); missing.removeAll(present);
-                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","extraChests","metadata","autosaveWallSeconds","viewer","maxBytes").containsAll(missing)) throw bad("object fields: "+keys);
+                if (!allowed.containsAll(present) || !Arrays.asList("source","position","randomSeed","fullBuild","resume","returnSlots","extraChests","metadata","autosaveWallSeconds","viewer","maxBytes","film").containsAll(missing)) throw bad("object fields: "+keys);
             }
         }
     }

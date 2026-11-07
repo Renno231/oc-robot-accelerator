@@ -160,8 +160,15 @@ def normalize(value):
                                            'storage': ['hdd1'], 'bootDrive': 0}}
         surrogate.setdefault('execution', {}).setdefault('mode', 'baseline')
         if surrogate['execution']['mode'] not in ('baseline','coordinated'): raise ValueError('drone scenarios require baseline or coordinated mode')
+    # observations.film: a per-tick film track (film.ndjson) of the drones and the region, for the offline renderer
+    film = isinstance(surrogate.get('observations'), dict) and surrogate['observations'].get('film', False)
+    if film is not False:
+        if film is not True: raise ValueError('observations.film must be true or false')
+        if not drone_mode: raise ValueError('observations.film films drones: it requires drones/computer')
+    if isinstance(surrogate.get('observations'), dict): surrogate['observations'].pop('film', None)
     result = old(surrogate)
     result['schemaVersion'] = 4
+    if film: result['observations']['film'] = True
     if 'infiniteEnergy' in value.get('execution', {}):
         result['execution']['infiniteEnergy'] = value['execution']['infiniteEnergy']
     region = result['world']['region']
