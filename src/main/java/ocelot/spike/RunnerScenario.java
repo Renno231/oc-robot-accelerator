@@ -43,7 +43,7 @@ final class RunnerScenario {
             if(cells>Integer.MAX_VALUE)throw bad("full build integer representation");
             path(string(fullBuild.get("expected")));position(fullBuild.get("chest"));
             if(array(fullBuild.get("palette"),256).size()==0 || array(fullBuild.get("materials"),27).size()==0)throw bad("full build palette/materials required");
-            for(JsonElement e:array(fullBuild.get("palette"),256))text(e,ID.pattern()+"(:([0-9]|1[0-5]))?",128);
+            for(JsonElement e:array(fullBuild.get("palette"),256))text(e,ID.pattern()+"(:([0-9]|1[0-5]))?(\\[[a-z0-9_]{1,32}=[a-z0-9_]{1,32}(,[a-z0-9_]{1,32}=[a-z0-9_]{1,32}){0,7}\\])?",256);
             materials(fullBuild.get("materials"));
             if(fullBuild.has("extraChests")) {
                 JsonArray extra=array(fullBuild.get("extraChests"),3);

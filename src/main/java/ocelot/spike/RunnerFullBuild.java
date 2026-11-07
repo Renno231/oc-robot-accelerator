@@ -63,17 +63,35 @@ final class RunnerFullBuild {
     }
     /** The stocked kind that places a palette target: same registry name and, when given, metadata. */
     private static boolean matches(String target,ItemStack kind) {
+        int open=target.indexOf('[');if(open>=0)target=target.substring(0,open);
         int colon=target.lastIndexOf(':');boolean meta=colon>target.indexOf(':');
         return (meta?target.substring(0,colon):target).equals(String.valueOf(kind.getItem().getRegistryName())) &&
             (!meta || kind.getMetadata()==Integer.parseInt(target.substring(colon+1)));
     }
-    /** Palette target: a registry name, optionally suffixed with ":metadata". */
+    /** Palette target: a registry name, optionally suffixed with ":metadata", optionally followed by listed block
+     *  properties "[key=value,...]". With properties the metadata is the item damage the block drops (its variant),
+     *  and only the listed properties are compared. */
     static boolean matches(String target,IBlockState state) {
+        int open=target.indexOf('[');
+        if(open>=0) {
+            String base=target.substring(0,open);int colon=base.lastIndexOf(':');boolean meta=colon>base.indexOf(':');
+            if(!(meta?base.substring(0,colon):base).equals(String.valueOf(state.getBlock().getRegistryName())))return false;
+            if(meta && state.getBlock().damageDropped(state)!=Integer.parseInt(base.substring(colon+1)))return false;
+            Map<String,String> actual=new HashMap<>();
+            for(Map.Entry<net.minecraft.block.properties.IProperty<?>,Comparable<?>> e:state.getProperties().entrySet())
+                actual.put(e.getKey().getName(),name(e.getKey(),e.getValue()));
+            for(String pair:target.substring(open+1,target.length()-1).split(",")) {
+                int eq=pair.indexOf('=');if(!pair.substring(eq+1).equals(actual.get(pair.substring(0,eq))))return false;
+            }
+            return true;
+        }
         int colon=target.lastIndexOf(':');boolean meta=colon>target.indexOf(':');
         String name=meta?target.substring(0,colon):target;
         return name.equals(String.valueOf(state.getBlock().getRegistryName())) &&
             (!meta || state.getBlock().getMetaFromState(state)==Integer.parseInt(target.substring(colon+1)));
     }
+    @SuppressWarnings({"unchecked","rawtypes"})
+    private static String name(net.minecraft.block.properties.IProperty property,Comparable value) { return property.getName(value); }
     private void reclaim(IInventory inventory) {
         for(int slot=0;slot<inventory.getSizeInventory();slot++) {
             ItemStack stack=inventory.getStackInSlot(slot);
@@ -203,7 +221,8 @@ final class RunnerFullBuild {
                 int id=in.read();if(id<0 || id>=palette.size())throw new IOException("expected data truncated/invalid");
                 String target=palette.get(id).getAsString();BlockPos p=new BlockPos(x,y,z);
                 IBlockState state=world.getBlockState(p);String actual=String.valueOf(state.getBlock().getRegistryName());
-                if(state.getBlock().getMetaFromState(state)!=0)actual+=":"+state.getBlock().getMetaFromState(state);
+                if(target.indexOf('[')>=0)actual=state.toString();
+                else if(state.getBlock().getMetaFromState(state)!=0)actual+=":"+state.getBlock().getMetaFromState(state);
                 checked++;if(!target.equals("minecraft:air"))nonAir++;
                 if(!matches(target,state)){mismatches++;if(examples.size()<20){JsonObject e=new JsonObject();e.add("position",RunnerObservations.coords(p));e.addProperty("expected",target);e.addProperty("actual",actual);examples.add(e);}}
             }

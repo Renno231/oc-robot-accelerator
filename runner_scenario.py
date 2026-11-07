@@ -19,7 +19,7 @@ MANY = 2**31 - 1   # list counts the game itself does not bound
 WORLD_BYTES = 256 * 1024 * 1024
 WORLD_ENTRIES = 10000
 REGISTRY = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+\Z')
-PALETTE = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+(:([0-9]|1[0-5]))?\Z')   # full-build target, optional block metadata
+PALETTE = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+(:([0-9]|1[0-5]))?(\[[a-z0-9_]{1,32}=[a-z0-9_]{1,32}(,[a-z0-9_]{1,32}=[a-z0-9_]{1,32}){0,7}\])?\Z')   # full-build target, optional block metadata and listed block properties
 PROPERTY = re.compile(r'[A-Za-z0-9_.+-]{1,64}\Z')
 PLAYER = re.compile(r'[A-Za-z0-9_]{3,16}\Z')
 RESERVED = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(10)), *(f'LPT{i}' for i in range(10))}
@@ -199,7 +199,7 @@ def normalize(value):
         if version != 3 or any(a > b for a,b in zip(low,high)) or math.prod(b-a+1 for a,b in zip(low,high)) > 2147483647:
             raise ValueError('full build fixture bound')
         expected = relative(fixture['expected'])
-        palette = [_text(s, PALETTE, 128) for s in _array(fixture['palette'],256)]
+        palette = [_text(s, PALETTE, 256) for s in _array(fixture['palette'],256)]
         if not palette: raise ValueError('full build palette required')
         def stock(entries):
             materials=[]

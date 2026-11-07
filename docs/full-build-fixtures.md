@@ -24,8 +24,11 @@ is a scenario-program-relative gzip stream of unsigned one-byte palette IDs in
 Y/Z/X order, X fastest, with exactly one byte per construction-volume cell.
 Prepare it independently from the source schematic, retaining source and artifact
 hashes. Final native verification streams every byte and compares the actual
-Minecraft block registry ID, including expected air. Current verification covers
-registry IDs; oriented/block-state properties require a richer expected encoding.
+Minecraft block registry ID, including expected air, and the metadata when a
+target gives one. A target may also list block properties, as in ISSF:
+`minecraft:oak_stairs[facing=north,half=top]`. Then its metadata, if given, is
+the item damage the block drops (its variant), and verification compares the
+listed properties by name; unlisted ones are free.
 
 Workspace setup clears the construction volume and one-block exterior, including
 the bounding envelope to the declared observation/service region, and supplies a
