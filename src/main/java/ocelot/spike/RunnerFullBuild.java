@@ -38,6 +38,8 @@ final class RunnerFullBuild {
     private InputStream recoveryExpected;
     private long recoveredBlocks;
     private final long[] reclaimed;
+    /** Items returned to a stock chest that are not build stock (a terrain build's dug spoil), by item. */
+    private final Map<String,Long> spoils=new TreeMap<>();
     /** The program directory holding the expected world: robot 0's when several robots build. */
     private final String program;
     RunnerFullBuild(JsonObject config,String program) {
@@ -199,8 +201,12 @@ final class RunnerFullBuild {
             if(slot<inventory.getSizeInventory()-returns && same(stack,items[slot%items.length]))continue;
             int material=-1;
             for(int i=0;i<items.length;i++)if(same(stack,items[i]))material=i;
-            if(material<0)throw new IllegalStateException("unsupported bulk material return");
-            remaining[material]=Math.addExact(remaining[material],stack.getCount());
+            if(material<0) {
+                // Spoil the builder dug out: the chest takes it like a real dump chest; the report counts it.
+                String key=String.valueOf(stack.getItem().getRegistryName())+(stack.getMetadata()!=0?":"+stack.getMetadata():"");
+                spoils.merge(key,(long)stack.getCount(),Long::sum);
+            }
+            else remaining[material]=Math.addExact(remaining[material],stack.getCount());
             inventory.setInventorySlotContents(slot,ItemStack.EMPTY);inventory.markDirty();
         }
         for(int slot=0;slot<inventory.getSizeInventory()-returns;slot++) {
@@ -231,6 +237,8 @@ final class RunnerFullBuild {
         JsonObject result=new JsonObject();result.addProperty("checkedCells",checked);result.addProperty("expectedNonAir",nonAir);
         result.addProperty("mismatches",mismatches);result.add("examples",examples);
         result.add("stock",stock(items,remaining));
+        JsonObject returned=new JsonObject();for(Map.Entry<String,Long> e:spoils.entrySet())returned.addProperty(e.getKey(),e.getValue());
+        result.add("spoils",returned);
         if(!extra.isEmpty()){JsonArray stocks=new JsonArray();for(Stock s:extra)stocks.add(stock(s.items,s.remaining));result.add("extraStock",stocks);}
         Files.write(root.resolve("full-build-verification.json"),result.toString().getBytes(StandardCharsets.UTF_8));
         return mismatches==0;

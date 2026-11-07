@@ -367,13 +367,20 @@ final class RunnerRuntime {
         } catch(Exception error) {text.append(" diagnosticError=").append(error.getClass().getSimpleName());}
         return text.substring(0,Math.min(4500,text.length()));
     }
+    private final JsonArray assertionFailures=new JsonArray(); // failed expect.blocks entries, first 64
     private boolean assertions() throws IOException {
         if(fullBuild!=null && !fullBuild.verify(world,root))return false;
         if(spec.expect.has("position") && !((TileEntity)robot).getPos().equals(pos(RunnerScenario.position(spec.expect.get("position"))))) return false;
         for(JsonElement e:spec.expectedBlocks) {
             JsonObject b=e.getAsJsonObject();BlockPos location=pos(RunnerScenario.position(b.get("position")));
-            if(!String.valueOf(world.getBlockState(location).getBlock().getRegistryName()).equals(RunnerScenario.string(b.get("block")))) return false;
+            String actual=String.valueOf(world.getBlockState(location).getBlock().getRegistryName());
+            if(!actual.equals(RunnerScenario.string(b.get("block")))) {
+                JsonObject failure=new JsonObject();failure.add("position",b.get("position"));
+                failure.add("expected",b.get("block"));failure.addProperty("actual",actual);
+                if(assertionFailures.size()<64) assertionFailures.add(failure);
+            }
         }
+        if(assertionFailures.size()>0) return false;
         for(JsonElement e:spec.expectedInventory) {
             JsonObject wanted=e.getAsJsonObject();int total=0;
             for(int slot=0;slot<robot.mainInventory().getSizeInventory();slot++) {
@@ -410,6 +417,7 @@ final class RunnerRuntime {
         }
         timing.addProperty("observationNanos",observationNanos);value.add("runnerTiming",timing);
         value.add("autosavePolicy",RunnerAutosave.report());
+        if(assertionFailures.size()>0) value.add("assertionFailures",assertionFailures);
         JsonObject programResult=new JsonObject();programResult.addProperty("status",status);
         programResult.addProperty("message",message.length()>8192?message.substring(0,8192):message);value.add("program",programResult);
         try {if(program!=null && program.observing()) program.exportConsole();}

@@ -108,6 +108,11 @@ requires zero mismatches across the complete volume, along with the scenario's
 ordinary final assertions. Retain failed attempts, program progress/checkpoints,
 and hardware recipes. Region observations alone do not establish full construction.
 
+Blocks the robot digs and returns to the chest that are not build materials, such
+as terrain-mode spoil, are counted by item in the verification's `spoils`. When an
+`expect.blocks` entry fails, `result.json` lists the first 64 failures in
+`assertionFailures` as `{position, expected, actual}`.
+
 The island driver runs until the selected catalog finishes and accounts for
 1,013,113 source blocks as placements plus verified existing construction before
 returning home. Record each generated bundle and native job ID with its evidence.
