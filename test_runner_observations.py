@@ -57,5 +57,26 @@ class Observations(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): obs.reconstruct(self.path)
 
 
+    def test_film_switch(self):
+        # observations.film turns on the per-tick film track (film.ndjson) for drone scenarios only
+        import runner_scenario as scenario
+        from test_runner_drones import valid
+        drone=valid()
+        self.assertNotIn('film',scenario.normalize(drone)['observations'])
+        for off in ({'film':False},{}):
+            drone['observations']=off
+            self.assertNotIn('film',scenario.normalize(drone)['observations'])
+        drone['observations']={'everyTicks':20,'film':True}
+        normalized=scenario.normalize(drone)
+        self.assertIs(normalized['observations']['film'],True)
+        self.assertEqual(normalized,scenario.normalize(normalized))
+        for bad in (1,'true',None):
+            drone['observations']={'film':bad}
+            with self.subTest(film=bad), self.assertRaises(ValueError): scenario.normalize(drone)
+        robot={'schemaVersion':4,'id':'robot-film','program':{'directory':'program'},
+               'world':{'region':{'min':[-2,64,-4],'max':[2,68,2]}},'robot':{'position':[0,65,0]},'observations':{'film':True}}
+        with self.assertRaises(ValueError): scenario.normalize(robot)
+        self.assertIn('film.ndjson',open('supervisor.py').read())   # a template may not ship a film track
+
 
 if __name__=='__main__': unittest.main()

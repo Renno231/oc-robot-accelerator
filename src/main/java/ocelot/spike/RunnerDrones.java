@@ -36,6 +36,7 @@ final class RunnerDrones {
     private boolean started,storageRoomChestPlaced;
     private RunnerComputer computer,secondComputer;
     private RegionChanges region;
+    private RunnerFilm film;
     private final RunnerObservations.StallClock stall=new RunnerObservations.StallClock();
     RunnerDrones(RunnerScenario spec,WorldServer world,Path root) {this.spec=spec;this.world=world;this.root=root;containerEdits=new RunnerContainerEdits(spec.v4.containerEdits);droneActions=new RunnerDroneActions(spec.v4.droneActions);}
     boolean owns(net.minecraft.entity.Entity entity) {return drones.contains(entity);}
@@ -209,10 +210,12 @@ final class RunnerDrones {
                 }
             }
             recording=new RunnerRecording(root,spec.maxBytes,spec.onFull);sample("initial",tick);
+            if(spec.film) {film=new RunnerFilm(spec,world,root);film.tick(tick,drones);}
             for(int i=0;i<drones.size();i++) if(!off(i) && !drones.get(i).start())
                 throw new IllegalStateException("drone "+i+" would not start: "+drones.get(i).machine().lastError());
             started=true;
         } else {
+            if(film!=null) film.tick(tick,drones);
             for(RunnerMicrocontrollers sensor:microcontrollers) {String error=sensor.tick(spec.v4.infiniteEnergy);if(error!=null) return error;}
             boolean stopped=true;
             boolean robotsReturned=true;
@@ -320,6 +323,8 @@ final class RunnerDrones {
             catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         }
         if(region!=null) region.close();
+        if(film!=null) try {film.tick(tick,drones);film.close();}
+        catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         try {if(recording!=null) {recording.close();result.add("observationCoverage",recording.coverage());}}
         catch(Exception ex) {result.addProperty("runnerArtifactError",ex.toString());}
         if(computer!=null) {
